@@ -6,7 +6,7 @@
 -- ⚠️ EDIT THIS to wherever you host the other 5 files (raw text URLs).
 -- Example if using GitHub raw:
 --   https://raw.githubusercontent.com/YourUsername/YourRepo/main/
-local BASE_URL = "https://nousigi.com/"
+local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 
 local function fetch(fileName)
     local ok, result = pcall(function()
