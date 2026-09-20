@@ -22,13 +22,13 @@ function Macro.Init(Shared, UI)
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
 
+    -- اعتراض أوامر الشبكة أثناء التسجيل
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
         local packedArgs = table.pack(...)
         local isRemoteCall = (not checkcaller()) and (method == "FireServer" or method == "InvokeServer")
         local selfRef = self
-        local selfName = isRemoteCall and self.Name or nil
 
         local result = table.pack(oldNamecall(self, ...))
 
@@ -95,6 +95,7 @@ function Macro.Init(Shared, UI)
         return table.unpack(result, 1, result.n)
     end)
 
+    -- بناء واجهة الماكرو
     local createSec = Instance.new("Frame")
     createSec.Size = UDim2.new(1, 0, 0, 100)
     createSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
@@ -334,6 +335,7 @@ function Macro.Init(Shared, UI)
 
     local isPlayingMacro = false
 
+    -- دالة التشغيل الذكية التي تربط المعرفات الديناميكية وتنفذ الأوامر مباشرة عبر Remotes
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
         isPlayingMacro = true
@@ -391,24 +393,39 @@ function Macro.Init(Shared, UI)
                 macroStatusLabel.Text = ("Running action %d/%d: %s"):format(actionIndex, totalActions, actionLabel)
             end)
 
+            -- تشغيل الأمر عبر الشبكة وتحديث المعرفات ديناميكياً
             pcall(function()
                 if isRemoteValid(action) then
                     local args = { table.unpack(action.args, 1, action.args.n) }
 
                     if action.actionType == "PlaceOrUpdateUnit" then
                         Shared.lastIncomingSignalValue = nil
+                        local serverResult = nil
+                        
                         if action.method == "InvokeServer" then
-                            action.remote:InvokeServer(table.unpack(args))
+                            local ok, res = pcall(function()
+                                return action.remote:InvokeServer(table.unpack(args))
+                            end)
+                            if ok then serverResult = res end
                         else
                             action.remote:FireServer(table.unpack(args))
                         end
-                        task.wait(0.3)
+                        
+                        task.wait(0.4)
                         playPlacementCount = playPlacementCount + 1
-                        playUnitIdMap[playPlacementCount] = Shared.lastIncomingSignalValue or (args[3] and tostring(args[3]))
+
+                        local newUnitId = serverResult or Shared.lastIncomingSignalValue
+                        if type(newUnitId) == "table" then
+                            newUnitId = newUnitId.id or newUnitId[1]
+                        end
+                        
+                        playUnitIdMap[playPlacementCount] = newUnitId or args[3] or playPlacementCount
+
                     elseif action.actionType == "UnitUpgradeOrAction" then
                         if action.linkedPlacementOrder and playUnitIdMap[action.linkedPlacementOrder] then
                             args[3] = playUnitIdMap[action.linkedPlacementOrder]
                         end
+
                         if action.method == "InvokeServer" then
                             action.remote:InvokeServer(table.unpack(args))
                         else
