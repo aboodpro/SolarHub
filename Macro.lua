@@ -86,6 +86,12 @@ function Macro.Init(Shared, UI)
                             end)
                         elseif actionDesc == "ManualUpgrade" then
                             pcall(function()
+                                print("=== UPGRADE REMOTE ARGS DEBUG ===")
+                                for i, arg in ipairs(packedArgs) do
+                                    print(string.format("Arg [%d] | Type: %s | Value: %s", i, typeof(arg), tostring(arg)))
+                                end
+                                print("==================================")
+
                                 local lowerInnerLocal = innerAction and innerAction:lower() or ""
                                 local isAuto = lowerInnerLocal:find("autoupgradepriority") or lowerInnerLocal:find("auto")
                                 actionEntry.uiClickButtonName = isAuto and "AutoUpgradeButton" or "UpgradeButton"
