@@ -7,7 +7,6 @@ function Macro.Init(Shared, UI)
     local saveMacrosToFile = Shared.saveMacrosToFile
     local showTopNotification = Shared.showTopNotification
     local HttpService = Shared.HttpService
-    local ReplicatedStorage = Shared.ReplicatedStorage
     local serializeMacros = Shared.serializeMacros
     local isRemoteValid = Shared.isRemoteValid
     local waitForNewModel = Shared.waitForNewModel
@@ -36,88 +35,79 @@ function Macro.Init(Shared, UI)
 
         local result = table.pack(oldNamecall(self, ...))
 
-        if isRemoteCall then
-            if Config.RecordMacro then
-                task.spawn(function()
-                    pcall(function()
-                        local actionDesc = "Remote"
-                        local lowerName = selfName:lower()
-
-                        local innerAction = nil
-                        for _, arg in ipairs(packedArgs) do
-                            if typeof(arg) == "string" then
-                                innerAction = arg
-                                break
-                            end
+        if isRemoteCall and Config.RecordMacro then
+            task.spawn(function()
+                pcall(function()
+                    local actionDesc = "Remote"
+                    local innerAction = nil
+                    for _, arg in ipairs(packedArgs) do
+                        if typeof(arg) == "string" then
+                            innerAction = arg
+                            break
                         end
-                        local lowerInner = innerAction and innerAction:lower() or ""
+                    end
+                    local lowerInner = innerAction and innerAction:lower() or ""
 
-                        if lowerInner:find("upgrade") or lowerInner:find("lvl") or lowerInner:find("level") then
-                            actionDesc = "ManualUpgrade"
-                        elseif lowerInner:find("place") or lowerInner:find("spawn") or lowerInner:find("deploy") then
-                            actionDesc = "PlaceOrUpdateUnit"
-                        else
-                            actionDesc = "Other: " .. selfName
-                        end
+                    if lowerInner:find("upgrade") or lowerInner:find("lvl") or lowerInner:find("level") then
+                        actionDesc = "ManualUpgrade"
+                    elseif lowerInner:find("place") or lowerInner:find("spawn") or lowerInner:find("deploy") then
+                        actionDesc = "PlaceOrUpdateUnit"
+                    else
+                        actionDesc = "Other: " .. (selfName or "")
+                    end
 
-                        if actionDesc == "PlaceOrUpdateUnit" or actionDesc == "ManualUpgrade" then
-                            local actionEntry = {
-                                time = os.clock() - recordStartTime,
-                                actionType = actionDesc,
-                                remote = selfRef,
-                                method = method,
-                                args = packedArgs
-                            }
-                            table.insert(recordedActions, actionEntry)
+                    if actionDesc == "PlaceOrUpdateUnit" or actionDesc == "ManualUpgrade" then
+                        local actionEntry = {
+                            time = os.clock() - recordStartTime,
+                            actionType = actionDesc,
+                            remote = selfRef,
+                            method = method,
+                            args = packedArgs
+                        }
+                        table.insert(recordedActions, actionEntry)
 
-                            if actionDesc == "PlaceOrUpdateUnit" then
-                                local slotNum = typeof(packedArgs[3]) == "number" and packedArgs[3] or nil
-                                actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
-                                Shared.clearPendingModels()
-                                task.spawn(function()
-                                    Shared.lastIncomingSignalValue = nil
-                                    local newModel = waitForNewModel(2)
-                                    task.wait(0.3)
-                                    pcall(function()
-                                        recordPlacementCount = recordPlacementCount + 1
-                                        actionEntry.placementOrder = recordPlacementCount
-                                        recordUnitIdMap[recordPlacementCount] = {
-                                            model = newModel,
-                                            name = newModel and newModel.Name or nil,
-                                            replicaId = Shared.lastIncomingSignalValue
-                                        }
-                                    end)
-                                end)
-                            elseif actionDesc == "ManualUpgrade" then
+                        if actionDesc == "PlaceOrUpdateUnit" then
+                            local slotNum = typeof(packedArgs[3]) == "number" and packedArgs[3] or nil
+                            actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
+                            Shared.clearPendingModels()
+                            task.spawn(function()
+                                Shared.lastIncomingSignalValue = nil
+                                local newModel = waitForNewModel(2)
+                                task.wait(0.3)
                                 pcall(function()
-                                    local lowerInnerLocal = innerAction and innerAction:lower() or ""
-                                    
-                                    -- 1. تمييز زر التطوير التلقائي عن التطوير العادي
-                                    local isAuto = lowerInnerLocal:find("autoupgradepriority") or lowerInnerLocal:find("auto")
-                                    local buttonName = isAuto and "AutoUpgradeButton" or "UpgradeButton"
-                                    actionEntry.uiClickButtonName = buttonName
-                                    
-                                    -- 2. البحث الدقيق عن الوحدة المقصودة من خلال البيانات المرسلة للسيرفر (متجاهلين العداد المتأخر)
-                                    local matchedOrder = recordPlacementCount
-                                    for _, arg in ipairs(packedArgs) do
-                                        for order, data in pairs(recordUnitIdMap) do
-                                            if (typeof(arg) == "Instance" and (data.model == arg or arg:IsDescendantOf(data.model))) or (tostring(data.replicaId) == tostring(arg)) then
-                                                matchedOrder = order
-                                                break
-                                            end
+                                    recordPlacementCount = recordPlacementCount + 1
+                                    actionEntry.placementOrder = recordPlacementCount
+                                    recordUnitIdMap[recordPlacementCount] = {
+                                        model = newModel,
+                                        name = newModel and newModel.Name or nil,
+                                        replicaId = Shared.lastIncomingSignalValue
+                                    }
+                                end)
+                            end)
+                        elseif actionDesc == "ManualUpgrade" then
+                            pcall(function()
+                                local lowerInnerLocal = innerAction and innerAction:lower() or ""
+                                local isAuto = lowerInnerLocal:find("autoupgradepriority") or lowerInnerLocal:find("auto")
+                                actionEntry.uiClickButtonName = isAuto and "AutoUpgradeButton" or "UpgradeButton"
+                                
+                                local matchedOrder = recordPlacementCount
+                                for _, arg in ipairs(packedArgs) do
+                                    for order, data in pairs(recordUnitIdMap) do
+                                        if (typeof(arg) == "Instance" and (data.model == arg or arg:IsDescendantOf(data.model))) or (tostring(data.replicaId) == tostring(arg)) then
+                                            matchedOrder = order
+                                            break
                                         end
                                     end
-                                    
-                                    -- 3. ربط التطوير بالوحدة الصحيحة
-                                    actionEntry.linkedPlacementOrder = matchedOrder
-                                    actionEntry.isUIReplay = true
-                                    actionEntry.yenCost = captureVisibleUpgradeCost()
-                                end)
-                            end
+                                end
+
+                                actionEntry.linkedPlacementOrder = matchedOrder
+                                actionEntry.isUIReplay = true
+                                actionEntry.yenCost = captureVisibleUpgradeCost()
+                            end)
                         end
-                    end)
+                    end
                 end)
-            end
+            end)
         end
 
         return table.unpack(result, 1, result.n)
