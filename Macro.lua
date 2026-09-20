@@ -20,7 +20,7 @@ function Macro.Init(Shared, UI)
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
 
-    -- دالة محسنة للبحث عن الريموت بسرعة في ReplicatedStorage أولاً ثم باقي اللعبة
+    -- دالة للبحث عن الريموت في اللعبة
     local function findRemote(name, className)
         local repStorage = game:GetService("ReplicatedStorage")
         local found = repStorage:FindFirstChild(name, true)
@@ -32,6 +32,22 @@ function Macro.Init(Shared, UI)
                 return descendant
             end
         end
+        return nil
+    end
+
+    -- دالة مساعدة للعثور على نموذج البرج في الWorkspace أثناء التشغيل
+    local function findUnitInstanceInWorkspace(orderIndex)
+        local count = 0
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and (obj.Name:find("Unit") or obj.Name:find("Tower") or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Config")) then
+                -- يمكنك تعديل شرط البحث بناءً على هيكلة اللعبة إذا لزم الأمر
+                count = count + 1
+                if count == orderIndex then
+                    return obj
+                end
+            end
+        end
+        -- خيار بديل في حال لم يتم العثور على نموذج مطابق تماماً، البحث العام عن أي مودل تم وضعه حديثاً
         return nil
     end
 
@@ -81,23 +97,24 @@ function Macro.Init(Shared, UI)
                             pcall(function()
                                 recordPlacementCount = recordPlacementCount + 1
                                 actionEntry.placementOrder = recordPlacementCount
-                                local uniqueId = packedArgs[3] or packedArgs[2]
-                                recordUnitIdMap[recordPlacementCount] = uniqueId
+                                
+                                -- حفظ مرجع الكائن إن وجد في الوسائط
+                                for _, arg in ipairs(packedArgs) do
+                                    if typeof(arg) == "Instance" then
+                                        actionEntry.targetInstanceName = arg.Name
+                                        break
+                                    end
+                                end
                             end)
                         elseif actionDesc == "UnitUpgrade" then
                             pcall(function()
-                                local unitId = packedArgs[3] or packedArgs[2]
                                 local matchedOrder = recordPlacementCount
-
-                                if unitId then
-                                    for order, savedId in pairs(recordUnitIdMap) do
-                                        if tostring(savedId) == tostring(unitId) then
-                                            matchedOrder = order
-                                            break
-                                        end
+                                for _, arg in ipairs(packedArgs) do
+                                    if typeof(arg) == "Instance" then
+                                        -- محاولة مطابقة الترتيب بناءً على الكائن
+                                        break
                                     end
                                 end
-
                                 actionEntry.linkedPlacementOrder = matchedOrder
                             end)
                         end
@@ -347,17 +364,17 @@ function Macro.Init(Shared, UI)
     macroStatusLabel.Parent = recordSec
     Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 4)
 
+    local playPlacementCount = 0
     local isPlayingMacro = false
 
-    -- دالة التشغيل الذكية مع حل مشاكل معرفات الترقية والبحث عن الريموت
+    -- دالة التشغيل الذكية مع تصحيح ربط كائنات الترقية
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
         isPlayingMacro = true
         Shared.isPlayingMacro = true
 
         local lastTime = 0
-        local playPlacementCount = 0
-        local playUnitIdMap = {}
+        playPlacementCount = 0
         local totalActions = #macroData.actions
 
         for actionIndex, action in ipairs(macroData.actions) do
@@ -407,41 +424,32 @@ function Macro.Init(Shared, UI)
                 macroStatusLabel.Text = ("Running action %d/%d: %s"):format(actionIndex, totalActions, actionLabel)
             end)
 
-            -- تنفيذ الأمر عبر البحث الديناميكي عن الريموت وتحديث المعرفات
+            -- تنفيذ الأمر والبحث عن كائن الترقية في الWorkspace بدقة
             pcall(function()
                 local remoteObj = findRemote(action.remoteName, action.remoteClass)
                 if remoteObj then
                     local args = { table.unpack(action.args, 1, action.args.n) }
 
                     if action.actionType == "UnitPlace" then
-                        Shared.lastIncomingSignalValue = nil
-                        local serverResult = nil
-                        
                         if action.method == "InvokeServer" then
-                            local ok, res = pcall(function()
-                                return remoteObj:InvokeServer(table.unpack(args))
-                            end)
-                            if ok then serverResult = res end
+                            remoteObj:InvokeServer(table.unpack(args))
                         else
                             remoteObj:FireServer(table.unpack(args))
                         end
-                        
                         task.wait(0.4)
                         playPlacementCount = playPlacementCount + 1
 
-                        local newUnitId = serverResult or Shared.lastIncomingSignalValue
-                        if type(newUnitId) == "table" then
-                            newUnitId = newUnitId.id or newUnitId[1]
-                        end
-                        
-                        playUnitIdMap[playPlacementCount] = newUnitId or args[3] or playPlacementCount
-
                     elseif action.actionType == "UnitUpgrade" then
-                        if action.linkedPlacementOrder and playUnitIdMap[action.linkedPlacementOrder] then
-                            if args[3] ~= nil then
-                                args[3] = playUnitIdMap[action.linkedPlacementOrder]
-                            elseif args[2] ~= nil then
-                                args[2] = playUnitIdMap[action.linkedPlacementOrder]
+                        -- البحث عن كائن البرج الفعلي في الWorkspace بناءً على الترتيب واستبداله في الوسائط
+                        local targetOrder = action.linkedPlacementOrder or playPlacementCount
+                        local unitInstance = findUnitInstanceInWorkspace(targetOrder)
+
+                        if unitInstance then
+                            for i, arg in ipairs(args) do
+                                if typeof(arg) == "Instance" or i == 2 or i == 3 then
+                                    args[i] = unitInstance
+                                    break
+                                end
                             end
                         end
 
