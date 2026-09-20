@@ -93,25 +93,11 @@ function Macro.Init(Shared, UI)
                             pcall(function()
                                 recordPlacementCount = recordPlacementCount + 1
                                 actionEntry.placementOrder = recordPlacementCount
-                                -- حفظ المعرّف الفريد للبرج (سواء كان رقم أو كائن أو جدول)
-                                local uniqueId = packedArgs[3] or packedArgs[2]
-                                recordUnitIdMap[recordPlacementCount] = uniqueId
+                                recordUnitIdMap[recordPlacementCount] = recordPlacementCount
                             end)
                         elseif actionDesc == "UnitUpgrade" then
                             pcall(function()
-                                local unitId = packedArgs[3] or packedArgs[2]
-                                local matchedOrder = recordPlacementCount
-
-                                if unitId then
-                                    for order, savedId in pairs(recordUnitIdMap) do
-                                        if tostring(savedId) == tostring(unitId) then
-                                            matchedOrder = order
-                                            break
-                                        end
-                                    end
-                                end
-
-                                actionEntry.linkedPlacementOrder = matchedOrder
+                                actionEntry.linkedPlacementOrder = recordPlacementCount
                             end)
                         end
                     end
@@ -362,7 +348,7 @@ function Macro.Init(Shared, UI)
 
     local isPlayingMacro = false
 
-    -- دالة التشغيل مع ربط المعرّفات وطباعة التفاصيل في الـ F9 Console
+    -- دالة التشغيل الكاملة والمصححة
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
         isPlayingMacro = true
@@ -395,55 +381,40 @@ function Macro.Init(Shared, UI)
                 macroStatusLabel.Text = ("Running %d/%d: %s"):format(actionIndex, totalActions, actionLabel)
             end)
 
-            -- تنفيذ الأمر والتعامل مع الترقية والوضع
             pcall(function()
                 local remoteObj = findRemote(action.remoteName, action.remoteClass)
                 if remoteObj then
                     local args = { table.unpack(action.args, 1, action.args.n) }
 
                     if action.actionType == "UnitPlace" then
-                        Shared.lastIncomingSignalValue = nil
-                        local serverResult = nil
+                        playPlacementCount = playPlacementCount + 1
+                        playUnitIdMap[playPlacementCount] = playPlacementCount
 
                         if action.method == "InvokeServer" then
-                            local ok, res = pcall(function()
-                                return remoteObj:InvokeServer(table.unpack(args))
-                            end)
-                            if ok then serverResult = res end
+                            remoteObj:InvokeServer(table.unpack(args))
                         else
                             remoteObj:FireServer(table.unpack(args))
                         end
-
                         task.wait(0.4)
-                        playPlacementCount = playPlacementCount + 1
-
-                        local newUnitId = serverResult or Shared.lastIncomingSignalValue
-                        if type(newUnitId) == "table" then
-                            newUnitId = newUnitId.id or newUnitId[1]
-                        end
-
-                        playUnitIdMap[playPlacementCount] = newUnitId or action.args[3] or action.args[2] or playPlacementCount
-                        print("[Macro Debug] Placed Unit #", playPlacementCount, "Mapped ID:", tostring(playUnitIdMap[playPlacementCount]))
+                        print("[Macro Debug] Placed Unit #", playPlacementCount, "Assigned ID:", playUnitIdMap[playPlacementCount])
 
                     elseif action.actionType == "UnitUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
-                        local mappedId = targetOrder and playUnitIdMap[targetOrder]
+                        local mappedId = targetOrder and playUnitIdMap[targetOrder] or playPlacementCount
 
-                        if mappedId then
-                            if #args >= 3 then
-                                args[3] = mappedId
-                            elseif #args >= 2 then
-                                args[2] = mappedId
-                            end
+                        if #args >= 3 then
+                            args[3] = mappedId
+                        elseif #args >= 2 then
+                            args[2] = mappedId
                         end
 
-                        print("[Macro Debug] Upgrading Unit order:", targetOrder, "Using ID:", tostring(mappedId))
+                        print("[Macro Debug] Upgrading Unit order:", targetOrder, "Targeting ID:", mappedId)
 
                         if action.method == "InvokeServer" then
                             local ok, res = pcall(function()
                                 return remoteObj:InvokeServer(table.unpack(args))
                             end)
-                            print("[Macro Debug] Upgrade InvokeServer Response:", ok, res)
+                            print("[Macro Debug] Upgrade Response:", ok, res)
                         else
                             remoteObj:FireServer(table.unpack(args))
                             print("[Macro Debug] Upgrade FireServer sent.")
