@@ -80,26 +80,22 @@ function Macro.Init(Shared, UI)
                                     recordUnitIdMap[recordPlacementCount] = {
                                         model = newModel,
                                         name = newModel and newModel.Name or nil,
-                                        replicaId = Shared.lastIncomingSignalValue
+                                        replicaId = Shared.lastIncomingSignalValue or (packedArgs[3] and tostring(packedArgs[3]))
                                     }
                                 end)
                             end)
                         elseif actionDesc == "ManualUpgrade" then
                             pcall(function()
-                                print("=== UPGRADE REMOTE ARGS DEBUG ===")
-                                for i, arg in ipairs(packedArgs) do
-                                    print(string.format("Arg [%d] | Type: %s | Value: %s", i, typeof(arg), tostring(arg)))
-                                end
-                                print("==================================")
-
-                                local lowerInnerLocal = innerAction and innerAction:lower() or ""
-                                local isAuto = lowerInnerLocal:find("autoupgradepriority") or lowerInnerLocal:find("auto")
+                                local actionName = typeof(packedArgs[2]) == "string" and packedArgs[2] or ""
+                                local isAuto = actionName:find("AutoUpgrade") ~= nil
                                 actionEntry.uiClickButtonName = isAuto and "AutoUpgradeButton" or "UpgradeButton"
-                                
+
+                                local unitId = packedArgs[3]
                                 local matchedOrder = recordPlacementCount
-                                for _, arg in ipairs(packedArgs) do
+
+                                if unitId then
                                     for order, data in pairs(recordUnitIdMap) do
-                                        if (typeof(arg) == "Instance" and (data.model == arg or arg:IsDescendantOf(data.model))) or (tostring(data.replicaId) == tostring(arg)) then
+                                        if tostring(data.replicaId) == tostring(unitId) then
                                             matchedOrder = order
                                             break
                                         end
@@ -447,7 +443,7 @@ function Macro.Init(Shared, UI)
                         playPlacementCount = playPlacementCount + 1
                         playUnitIdMap[playPlacementCount] = {
                             model = newModel,
-                            replicaId = Shared.lastIncomingSignalValue
+                            replicaId = Shared.lastIncomingSignalValue or (args[3] and tostring(args[3]))
                         }
                     end
                 end
