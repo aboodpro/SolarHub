@@ -20,8 +20,13 @@ function Macro.Init(Shared, UI)
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
 
-    -- دالة مساعدة للبحث عن الريموت في اللعبة بالاسم والنوع
+    -- دالة محسنة للبحث عن الريموت بسرعة في ReplicatedStorage أولاً ثم باقي اللعبة
     local function findRemote(name, className)
+        local repStorage = game:GetService("ReplicatedStorage")
+        local found = repStorage:FindFirstChild(name, true)
+        if found and (not className or found.ClassName == className) then
+            return found
+        end
         for _, descendant in ipairs(game:GetDescendants()) do
             if descendant.Name == name and (not className or descendant.ClassName == className) then
                 return descendant
@@ -30,7 +35,7 @@ function Macro.Init(Shared, UI)
         return nil
     end
 
-    -- اعتراض أوامر الشبكة أثناء التسجيل وحفظ الاسم بدلاً من الكائن المباشر
+    -- اعتراض أوامر الشبكة أثناء التسجيل
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
@@ -81,7 +86,7 @@ function Macro.Init(Shared, UI)
                             end)
                         elseif actionDesc == "UnitUpgrade" then
                             pcall(function()
-                                local unitId = packedArgs[3]
+                                local unitId = packedArgs[3] or packedArgs[2]
                                 local matchedOrder = recordPlacementCount
 
                                 if unitId then
@@ -344,7 +349,7 @@ function Macro.Init(Shared, UI)
 
     local isPlayingMacro = false
 
-    -- دالة التشغيل الذكية مع البحث الديناميكي عن الريموت وربط المعرفات
+    -- دالة التشغيل الذكية مع حل مشاكل معرفات الترقية والبحث عن الريموت
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
         isPlayingMacro = true
@@ -402,7 +407,7 @@ function Macro.Init(Shared, UI)
                 macroStatusLabel.Text = ("Running action %d/%d: %s"):format(actionIndex, totalActions, actionLabel)
             end)
 
-            -- تنفيذ الأمر عبر البحث عن الريموت ديناميكياً
+            -- تنفيذ الأمر عبر البحث الديناميكي عن الريموت وتحديث المعرفات
             pcall(function()
                 local remoteObj = findRemote(action.remoteName, action.remoteClass)
                 if remoteObj then
@@ -433,7 +438,11 @@ function Macro.Init(Shared, UI)
 
                     elseif action.actionType == "UnitUpgrade" then
                         if action.linkedPlacementOrder and playUnitIdMap[action.linkedPlacementOrder] then
-                            args[3] = playUnitIdMap[action.linkedPlacementOrder]
+                            if args[3] ~= nil then
+                                args[3] = playUnitIdMap[action.linkedPlacementOrder]
+                            elseif args[2] ~= nil then
+                                args[2] = playUnitIdMap[action.linkedPlacementOrder]
+                            end
                         end
 
                         if action.method == "InvokeServer" then
@@ -448,6 +457,8 @@ function Macro.Init(Shared, UI)
                             remoteObj:FireServer(table.unpack(args))
                         end
                     end
+                else
+                    warn("[Macro] Remote not found: " .. tostring(action.remoteName))
                 end
             end)
         end
