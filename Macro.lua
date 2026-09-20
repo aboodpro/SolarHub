@@ -91,9 +91,34 @@ function Macro.Init(Shared, UI)
                             elseif actionDesc == "ManualUpgrade" then
                                 pcall(function()
                                     local lowerInnerLocal = innerAction and innerAction:lower() or ""
-                                    local buttonName = lowerInnerLocal:find("autoupgradepriority") and "AutoUpgradeButton" or "UpgradeButton"
+                                    
+                                    -- 1. توسيع كلمات البحث لتشمل "auto" لضمان التقاط زر التطوير التلقائي
+                                    local isAuto = lowerInnerLocal:find("autoupgradepriority") or lowerInnerLocal:find("auto")
+                                    local buttonName = isAuto and "AutoUpgradeButton" or "UpgradeButton"
                                     actionEntry.uiClickButtonName = buttonName
-                                    actionEntry.linkedPlacementOrder = recordPlacementCount
+                                    
+                                    -- 2. البحث عن الشخصية الصحيحة من خلال البيانات المرسلة بدلاً من الاعتماد على آخر شخصية
+                                    local matchedOrder = recordPlacementCount
+                                    for _, arg in ipairs(packedArgs) do
+                                        if typeof(arg) == "Instance" then
+                                            for order, data in pairs(recordUnitIdMap) do
+                                                if data.model == arg or arg:IsDescendantOf(data.model) then
+                                                    matchedOrder = order
+                                                    break
+                                                end
+                                            end
+                                        elseif typeof(arg) == "string" or typeof(arg) == "number" then
+                                            local strArg = tostring(arg)
+                                            for order, data in pairs(recordUnitIdMap) do
+                                                if data.replicaId == strArg then
+                                                    matchedOrder = order
+                                                    break
+                                                end
+                                            end
+                                        end
+                                    end
+                                    
+                                    actionEntry.linkedPlacementOrder = matchedOrder
                                     actionEntry.isUIReplay = true
                                     actionEntry.yenCost = captureVisibleUpgradeCost()
                                 end)
