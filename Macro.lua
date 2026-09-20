@@ -20,7 +20,7 @@ function Macro.Init(Shared, UI)
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
 
-    -- دالة للبحث عن الريموت في اللعبة
+    -- دالة البحث عن الريموت
     local function findRemote(name, className)
         local repStorage = game:GetService("ReplicatedStorage")
         local found = repStorage:FindFirstChild(name, true)
@@ -35,23 +35,7 @@ function Macro.Init(Shared, UI)
         return nil
     end
 
-    -- دالة مساعدة للعثور على نموذج البرج في الWorkspace أثناء التشغيل
-    local function findUnitInstanceInWorkspace(orderIndex)
-        local count = 0
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Model") and (obj.Name:find("Unit") or obj.Name:find("Tower") or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Config")) then
-                -- يمكنك تعديل شرط البحث بناءً على هيكلة اللعبة إذا لزم الأمر
-                count = count + 1
-                if count == orderIndex then
-                    return obj
-                end
-            end
-        end
-        -- خيار بديل في حال لم يتم العثور على نموذج مطابق تماماً، البحث العام عن أي مودل تم وضعه حديثاً
-        return nil
-    end
-
-    -- اعتراض أوامر الشبكة أثناء التسجيل
+    -- اعتراض أوامر الشبكة أثناء التسجيل بدقة عالية
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
@@ -92,29 +76,41 @@ function Macro.Init(Shared, UI)
                         table.insert(recordedActions, actionEntry)
 
                         if actionDesc == "UnitPlace" then
-                            local slotNum = typeof(packedArgs[3]) == "number" and packedArgs[3] or nil
-                            actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
+                            local slotNum = nil
                             pcall(function()
-                                recordPlacementCount = recordPlacementCount + 1
-                                actionEntry.placementOrder = recordPlacementCount
-                                
-                                -- حفظ مرجع الكائن إن وجد في الوسائط
                                 for _, arg in ipairs(packedArgs) do
-                                    if typeof(arg) == "Instance" then
-                                        actionEntry.targetInstanceName = arg.Name
+                                    if typeof(arg) == "number" and arg < 10 then
+                                        slotNum = arg
                                         break
                                     end
                                 end
                             end)
+                            
+                            pcall(function()
+                                actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
+                            end)
+
+                            pcall(function()
+                                recordPlacementCount = recordPlacementCount + 1
+                                actionEntry.placementOrder = recordPlacementCount
+                                -- حفظ المعرّف الفريد للبرج (سواء كان رقم أو كائن أو جدول)
+                                local uniqueId = packedArgs[3] or packedArgs[2]
+                                recordUnitIdMap[recordPlacementCount] = uniqueId
+                            end)
                         elseif actionDesc == "UnitUpgrade" then
                             pcall(function()
+                                local unitId = packedArgs[3] or packedArgs[2]
                                 local matchedOrder = recordPlacementCount
-                                for _, arg in ipairs(packedArgs) do
-                                    if typeof(arg) == "Instance" then
-                                        -- محاولة مطابقة الترتيب بناءً على الكائن
-                                        break
+
+                                if unitId then
+                                    for order, savedId in pairs(recordUnitIdMap) do
+                                        if tostring(savedId) == tostring(unitId) then
+                                            matchedOrder = order
+                                            break
+                                        end
                                     end
                                 end
+
                                 actionEntry.linkedPlacementOrder = matchedOrder
                             end)
                         end
@@ -126,7 +122,7 @@ function Macro.Init(Shared, UI)
         return table.unpack(result, 1, result.n)
     end)
 
-    -- بناء واجهة الماكرو
+    -- واجهة الماكرو
     local createSec = Instance.new("Frame")
     createSec.Size = UDim2.new(1, 0, 0, 100)
     createSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
@@ -364,17 +360,17 @@ function Macro.Init(Shared, UI)
     macroStatusLabel.Parent = recordSec
     Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 4)
 
-    local playPlacementCount = 0
     local isPlayingMacro = false
 
-    -- دالة التشغيل الذكية مع تصحيح ربط كائنات الترقية
+    -- دالة التشغيل مع ربط المعرّفات وطباعة التفاصيل في الـ F9 Console
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
         isPlayingMacro = true
         Shared.isPlayingMacro = true
 
         local lastTime = 0
-        playPlacementCount = 0
+        local playPlacementCount = 0
+        local playUnitIdMap = {}
         local totalActions = #macroData.actions
 
         for actionIndex, action in ipairs(macroData.actions) do
@@ -386,77 +382,71 @@ function Macro.Init(Shared, UI)
                 while isPlayingMacro do
                     local yen = getCurrentYen()
                     if yen and yen >= action.yenCost then
-                        pcall(function()
-                            macroStatusLabel.Text = ("Action %d/%d (%s): Ready! (Yen %d/%d)"):format(
-                                actionIndex, totalActions, actionLabel, yen, action.yenCost)
-                        end)
                         break
                     end
-                    pcall(function()
-                        if yen then
-                            local missing = action.yenCost - yen
-                            macroStatusLabel.Text = ("Action %d/%d (%s): Missing %d Yen (have %d/%d)"):format(
-                                actionIndex, totalActions, actionLabel, missing, yen, action.yenCost)
-                        else
-                            macroStatusLabel.Text = ("Action %d/%d (%s): waiting for Yen data..."):format(
-                                actionIndex, totalActions, actionLabel)
-                        end
-                    end)
                     task.wait(0.3)
                 end
             elseif gap > 0 then
-                local remaining = gap
-                while remaining > 0 and isPlayingMacro do
-                    local step = math.min(0.2, remaining)
-                    pcall(function()
-                        local yen = getCurrentYen()
-                        local yenText = yen and (" | Yen: " .. tostring(yen)) or ""
-                        macroStatusLabel.Text = ("Action %d/%d (%s) in %.1fs%s"):format(
-                            actionIndex, totalActions, actionLabel, remaining, yenText)
-                    end)
-                    task.wait(step)
-                    remaining = remaining - step
-                end
+                task.wait(gap)
             end
             lastTime = action.time
 
             pcall(function()
-                macroStatusLabel.Text = ("Running action %d/%d: %s"):format(actionIndex, totalActions, actionLabel)
+                macroStatusLabel.Text = ("Running %d/%d: %s"):format(actionIndex, totalActions, actionLabel)
             end)
 
-            -- تنفيذ الأمر والبحث عن كائن الترقية في الWorkspace بدقة
+            -- تنفيذ الأمر والتعامل مع الترقية والوضع
             pcall(function()
                 local remoteObj = findRemote(action.remoteName, action.remoteClass)
                 if remoteObj then
                     local args = { table.unpack(action.args, 1, action.args.n) }
 
                     if action.actionType == "UnitPlace" then
+                        Shared.lastIncomingSignalValue = nil
+                        local serverResult = nil
+
                         if action.method == "InvokeServer" then
-                            remoteObj:InvokeServer(table.unpack(args))
+                            local ok, res = pcall(function()
+                                return remoteObj:InvokeServer(table.unpack(args))
+                            end)
+                            if ok then serverResult = res end
                         else
                             remoteObj:FireServer(table.unpack(args))
                         end
+
                         task.wait(0.4)
                         playPlacementCount = playPlacementCount + 1
 
-                    elseif action.actionType == "UnitUpgrade" then
-                        -- البحث عن كائن البرج الفعلي في الWorkspace بناءً على الترتيب واستبداله في الوسائط
-                        local targetOrder = action.linkedPlacementOrder or playPlacementCount
-                        local unitInstance = findUnitInstanceInWorkspace(targetOrder)
+                        local newUnitId = serverResult or Shared.lastIncomingSignalValue
+                        if type(newUnitId) == "table" then
+                            newUnitId = newUnitId.id or newUnitId[1]
+                        end
 
-                        if unitInstance then
-                            for i, arg in ipairs(args) do
-                                if typeof(arg) == "Instance" or i == 2 or i == 3 then
-                                    args[i] = unitInstance
-                                    break
-                                end
+                        playUnitIdMap[playPlacementCount] = newUnitId or action.args[3] or action.args[2] or playPlacementCount
+                        print("[Macro Debug] Placed Unit #", playPlacementCount, "Mapped ID:", tostring(playUnitIdMap[playPlacementCount]))
+
+                    elseif action.actionType == "UnitUpgrade" then
+                        local targetOrder = action.linkedPlacementOrder
+                        local mappedId = targetOrder and playUnitIdMap[targetOrder]
+
+                        if mappedId then
+                            if #args >= 3 then
+                                args[3] = mappedId
+                            elseif #args >= 2 then
+                                args[2] = mappedId
                             end
                         end
 
+                        print("[Macro Debug] Upgrading Unit order:", targetOrder, "Using ID:", tostring(mappedId))
+
                         if action.method == "InvokeServer" then
-                            remoteObj:InvokeServer(table.unpack(args))
+                            local ok, res = pcall(function()
+                                return remoteObj:InvokeServer(table.unpack(args))
+                            end)
+                            print("[Macro Debug] Upgrade InvokeServer Response:", ok, res)
                         else
                             remoteObj:FireServer(table.unpack(args))
+                            print("[Macro Debug] Upgrade FireServer sent.")
                         end
                     else
                         if action.method == "InvokeServer" then
@@ -466,14 +456,10 @@ function Macro.Init(Shared, UI)
                         end
                     end
                 else
-                    warn("[Macro] Remote not found: " .. tostring(action.remoteName))
+                    warn("[Macro] Remote not found: " + tostring(action.remoteName))
                 end
             end)
         end
-
-        pcall(function()
-            macroStatusLabel.Text = "Idle (waiting to loop)"
-        end)
 
         isPlayingMacro = false
         Shared.isPlayingMacro = false
@@ -501,7 +487,7 @@ function Macro.Init(Shared, UI)
 
     recordBtn.MouseButton1Click:Connect(function()
         if Config.CurrentMacroName == "" then
-            showTopNotification("Select a macro from 'His Macros' first!", 3)
+            showTopNotification("Select a macro first!", 3)
             return
         end
         Config.RecordMacro = not Config.RecordMacro
@@ -518,10 +504,8 @@ function Macro.Init(Shared, UI)
             recordBtn.Text = "🔴 Record Macro"
             if savedMacros[Config.CurrentMacroName] then
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
-                local saved = saveMacrosToFile()
-                showTopNotification(saved and "Macro saved to file!" or "Macro saved (memory only)", 3)
-            else
-                showTopNotification("Macro saved!", 3)
+                saveMacrosToFile()
+                showTopNotification("Macro saved to file!", 3)
             end
         end
     end)
@@ -533,7 +517,7 @@ function Macro.Init(Shared, UI)
         end
         local macroData = savedMacros[Config.CurrentMacroName]
         if #macroData.actions == 0 then
-            showTopNotification("Macro is empty! Record actions first.", 3)
+            showTopNotification("Macro is empty!", 3)
             return
         end
 
@@ -541,47 +525,17 @@ function Macro.Init(Shared, UI)
 
         if Config.PlayMacro then
             playBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 80)
-            playBtn.Text = "⏸ Playing (Remotes Only)"
-
-            Shared.resetSessionLog()
-            task.spawn(function()
-                task.wait(60)
-                local copied = copySessionLogToClipboard()
-                showTopNotification(copied and "60s log copied to clipboard!" or "Copy failed", 4)
-            end)
+            playBtn.Text = "⏸ Playing..."
 
             task.spawn(function()
-                local lastSeenWave = nil
                 while Config.PlayMacro do
                     runMacroOnce(macroData)
-
-                    local waitStart = os.clock()
-                    while Config.PlayMacro and (os.clock() - waitStart) < 120 do
-                        local wave, maxWave = getWaveInfo()
-                        if wave then
-                            pcall(function()
-                                macroStatusLabel.Text = ("Waiting for new match... (wave %s/%s)"):format(
-                                    tostring(wave), tostring(maxWave or "?"))
-                            end)
-                            if lastSeenWave and wave < lastSeenWave then
-                                lastSeenWave = wave
-                                break
-                            end
-                            lastSeenWave = wave
-                        else
-                            task.wait(2)
-                            break
-                        end
-                        task.wait(0.5)
-                    end
+                    task.wait(2)
                 end
             end)
         else
             playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
             playBtn.Text = "▶ Play Macro"
-            pcall(function()
-                macroStatusLabel.Text = "Idle"
-            end)
         end
     end)
 end
