@@ -9,10 +9,7 @@ function Macro.Init(Shared, UI)
     local HttpService = Shared.HttpService
     local serializeMacros = Shared.serializeMacros
     local isRemoteValid = Shared.isRemoteValid
-    local waitForNewModel = Shared.waitForNewModel
-    local captureVisibleUpgradeCost = Shared.captureVisibleUpgradeCost
     local captureVisiblePlacementCost = Shared.captureVisiblePlacementCost
-    local performUnitUIUpgrade = Shared.performUnitUIUpgrade
     local getCurrentYen = Shared.getCurrentYen
     local getWaveInfo = Shared.getWaveInfo
     local copySessionLogToClipboard = Shared.copySessionLogToClipboard
@@ -38,7 +35,6 @@ function Macro.Init(Shared, UI)
         if isRemoteCall and Config.RecordMacro then
             task.spawn(function()
                 pcall(function()
-                    local actionDesc = "Remote"
                     local innerAction = nil
                     for _, arg in ipairs(packedArgs) do
                         if typeof(arg) == "string" then
@@ -48,15 +44,14 @@ function Macro.Init(Shared, UI)
                     end
                     local lowerInner = innerAction and innerAction:lower() or ""
 
-                    if lowerInner:find("upgrade") or lowerInner:find("lvl") or lowerInner:find("level") then
-                        actionDesc = "ManualUpgrade"
+                    local actionDesc = "Other"
+                    if lowerInner:find("upgrade") or lowerInner:find("lvl") or lowerInner:find("level") or lowerInner:find("priority") then
+                        actionDesc = "UnitUpgradeOrAction"
                     elseif lowerInner:find("place") or lowerInner:find("spawn") or lowerInner:find("deploy") then
                         actionDesc = "PlaceOrUpdateUnit"
-                    else
-                        actionDesc = "Other: " .. (selfName or "")
                     end
 
-                    if actionDesc == "PlaceOrUpdateUnit" or actionDesc == "ManualUpgrade" then
+                    if actionDesc == "PlaceOrUpdateUnit" or actionDesc == "UnitUpgradeOrAction" then
                         local actionEntry = {
                             time = os.clock() - recordStartTime,
                             actionType = actionDesc,
@@ -69,33 +64,20 @@ function Macro.Init(Shared, UI)
                         if actionDesc == "PlaceOrUpdateUnit" then
                             local slotNum = typeof(packedArgs[3]) == "number" and packedArgs[3] or nil
                             actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
-                            Shared.clearPendingModels()
-                            task.spawn(function()
-                                Shared.lastIncomingSignalValue = nil
-                                local newModel = waitForNewModel(2)
-                                task.wait(0.3)
-                                pcall(function()
-                                    recordPlacementCount = recordPlacementCount + 1
-                                    actionEntry.placementOrder = recordPlacementCount
-                                    recordUnitIdMap[recordPlacementCount] = {
-                                        model = newModel,
-                                        name = newModel and newModel.Name or nil,
-                                        replicaId = Shared.lastIncomingSignalValue or (packedArgs[3] and tostring(packedArgs[3]))
-                                    }
-                                end)
-                            end)
-                        elseif actionDesc == "ManualUpgrade" then
                             pcall(function()
-                                local actionName = typeof(packedArgs[2]) == "string" and packedArgs[2] or ""
-                                local isAuto = actionName:find("AutoUpgrade") ~= nil
-                                actionEntry.uiClickButtonName = isAuto and "AutoUpgradeButton" or "UpgradeButton"
-
+                                recordPlacementCount = recordPlacementCount + 1
+                                actionEntry.placementOrder = recordPlacementCount
+                                local uniqueId = packedArgs[3] or packedArgs[2]
+                                recordUnitIdMap[recordPlacementCount] = uniqueId
+                            end)
+                        elseif actionDesc == "UnitUpgradeOrAction" then
+                            pcall(function()
                                 local unitId = packedArgs[3]
                                 local matchedOrder = recordPlacementCount
 
                                 if unitId then
-                                    for order, data in pairs(recordUnitIdMap) do
-                                        if tostring(data.replicaId) == tostring(unitId) then
+                                    for order, savedId in pairs(recordUnitIdMap) do
+                                        if tostring(savedId) == tostring(unitId) then
                                             matchedOrder = order
                                             break
                                         end
@@ -103,8 +85,6 @@ function Macro.Init(Shared, UI)
                                 end
 
                                 actionEntry.linkedPlacementOrder = matchedOrder
-                                actionEntry.isUIReplay = true
-                                actionEntry.yenCost = captureVisibleUpgradeCost()
                             end)
                         end
                     end
@@ -367,9 +347,7 @@ function Macro.Init(Shared, UI)
         for actionIndex, action in ipairs(macroData.actions) do
             if not isPlayingMacro then break end
             local gap = action.time - lastTime
-            local actionLabel = (action.isUIReplay and action.uiClickButtonName)
-                or (action.actionType == "PlaceOrUpdateUnit" and "Place Unit")
-                or (action.actionType or "Action")
+            local actionLabel = action.actionType or "Action"
 
             if action.yenCost then
                 while isPlayingMacro do
@@ -414,37 +392,34 @@ function Macro.Init(Shared, UI)
             end)
 
             pcall(function()
-                if action.isUIReplay then
-                    local entry = action.linkedPlacementOrder and playUnitIdMap[action.linkedPlacementOrder]
-                    if entry and entry.model then
-                        performUnitUIUpgrade(entry.model, action.uiClickButtonName)
-                    end
-                    return
-                end
-
                 if isRemoteValid(action) then
                     local args = { table.unpack(action.args, 1, action.args.n) }
 
-                    local expectingPlacement = (action.actionType == "PlaceOrUpdateUnit")
-                    if expectingPlacement then
+                    if action.actionType == "PlaceOrUpdateUnit" then
                         Shared.lastIncomingSignalValue = nil
-                        Shared.clearPendingModels()
-                    end
-
-                    if action.method == "InvokeServer" then
-                        action.remote:InvokeServer(table.unpack(args))
-                    else
-                        action.remote:FireServer(table.unpack(args))
-                    end
-
-                    if expectingPlacement then
-                        local newModel = waitForNewModel(2)
+                        if action.method == "InvokeServer" then
+                            action.remote:InvokeServer(table.unpack(args))
+                        else
+                            action.remote:FireServer(table.unpack(args))
+                        end
                         task.wait(0.3)
                         playPlacementCount = playPlacementCount + 1
-                        playUnitIdMap[playPlacementCount] = {
-                            model = newModel,
-                            replicaId = Shared.lastIncomingSignalValue or (args[3] and tostring(args[3]))
-                        }
+                        playUnitIdMap[playPlacementCount] = Shared.lastIncomingSignalValue or (args[3] and tostring(args[3]))
+                    elseif action.actionType == "UnitUpgradeOrAction" then
+                        if action.linkedPlacementOrder and playUnitIdMap[action.linkedPlacementOrder] then
+                            args[3] = playUnitIdMap[action.linkedPlacementOrder]
+                        end
+                        if action.method == "InvokeServer" then
+                            action.remote:InvokeServer(table.unpack(args))
+                        else
+                            action.remote:FireServer(table.unpack(args))
+                        end
+                    else
+                        if action.method == "InvokeServer" then
+                            action.remote:InvokeServer(table.unpack(args))
+                        else
+                            action.remote:FireServer(table.unpack(args))
+                        end
                     end
                 end
             end)
@@ -498,7 +473,7 @@ function Macro.Init(Shared, UI)
             if savedMacros[Config.CurrentMacroName] then
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
                 local saved = saveMacrosToFile()
-                showTopNotification(saved and "Macro saved to file!" or "Macro saved (memory only - file save unsupported)", 3)
+                showTopNotification(saved and "Macro saved to file!" or "Macro saved (memory only)", 3)
             else
                 showTopNotification("Macro saved!", 3)
             end
@@ -520,13 +495,13 @@ function Macro.Init(Shared, UI)
 
         if Config.PlayMacro then
             playBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 80)
-            playBtn.Text = "⏸ Playing (Smart Loop)"
+            playBtn.Text = "⏸ Playing (Remotes Only)"
 
             Shared.resetSessionLog()
             task.spawn(function()
                 task.wait(60)
                 local copied = copySessionLogToClipboard()
-                showTopNotification(copied and "60s log copied to clipboard!" or "Copy failed - read console manually", 4)
+                showTopNotification(copied and "60s log copied to clipboard!" or "Copy failed", 4)
             end)
 
             task.spawn(function()
