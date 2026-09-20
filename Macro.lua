@@ -7,8 +7,6 @@ function Macro.Init(Shared, UI)
     local saveMacrosToFile = Shared.saveMacrosToFile
     local showTopNotification = Shared.showTopNotification
     local HttpService = Shared.HttpService
-    local serializeMacros = Shared.serializeMacros
-    local isRemoteValid = Shared.isRemoteValid
     local captureVisiblePlacementCost = Shared.captureVisiblePlacementCost
     local getCurrentYen = Shared.getCurrentYen
     local getWaveInfo = Shared.getWaveInfo
@@ -22,7 +20,17 @@ function Macro.Init(Shared, UI)
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
 
-    -- اعتراض أوامر الشبكة أثناء التسجيل
+    -- دالة مساعدة للبحث عن الريموت في اللعبة بالاسم والنوع
+    local function findRemote(name, className)
+        for _, descendant in ipairs(game:GetDescendants()) do
+            if descendant.Name == name and (not className or descendant.ClassName == className) then
+                return descendant
+            end
+        end
+        return nil
+    end
+
+    -- اعتراض أوامر الشبكة أثناء التسجيل وحفظ الاسم بدلاً من الكائن المباشر
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
@@ -46,22 +54,23 @@ function Macro.Init(Shared, UI)
 
                     local actionDesc = "Other"
                     if lowerInner:find("upgrade") or lowerInner:find("lvl") or lowerInner:find("level") or lowerInner:find("priority") then
-                        actionDesc = "UnitUpgradeOrAction"
+                        actionDesc = "UnitUpgrade"
                     elseif lowerInner:find("place") or lowerInner:find("spawn") or lowerInner:find("deploy") then
-                        actionDesc = "PlaceOrUpdateUnit"
+                        actionDesc = "UnitPlace"
                     end
 
-                    if actionDesc == "PlaceOrUpdateUnit" or actionDesc == "UnitUpgradeOrAction" then
+                    if actionDesc == "UnitPlace" or actionDesc == "UnitUpgrade" then
                         local actionEntry = {
                             time = os.clock() - recordStartTime,
                             actionType = actionDesc,
-                            remote = selfRef,
+                            remoteName = selfRef.Name,
+                            remoteClass = selfRef.ClassName,
                             method = method,
                             args = packedArgs
                         }
                         table.insert(recordedActions, actionEntry)
 
-                        if actionDesc == "PlaceOrUpdateUnit" then
+                        if actionDesc == "UnitPlace" then
                             local slotNum = typeof(packedArgs[3]) == "number" and packedArgs[3] or nil
                             actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
                             pcall(function()
@@ -70,7 +79,7 @@ function Macro.Init(Shared, UI)
                                 local uniqueId = packedArgs[3] or packedArgs[2]
                                 recordUnitIdMap[recordPlacementCount] = uniqueId
                             end)
-                        elseif actionDesc == "UnitUpgradeOrAction" then
+                        elseif actionDesc == "UnitUpgrade" then
                             pcall(function()
                                 local unitId = packedArgs[3]
                                 local matchedOrder = recordPlacementCount
@@ -255,7 +264,7 @@ function Macro.Init(Shared, UI)
         end
         local ok, encoded = pcall(function()
             local single = { [Config.CurrentMacroName] = savedMacros[Config.CurrentMacroName] }
-            return HttpService:JSONEncode(serializeMacros(single))
+            return HttpService:JSONEncode(Shared.serializeMacros(single))
         end)
         if not ok then
             showTopNotification("Export failed: " .. tostring(encoded), 3)
@@ -335,7 +344,7 @@ function Macro.Init(Shared, UI)
 
     local isPlayingMacro = false
 
-    -- دالة التشغيل الذكية التي تربط المعرفات الديناميكية وتنفذ الأوامر مباشرة عبر Remotes
+    -- دالة التشغيل الذكية مع البحث الديناميكي عن الريموت وربط المعرفات
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
         isPlayingMacro = true
@@ -393,22 +402,23 @@ function Macro.Init(Shared, UI)
                 macroStatusLabel.Text = ("Running action %d/%d: %s"):format(actionIndex, totalActions, actionLabel)
             end)
 
-            -- تشغيل الأمر عبر الشبكة وتحديث المعرفات ديناميكياً
+            -- تنفيذ الأمر عبر البحث عن الريموت ديناميكياً
             pcall(function()
-                if isRemoteValid(action) then
+                local remoteObj = findRemote(action.remoteName, action.remoteClass)
+                if remoteObj then
                     local args = { table.unpack(action.args, 1, action.args.n) }
 
-                    if action.actionType == "PlaceOrUpdateUnit" then
+                    if action.actionType == "UnitPlace" then
                         Shared.lastIncomingSignalValue = nil
                         local serverResult = nil
                         
                         if action.method == "InvokeServer" then
                             local ok, res = pcall(function()
-                                return action.remote:InvokeServer(table.unpack(args))
+                                return remoteObj:InvokeServer(table.unpack(args))
                             end)
                             if ok then serverResult = res end
                         else
-                            action.remote:FireServer(table.unpack(args))
+                            remoteObj:FireServer(table.unpack(args))
                         end
                         
                         task.wait(0.4)
@@ -421,21 +431,21 @@ function Macro.Init(Shared, UI)
                         
                         playUnitIdMap[playPlacementCount] = newUnitId or args[3] or playPlacementCount
 
-                    elseif action.actionType == "UnitUpgradeOrAction" then
+                    elseif action.actionType == "UnitUpgrade" then
                         if action.linkedPlacementOrder and playUnitIdMap[action.linkedPlacementOrder] then
                             args[3] = playUnitIdMap[action.linkedPlacementOrder]
                         end
 
                         if action.method == "InvokeServer" then
-                            action.remote:InvokeServer(table.unpack(args))
+                            remoteObj:InvokeServer(table.unpack(args))
                         else
-                            action.remote:FireServer(table.unpack(args))
+                            remoteObj:FireServer(table.unpack(args))
                         end
                     else
                         if action.method == "InvokeServer" then
-                            action.remote:InvokeServer(table.unpack(args))
+                            remoteObj:InvokeServer(table.unpack(args))
                         else
-                            action.remote:FireServer(table.unpack(args))
+                            remoteObj:FireServer(table.unpack(args))
                         end
                     end
                 end
