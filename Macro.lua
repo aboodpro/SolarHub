@@ -92,32 +92,23 @@ function Macro.Init(Shared, UI)
                                 pcall(function()
                                     local lowerInnerLocal = innerAction and innerAction:lower() or ""
                                     
-                                    -- 1. توسيع كلمات البحث لتشمل "auto" لضمان التقاط زر التطوير التلقائي
+                                    -- 1. تمييز زر التطوير التلقائي عن التطوير العادي
                                     local isAuto = lowerInnerLocal:find("autoupgradepriority") or lowerInnerLocal:find("auto")
                                     local buttonName = isAuto and "AutoUpgradeButton" or "UpgradeButton"
                                     actionEntry.uiClickButtonName = buttonName
                                     
-                                    -- 2. البحث عن الشخصية الصحيحة من خلال البيانات المرسلة بدلاً من الاعتماد على آخر شخصية
+                                    -- 2. البحث الدقيق عن الوحدة المقصودة من خلال البيانات المرسلة للسيرفر (متجاهلين العداد المتأخر)
                                     local matchedOrder = recordPlacementCount
                                     for _, arg in ipairs(packedArgs) do
-                                        if typeof(arg) == "Instance" then
-                                            for order, data in pairs(recordUnitIdMap) do
-                                                if data.model == arg or arg:IsDescendantOf(data.model) then
-                                                    matchedOrder = order
-                                                    break
-                                                end
-                                            end
-                                        elseif typeof(arg) == "string" or typeof(arg) == "number" then
-                                            local strArg = tostring(arg)
-                                            for order, data in pairs(recordUnitIdMap) do
-                                                if data.replicaId == strArg then
-                                                    matchedOrder = order
-                                                    break
-                                                end
+                                        for order, data in pairs(recordUnitIdMap) do
+                                            if (typeof(arg) == "Instance" and (data.model == arg or arg:IsDescendantOf(data.model))) or (tostring(data.replicaId) == tostring(arg)) then
+                                                matchedOrder = order
+                                                break
                                             end
                                         end
                                     end
                                     
+                                    -- 3. ربط التطوير بالوحدة الصحيحة
                                     actionEntry.linkedPlacementOrder = matchedOrder
                                     actionEntry.isUIReplay = true
                                     actionEntry.yenCost = captureVisibleUpgradeCost()
