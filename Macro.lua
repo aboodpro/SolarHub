@@ -28,7 +28,7 @@ function Macro.Init(Shared, UI)
             local repStorage = game:GetService("ReplicatedStorage")
             local unitsModule = nil
             
-            -- البحث حصرياً عن ModuleScript يحمل اسم "Units" لتجنب المجلدات الفارغة
+            -- البحث حصرياً عن ModuleScript يحمل اسم "Units" لتجنب المجلدات
             for _, descendant in ipairs(repStorage:GetDescendants()) do
                 if descendant.Name == "Units" and descendant:IsA("ModuleScript") then
                     unitsModule = descendant
@@ -92,7 +92,6 @@ function Macro.Init(Shared, UI)
         return nil
     end
 
-    -- دالة السكان الشامل للوحدات لجلب المعرّفات الحقيقية من الخريطة للترقية
     local function scanAndBuildUnitDatabase()
         scannedUnitsDatabase = {}
         local foundCount = 0
