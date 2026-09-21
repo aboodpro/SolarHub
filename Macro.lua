@@ -31,7 +31,6 @@ function Macro.Init(Shared, UI)
                     local name = descendant.Name:lower()
                     local fullName = descendant:GetFullName()
                     
-                    -- استبعاد مجلدات الواجهة والمكونات المرئية نهائياً
                     if not fullName:find("FusionPackage") and not fullName:find("Components") and not fullName:find("UI") and not fullName:find("SandboxControls") then
                         if name == "units" or name == "unitdata" or name == "characters" or name == "unitconfig" then
                             local ok, data = pcall(require, descendant)
@@ -99,6 +98,7 @@ function Macro.Init(Shared, UI)
         if isRemoteCall and Config.RecordMacro then
             task.spawn(function()
                 pcall(function()
+                    local remoteNameLower = selfRef.Name:lower()
                     local innerAction = nil
                     for _, arg in ipairs(packedArgs) do
                         if typeof(arg) == "string" then
@@ -108,49 +108,55 @@ function Macro.Init(Shared, UI)
                     end
                     local lowerInner = innerAction and innerAction:lower() or ""
 
+                    -- استبعاد ريموتات الدردشة والاتصال الأساسية
+                    if remoteNameLower:find("chat") or remoteNameLower:find("ping") or remoteNameLower:find("analytics") then
+                        return
+                    end
+
                     local actionDesc = "Other"
-                    if lowerInner:find("upgrade") or lowerInner:find("lvl") or lowerInner:find("level") or lowerInner:find("priority") then
+                    if remoteNameLower:find("upgrade") or lowerInner:find("upgrade") or lowerInner:find("lvl") or lowerInner:find("level") or lowerInner:find("priority") then
                         actionDesc = "UnitUpgrade"
-                    elseif lowerInner:find("place") or lowerInner:find("spawn") or lowerInner:find("deploy") then
+                    elseif remoteNameLower:find("place") or remoteNameLower:find("spawn") or remoteNameLower:find("deploy") or remoteNameLower:find("buy") or lowerInner:find("place") or lowerInner:find("spawn") or lowerInner:find("deploy") then
+                        actionDesc = "UnitPlace"
+                    else
+                        -- التقاط أي ريموت آخر أثناء اللعب لضمان عدم ضياع أي حركة وضع أو ترقية
                         actionDesc = "UnitPlace"
                     end
 
-                    if actionDesc == "UnitPlace" or actionDesc == "UnitUpgrade" then
-                        local actionEntry = {
-                            time = os.clock() - recordStartTime,
-                            actionType = actionDesc,
-                            remoteName = selfRef.Name,
-                            remoteClass = selfRef.ClassName,
-                            method = method,
-                            args = packedArgs
-                        }
-                        table.insert(recordedActions, actionEntry)
+                    local actionEntry = {
+                        time = os.clock() - recordStartTime,
+                        actionType = actionDesc,
+                        remoteName = selfRef.Name,
+                        remoteClass = selfRef.ClassName,
+                        method = method,
+                        args = packedArgs
+                    }
+                    table.insert(recordedActions, actionEntry)
 
-                        if actionDesc == "UnitPlace" then
-                            local slotNum = nil
-                            pcall(function()
-                                for _, arg in ipairs(packedArgs) do
-                                    if typeof(arg) == "number" and arg < 10 then
-                                        slotNum = arg
-                                        break
-                                    end
+                    if actionDesc == "UnitPlace" then
+                        local slotNum = nil
+                        pcall(function()
+                            for _, arg in ipairs(packedArgs) do
+                                if typeof(arg) == "number" and arg < 10 then
+                                    slotNum = arg
+                                    break
                                 end
-                            end)
-                            
-                            pcall(function()
-                                actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
-                            end)
+                            end
+                        end)
+                        
+                        pcall(function()
+                            actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
+                        end)
 
-                            pcall(function()
-                                recordPlacementCount = recordPlacementCount + 1
-                                actionEntry.placementOrder = recordPlacementCount
-                                recordUnitIdMap[recordPlacementCount] = recordPlacementCount
-                            end)
-                        elseif actionDesc == "UnitUpgrade" then
-                            pcall(function()
-                                actionEntry.linkedPlacementOrder = recordPlacementCount
-                            end)
-                        end
+                        pcall(function()
+                            recordPlacementCount = recordPlacementCount + 1
+                            actionEntry.placementOrder = recordPlacementCount
+                            recordUnitIdMap[recordPlacementCount] = recordPlacementCount
+                        end)
+                    elseif actionDesc == "UnitUpgrade" then
+                        pcall(function()
+                            actionEntry.linkedPlacementOrder = recordPlacementCount
+                        end)
                     end
                 end)
             end)
