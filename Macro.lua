@@ -530,7 +530,6 @@ function Macro.Init(Shared, UI)
             recordBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
             recordBtn.Text = "🔴 Record Macro"
             if savedMacros[Config.CurrentMacroName] then
-                savedMacros[Config.CurrentNavName or Config.CurrentMacroName] = nil -- safety
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
                 saveMacrosToFile()
                 showTopNotification("Macro saved to file!", 3)
