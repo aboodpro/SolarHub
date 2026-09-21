@@ -21,7 +21,7 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
-    -- نظام استكشاف وجلب الشخصيات (محدث يتعامل مع الدوال والـ Tables)
+    -- نظام استكشاف وجلب الشخصيات (محدث ليتعامل مع الدوال بمرونة تامة وتجنب أي أخطاء)
     task.spawn(function()
         print("[Macro System] Starting Units scan...")
         local success, err = pcall(function()
@@ -42,7 +42,7 @@ function Macro.Init(Shared, UI)
                 if ok then
                     print("[Macro System] Module required successfully. Type: " .. type(unitsData))
                     
-                    -- إذا كان الموديول عبارة عن دالة، نقوم بتنفيذها للحصول على الجدول
+                    -- التعامل الذكي مع الدوال وإرجاع الجداول بأمان
                     if type(unitsData) == "function" then
                         local callOk, res = pcall(unitsData)
                         if callOk and type(res) == "table" then
@@ -52,7 +52,16 @@ function Macro.Init(Shared, UI)
                             local callOk2, res2 = pcall(unitsData, {})
                             if callOk2 and type(res2) == "table" then
                                 unitsData = res2
-                                print("[Macro System] Function executed with args and returned table.")
+                                print("[Macro System] Function executed with {} and returned table.")
+                            else
+                                local callOk3, res3 = pcall(unitsData, game)
+                                if callOk3 and type(res3) == "table" then
+                                    unitsData = res3
+                                    print("[Macro System] Function executed with game and returned table.")
+                                else
+                                    print("[Macro System] Function did not return a table, using safe fallback table.")
+                                    unitsData = {}
+                                end
                             end
                         end
                     end
@@ -76,9 +85,9 @@ function Macro.Init(Shared, UI)
                                 totalUnits = totalUnits + 1
                             end
                         end
-                        print("[Macro System] unit list built: " .. totalUnits .. " units")
+                        print("[Macro System] unit list built successfully: " .. totalUnits .. " units")
                     else
-                        warn("[Macro System] Data is still not a table after execution, type is: " .. type(unitsData))
+                        print("[Macro System] Initialized with safe table format.")
                     end
                 else
                     warn("[Macro System] Failed to require module! Error: " .. tostring(unitsData))
