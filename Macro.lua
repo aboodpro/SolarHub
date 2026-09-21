@@ -94,21 +94,17 @@ function Macro.Init(Shared, UI)
                 pcall(function()
                     local remoteNameLower = selfRef.Name:lower()
                     
-                    -- استبعاد ريموتات الدردشة، البينغ، الكاميرا والتحليلات تماماً
                     if remoteNameLower:find("chat") or remoteNameLower:find("ping") or remoteNameLower:find("analytics") or remoteNameLower:find("mouse") or remoteNameLower:find("camera") then
                         return
                     end
 
                     local actionDesc = nil
                     
-                    -- تحديد إذا كان الأمر ترقية (Upgrade)
                     if remoteNameLower:find("upgrade") or remoteNameLower:find("lvl") or remoteNameLower:find("level") or remoteNameLower:find("evolve") or remoteNameLower:find("rank") then
                         actionDesc = "UnitUpgrade"
-                    -- تحديد إذا كان الأمر وضع وحدة (Place)
                     elseif remoteNameLower:find("place") or remoteNameLower:find("spawn") or remoteNameLower:find("deploy") or remoteNameLower:find("buy") then
                         actionDesc = "UnitPlace"
                     else
-                        -- فحص المدخلات بحثاً عن كلمات دالة إذا كان اسم الريموت عاماً
                         for _, arg in ipairs(packedArgs) do
                             if typeof(arg) == "string" then
                                 local lowerArg = arg:lower()
@@ -123,7 +119,6 @@ function Macro.Init(Shared, UI)
                         end
                     end
 
-                    -- تسجيل الأوامر الحقيقية الخاصة بالوحدات فقط
                     if actionDesc then
                         local actionEntry = {
                             time = os.clock() - recordStartTime,
@@ -500,7 +495,7 @@ function Macro.Init(Shared, UI)
     Shared.runMacroOnce = runMacroOnce
 
     createBtn.MouseButton1Click:Connect(function()
-        local name = nameInput.Test or nameInput.Text
+        local name = nameInput.Text -- تم التصحيح هنا وإزالة .Test الخاطئة
         if name ~= "" then
             if not savedMacros[name] then
                 savedMacros[name] = { actions = {} }
