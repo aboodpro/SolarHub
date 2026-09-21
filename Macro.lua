@@ -20,7 +20,6 @@ function Macro.Init(Shared, UI)
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
 
-    -- دالة البحث عن الريموت
     local function findRemote(name, className)
         local repStorage = game:GetService("ReplicatedStorage")
         local found = repStorage:FindFirstChild(name, true)
@@ -35,7 +34,6 @@ function Macro.Init(Shared, UI)
         return nil
     end
 
-    -- اعتراض أوامر الشبكة أثناء التسجيل بدقة عالية
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
@@ -108,7 +106,6 @@ function Macro.Init(Shared, UI)
         return table.unpack(result, 1, result.n)
     end)
 
-    -- واجهة الماكرو
     local createSec = Instance.new("Frame")
     createSec.Size = UDim2.new(1, 0, 0, 100)
     createSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
@@ -348,7 +345,6 @@ function Macro.Init(Shared, UI)
 
     local isPlayingMacro = false
 
-    -- دالة التشغيل الكاملة مع عداد الوقت والتوقيت (Seconds countdown)
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
         isPlayingMacro = true
@@ -409,13 +405,17 @@ function Macro.Init(Shared, UI)
                         local targetOrder = action.linkedPlacementOrder
                         local mappedId = targetOrder and playUnitIdMap[targetOrder] or playPlacementCount
 
-                        if #args >= 3 then
+                        -- [التعديل الذكي]: التأكد من نوع البيانات قبل استبدالها لعدم كسر حزمة البيانات المرسلة
+                        local replaced = false
+                        if #args >= 3 and (type(args[3]) == "number" or type(args[3]) == "string") then
                             args[3] = mappedId
-                        elseif #args >= 2 then
+                            replaced = true
+                        elseif #args >= 2 and (type(args[2]) == "number" or type(args[2]) == "string") then
                             args[2] = mappedId
+                            replaced = true
                         end
 
-                        print("[Macro Debug] Upgrading Unit order:", targetOrder, "Targeting ID:", mappedId)
+                        print(string.format("[Macro Debug] Upgrading Unit order: %s | Target ID: %s | Replaced: %s", tostring(targetOrder), tostring(mappedId), tostring(replaced)))
 
                         if action.method == "InvokeServer" then
                             local ok, res = pcall(function()
@@ -434,7 +434,7 @@ function Macro.Init(Shared, UI)
                         end
                     end
                 else
-                    warn("[Macro] Remote not found: " + tostring(action.remoteName))
+                    warn("[Macro] Remote not found: " .. tostring(action.remoteName))
                 end
             end)
         end
@@ -449,7 +449,6 @@ function Macro.Init(Shared, UI)
         local name = nameInput.Text
         if name ~= "" then
             if not savedMacros[name] then
-                savedNames = name
                 savedMacros[name] = { actions = {} }
                 Config.CurrentMacroName = name
                 saveMacrosToFile()
