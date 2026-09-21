@@ -19,7 +19,7 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
-    -- نظام فحص آمن ومحدث يتجنب تماماً ملفات الواجهة والـ FusionPackage
+    -- نظام فحص آمن لقاعدة بيانات الوحدات (99 وحدة)
     task.spawn(function()
         print("[Macro System] Starting Units scan (Safe Mode)...")
         pcall(function()
@@ -43,12 +43,6 @@ function Macro.Init(Shared, UI)
                     end
                 end
             end
-
-            local totalUnits = 0
-            for _, _ in pairs(actualList) do
-                totalUnits = totalUnits + 1
-            end
-            print("[Macro System] unit list built successfully: " .. totalUnits .. " units")
         end)
     end)
 
@@ -99,64 +93,73 @@ function Macro.Init(Shared, UI)
             task.spawn(function()
                 pcall(function()
                     local remoteNameLower = selfRef.Name:lower()
-                    local innerAction = nil
-                    for _, arg in ipairs(packedArgs) do
-                        if typeof(arg) == "string" then
-                            innerAction = arg
-                            break
-                        end
-                    end
-                    local lowerInner = innerAction and innerAction:lower() or ""
-
-                    -- استبعاد ريموتات الدردشة والاتصال الأساسية
-                    if remoteNameLower:find("chat") or remoteNameLower:find("ping") or remoteNameLower:find("analytics") then
+                    
+                    -- استبعاد ريموتات الدردشة، البينغ، الكاميرا والتحليلات تماماً
+                    if remoteNameLower:find("chat") or remoteNameLower:find("ping") or remoteNameLower:find("analytics") or remoteNameLower:find("mouse") or remoteNameLower:find("camera") then
                         return
                     end
 
-                    local actionDesc = "Other"
-                    if remoteNameLower:find("upgrade") or lowerInner:find("upgrade") or lowerInner:find("lvl") or lowerInner:find("level") or lowerInner:find("priority") then
+                    local actionDesc = nil
+                    
+                    -- تحديد إذا كان الأمر ترقية (Upgrade)
+                    if remoteNameLower:find("upgrade") or remoteNameLower:find("lvl") or remoteNameLower:find("level") or remoteNameLower:find("evolve") or remoteNameLower:find("rank") then
                         actionDesc = "UnitUpgrade"
-                    elseif remoteNameLower:find("place") or remoteNameLower:find("spawn") or remoteNameLower:find("deploy") or remoteNameLower:find("buy") or lowerInner:find("place") or lowerInner:find("spawn") or lowerInner:find("deploy") then
+                    -- تحديد إذا كان الأمر وضع وحدة (Place)
+                    elseif remoteNameLower:find("place") or remoteNameLower:find("spawn") or remoteNameLower:find("deploy") or remoteNameLower:find("buy") then
                         actionDesc = "UnitPlace"
                     else
-                        -- التقاط أي ريموت آخر أثناء اللعب لضمان عدم ضياع أي حركة وضع أو ترقية
-                        actionDesc = "UnitPlace"
-                    end
-
-                    local actionEntry = {
-                        time = os.clock() - recordStartTime,
-                        actionType = actionDesc,
-                        remoteName = selfRef.Name,
-                        remoteClass = selfRef.ClassName,
-                        method = method,
-                        args = packedArgs
-                    }
-                    table.insert(recordedActions, actionEntry)
-
-                    if actionDesc == "UnitPlace" then
-                        local slotNum = nil
-                        pcall(function()
-                            for _, arg in ipairs(packedArgs) do
-                                if typeof(arg) == "number" and arg < 10 then
-                                    slotNum = arg
+                        -- فحص المدخلات بحثاً عن كلمات دالة إذا كان اسم الريموت عاماً
+                        for _, arg in ipairs(packedArgs) do
+                            if typeof(arg) == "string" then
+                                local lowerArg = arg:lower()
+                                if lowerArg:find("upgrade") or lowerArg:find("lvl") then
+                                    actionDesc = "UnitUpgrade"
+                                    break
+                                elseif lowerArg:find("place") or lowerArg:find("spawn") or lowerArg:find("deploy") then
+                                    actionDesc = "UnitPlace"
                                     break
                                 end
                             end
-                        end)
-                        
-                        pcall(function()
-                            actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
-                        end)
+                        end
+                    end
 
-                        pcall(function()
-                            recordPlacementCount = recordPlacementCount + 1
-                            actionEntry.placementOrder = recordPlacementCount
-                            recordUnitIdMap[recordPlacementCount] = recordPlacementCount
-                        end)
-                    elseif actionDesc == "UnitUpgrade" then
-                        pcall(function()
-                            actionEntry.linkedPlacementOrder = recordPlacementCount
-                        end)
+                    -- تسجيل الأوامر الحقيقية الخاصة بالوحدات فقط
+                    if actionDesc then
+                        local actionEntry = {
+                            time = os.clock() - recordStartTime,
+                            actionType = actionDesc,
+                            remoteName = selfRef.Name,
+                            remoteClass = selfRef.ClassName,
+                            method = method,
+                            args = packedArgs
+                        }
+                        table.insert(recordedActions, actionEntry)
+
+                        if actionDesc == "UnitPlace" then
+                            local slotNum = nil
+                            pcall(function()
+                                for _, arg in ipairs(packedArgs) do
+                                    if typeof(arg) == "number" and arg < 10 then
+                                        slotNum = arg
+                                        break
+                                    end
+                                end
+                            end)
+                            
+                            pcall(function()
+                                actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
+                            end)
+
+                            pcall(function()
+                                recordPlacementCount = recordPlacementCount + 1
+                                actionEntry.placementOrder = recordPlacementCount
+                                recordUnitIdMap[recordPlacementCount] = recordPlacementCount
+                            end)
+                        elseif actionDesc == "UnitUpgrade" then
+                            pcall(function()
+                                actionEntry.linkedPlacementOrder = recordPlacementCount
+                            end)
+                        end
                     end
                 end)
             end)
@@ -411,7 +414,6 @@ function Macro.Init(Shared, UI)
 
         local lastTime = 0
         local playPlacementCount = 0
-        local playUnitIdMap = {}
         local totalActions = #macroData.actions
 
         for actionIndex, action in ipairs(macroData.actions) do
@@ -450,7 +452,6 @@ function Macro.Init(Shared, UI)
 
                     if action.actionType == "UnitPlace" then
                         playPlacementCount = playPlacementCount + 1
-                        playUnitIdMap[playPlacementCount] = playPlacementCount
 
                         if action.method == "InvokeServer" then
                             remoteObj:InvokeServer(table.unpack(args))
@@ -461,7 +462,6 @@ function Macro.Init(Shared, UI)
 
                     elseif action.actionType == "UnitUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
-                        
                         scanAndBuildUnitDatabase()
                         
                         if targetOrder and scannedUnitsDatabase[targetOrder] then
@@ -475,12 +475,11 @@ function Macro.Init(Shared, UI)
                         end
 
                         if action.method == "InvokeServer" then
-                            local ok, res = pcall(function()
-                                return remoteObj:InvokeServer(table.unpack(args))
-                            end)
+                            remoteObj:InvokeServer(table.unpack(args))
                         else
                             remoteObj:FireServer(table.unpack(args))
                         end
+                        task.wait(0.3)
                     else
                         if action.method == "InvokeServer" then
                             remoteObj:InvokeServer(table.unpack(args))
@@ -501,7 +500,7 @@ function Macro.Init(Shared, UI)
     Shared.runMacroOnce = runMacroOnce
 
     createBtn.MouseButton1Click:Connect(function()
-        local name = nameInput.Text
+        local name = nameInput.Test or nameInput.Text
         if name ~= "" then
             if not savedMacros[name] then
                 savedMacros[name] = { actions = {} }
@@ -538,7 +537,7 @@ function Macro.Init(Shared, UI)
             if savedMacros[Config.CurrentMacroName] then
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
                 saveMacrosToFile()
-                showTopNotification("Macro saved to file!", 3)
+                showTopNotification("Macro saved to file (" .. #recordedActions .. " actions)!", 3)
             end
         end
     end)
