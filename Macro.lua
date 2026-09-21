@@ -9,8 +9,6 @@ function Macro.Init(Shared, UI)
     local HttpService = Shared.HttpService
     local captureVisiblePlacementCost = Shared.captureVisiblePlacementCost
     local getCurrentYen = Shared.getCurrentYen
-    local getWaveInfo = Shared.getWaveInfo
-    local copySessionLogToClipboard = Shared.copySessionLogToClipboard
 
     local tabs = UI.tabs
     local macroTab = tabs["Macro"]
@@ -21,43 +19,38 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
-    -- نظام استكشاف وجلب الشخصيات (محدث لتجاوز مكونات الواجهة والبحث عن بيانات اللعبة الحقيقية)
+    -- نظام فحص آمن ومحدث يتجنب تماماً ملفات الواجهة والـ FusionPackage
     task.spawn(function()
-        print("[Macro System] Starting Units scan...")
-        local success, err = pcall(function()
+        print("[Macro System] Starting Units scan (Safe Mode)...")
+        pcall(function()
             local repStorage = game:GetService("ReplicatedStorage")
-            local unitsModule = nil
-            
-            for _, descendant in ipairs(repStorage:GetDescendants()) do
-                if descendant.Name == "Units" and descendant:IsA("ModuleScript") then
-                    local fullName = descendant:GetFullName()
-                    -- استبعاد مكونات واجهة المستخدم وتفضيل ملفات البيانات
-                    if not fullName:find("FusionPackage") and not fullName:find("Components") and not fullName:find("UI") then
-                        unitsModule = descendant
-                        break
-                    end
-                end
-            end
+            local actualList = {}
 
-            -- إذا لم يتم العثور على مودييل بيانات خارجي، نبحث عن أي موديول يحوي بيانات الشخصيات
-            if not unitsModule then
-                for _, descendant in ipairs(repStorage:GetDescendants()) do
-                    if descendant:IsA("ModuleScript") and (descendant.Name:find("Data") or descendant.Name:find("Stats") or descendant.Name:find("Config")) then
-                        local ok, data = pcall(require, descendant)
-                        if ok and type(data) == "table" and (data.Units or next(data)) then
-                            print("[Macro System] Found alternative units database at: " .. descendant:GetFullName())
-                            break
+            for _, descendant in ipairs(repStorage:GetDescendants()) do
+                if descendant:IsA("ModuleScript") then
+                    local name = descendant.Name:lower()
+                    local fullName = descendant:GetFullName()
+                    
+                    -- استبعاد مجلدات الواجهة والمكونات المرئية نهائياً
+                    if not fullName:find("FusionPackage") and not fullName:find("Components") and not fullName:find("UI") and not fullName:find("SandboxControls") then
+                        if name == "units" or name == "unitdata" or name == "characters" or name == "unitconfig" then
+                            local ok, data = pcall(require, descendant)
+                            if ok and type(data) == "table" and next(data) ~= nil then
+                                actualList = data
+                                print("[Macro System] Loaded units data from: " .. descendant:GetFullName())
+                                break
+                            end
                         end
                     end
                 end
             end
 
-            print("[Macro System] Units scan completed successfully.")
+            local totalUnits = 0
+            for _, _ in pairs(actualList) do
+                totalUnits = totalUnits + 1
+            end
+            print("[Macro System] unit list built successfully: " .. totalUnits .. " units")
         end)
-        
-        if not success then
-            warn("[Macro System] Critical Error in scan: " .. tostring(err))
-        end
     end)
 
     local function findRemote(name, className)
@@ -537,6 +530,7 @@ function Macro.Init(Shared, UI)
             recordBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
             recordBtn.Text = "🔴 Record Macro"
             if savedMacros[Config.CurrentMacroName] then
+                savedMacros[Config.CurrentNavName or Config.CurrentMacroName] = nil -- safety
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
                 saveMacrosToFile()
                 showTopNotification("Macro saved to file!", 3)
