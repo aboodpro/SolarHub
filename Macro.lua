@@ -21,41 +21,62 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
-    -- نظام استكشاف وجلب جميع شخصيات اللعبة من قاعدة البيانات (SheetSyncedModules)
+    -- نظام استكشاف وجلب جميع شخصيات اللعبة الذكي من FusionPackage
     task.spawn(function()
         pcall(function()
             local repStorage = game:GetService("ReplicatedStorage")
-            local sheetSynced = repStorage:WaitForChild("SheetSyncedModules", 5)
             
-            if sheetSynced then
-                local unitsModule = sheetSynced:FindFirstChild("Units")
-                
-                if unitsModule and unitsModule:IsA("ModuleScript") then
-                    -- جلب البيانات عبر تشغيل الموديول (والذي سيستخدم الـ Parser تلقائياً)
-                    local unitsData = require(unitsModule)
-                    local totalUnits = 0
+            -- البحث عن موديول الشخصيات داخل FusionPackage أو ReplicatedStorage
+            local fusionPackage = repStorage:FindFirstChild("FusionPackage", true)
+            local unitsModule = nil
+            
+            if fusionPackage then
+                local sharedFolder = fusionPackage:FindFirstChild("Shared", true)
+                if sharedFolder then
+                    local sheetSynced = sharedFolder:FindFirstChild("SheetSyncedModules")
+                    local infoFolder = sharedFolder:FindFirstChild("Information")
                     
-                    if type(unitsData) == "table" then
-                        -- فحص ما إذا كانت قائمة الشخصيات مخزنة مباشرة أو داخل جدول فرعي
-                        local actualList = unitsData
-                        if type(unitsData.Data) == "table" then
-                            actualList = unitsData.Data
-                        elseif type(unitsData.Rows) == "table" then
-                            actualList = unitsData.Rows
-                        end
-                        
-                        -- حساب عدد الشخصيات الفعلي
-                        for key, value in pairs(actualList) do
-                            -- نتجاهل الدوال المخزنة في الجدول إن وجدت
-                            if type(value) == "table" then 
-                                totalUnits = totalUnits + 1
-                            end
-                        end
-                        
-                        print("[Macro System] unit list built: " .. totalUnits .. " units")
-                    else
-                        warn("[Macro System] Failed to parse Units data.")
+                    unitsModule = (sheetSynced and sheetSynced:FindFirstChild("Units")) 
+                               or (infoFolder and infoFolder:FindFirstChild("Units"))
+                end
+            end
+            
+            if not unitsModule then
+                unitsModule = repStorage:FindFirstChild("Units", true)
+            end
+
+            if unitsModule and unitsModule:IsA("ModuleScript") then
+                local ok, unitsData = pcall(require, unitsModule)
+                
+                if ok and type(unitsData) == "table" then
+                    -- 1. فحص ما إذا كان الموديول يعتمد على دوال لجلب البيانات
+                    if type(unitsData.GetAll) == "function" then
+                        pcall(function() unitsData = unitsData:GetAll() end)
+                    elseif type(unitsData.GetUnits) == "function" then
+                        pcall(function() unitsData = unitsData:GetUnits() end)
+                    elseif type(unitsData.Get) == "function" then
+                        pcall(function() unitsData = unitsData:Get() end)
                     end
+
+                    -- 2. تحديد الجدول الحاوي للشخصيات
+                    local actualList = unitsData
+                    if type(unitsData.Data) == "table" then actualList = unitsData.Data
+                    elseif type(unitsData.Units) == "table" then actualList = unitsData.Units
+                    elseif type(unitsData.Rows) == "table" then actualList = unitsData.Rows
+                    elseif type(unitsData.List) == "table" then actualList = unitsData.List
+                    end
+
+                    -- 3. حساب عدد الشخصيات الإجمالي
+                    local totalUnits = 0
+                    if type(actualList) == "table" then
+                        for key, value in pairs(actualList) do
+                            totalUnits = totalUnits + 1
+                        end
+                    end
+
+                    print("[Macro System] unit list built: " .. totalUnits .. " units")
+                else
+                    warn("[Macro System] Failed to parse Units data.")
                 end
             end
         end)
