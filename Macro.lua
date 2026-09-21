@@ -21,79 +21,55 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
-    -- نظام استكشاف وجلب الشخصيات مع رسائل تتبع الأخطاء (Debug Mode)
+    -- نظام استكشاف وجلب الشخصيات (محدث ليصطاد ModuleScript حصرياً)
     task.spawn(function()
         print("[Macro System] Starting Units scan...")
         local success, err = pcall(function()
             local repStorage = game:GetService("ReplicatedStorage")
-            print("[Macro System] ReplicatedStorage found.")
-            
-            local fusionPackage = repStorage:FindFirstChild("FusionPackage", true)
             local unitsModule = nil
             
-            if fusionPackage then
-                print("[Macro System] FusionPackage found.")
-                local sharedFolder = fusionPackage:FindFirstChild("Shared", true)
-                if sharedFolder then
-                    print("[Macro System] Shared folder found.")
-                    local sheetSynced = sharedFolder:FindFirstChild("SheetSyncedModules")
-                    local infoFolder = sharedFolder:FindFirstChild("Information")
-                    
-                    unitsModule = (sheetSynced and sheetSynced:FindFirstChild("Units")) 
-                               or (infoFolder and infoFolder:FindFirstChild("Units"))
-                    
-                    if unitsModule then
-                        print("[Macro System] Units module found in FusionPackage!")
-                    end
+            -- البحث حصرياً عن ModuleScript يحمل اسم "Units" لتجنب المجلدات الفارغة
+            for _, descendant in ipairs(repStorage:GetDescendants()) do
+                if descendant.Name == "Units" and descendant:IsA("ModuleScript") then
+                    unitsModule = descendant
+                    break
                 end
-            else
-                print("[Macro System] FusionPackage NOT found.")
-            end
-            
-            if not unitsModule then
-                print("[Macro System] Searching ReplicatedStorage for 'Units' globally...")
-                unitsModule = repStorage:FindFirstChild("Units", true)
             end
 
             if unitsModule then
-                print("[Macro System] Module class: " .. unitsModule.ClassName)
-                if unitsModule:IsA("ModuleScript") then
-                    print("[Macro System] Requiring module...")
-                    local ok, unitsData = pcall(require, unitsModule)
-                    
-                    if ok then
-                        print("[Macro System] Module required successfully. Type: " .. type(unitsData))
-                        if type(unitsData) == "table" then
-                            if type(unitsData.GetAll) == "function" then pcall(function() unitsData = unitsData:GetAll() end)
-                            elseif type(unitsData.GetUnits) == "function" then pcall(function() unitsData = unitsData:GetUnits() end)
-                            elseif type(unitsData.Get) == "function" then pcall(function() unitsData = unitsData:Get() end)
-                            end
-
-                            local actualList = unitsData
-                            if type(unitsData.Data) == "table" then actualList = unitsData.Data
-                            elseif type(unitsData.Units) == "table" then actualList = unitsData.Units
-                            elseif type(unitsData.Rows) == "table" then actualList = unitsData.Rows
-                            elseif type(unitsData.List) == "table" then actualList = unitsData.List
-                            end
-
-                            local totalUnits = 0
-                            if type(actualList) == "table" then
-                                for key, value in pairs(actualList) do
-                                    totalUnits = totalUnits + 1
-                                end
-                            end
-                            print("[Macro System] unit list built: " .. totalUnits .. " units")
-                        else
-                            warn("[Macro System] Data is not a table, it is: " .. type(unitsData))
+                print("[Macro System] Found Units ModuleScript at: " .. unitsModule:GetFullName())
+                local ok, unitsData = pcall(require, unitsModule)
+                
+                if ok then
+                    print("[Macro System] Module required successfully. Type: " .. type(unitsData))
+                    if type(unitsData) == "table" then
+                        if type(unitsData.GetAll) == "function" then pcall(function() unitsData = unitsData:GetAll() end)
+                        elseif type(unitsData.GetUnits) == "function" then pcall(function() unitsData = unitsData:GetUnits() end)
+                        elseif type(unitsData.Get) == "function" then pcall(function() unitsData = unitsData:Get() end)
                         end
+
+                        local actualList = unitsData
+                        if type(unitsData.Data) == "table" then actualList = unitsData.Data
+                        elseif type(unitsData.Units) == "table" then actualList = unitsData.Units
+                        elseif type(unitsData.Rows) == "table" then actualList = unitsData.Rows
+                        elseif type(unitsData.List) == "table" then actualList = unitsData.List
+                        end
+
+                        local totalUnits = 0
+                        if type(actualList) == "table" then
+                            for key, value in pairs(actualList) do
+                                totalUnits = totalUnits + 1
+                            end
+                        end
+                        print("[Macro System] unit list built: " .. totalUnits .. " units")
                     else
-                        warn("[Macro System] Failed to require module! Error: " .. tostring(unitsData))
+                        warn("[Macro System] Data is not a table, it is: " .. type(unitsData))
                     end
                 else
-                    warn("[Macro System] Found 'Units' but it is a " .. unitsModule.ClassName .. " not a ModuleScript.")
+                    warn("[Macro System] Failed to require module! Error: " .. tostring(unitsData))
                 end
             else
-                warn("[Macro System] Could not find any module named 'Units'!")
+                warn("[Macro System] Could not find any ModuleScript named 'Units'!")
             end
         end)
         
@@ -506,7 +482,6 @@ function Macro.Init(Shared, UI)
                     elseif action.actionType == "UnitUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
                         
-                        -- تنفيذ سكان سريع لجلب الوحدات الحقيقية الموجودة بالخريطة أثناء التشغيل
                         scanAndBuildUnitDatabase()
                         
                         if targetOrder and scannedUnitsDatabase[targetOrder] then
