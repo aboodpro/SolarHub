@@ -19,6 +19,7 @@ function Macro.Init(Shared, UI)
     local recordStartTime = 0
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
+    local scannedUnitsDatabase = {}
 
     local function findRemote(name, className)
         local repStorage = game:GetService("ReplicatedStorage")
@@ -32,6 +33,27 @@ function Macro.Init(Shared, UI)
             end
         end
         return nil
+    end
+
+    -- دالة السكان الشامل للوحدات لجلب المعرّفات الحقيقية
+    local function scanAndBuildUnitDatabase()
+        scannedUnitsDatabase = {}
+        local foundCount = 0
+        pcall(function()
+            for _, descendant in ipairs(workspace:GetDescendants()) do
+                if descendant:IsA("Model") and descendant:FindFirstChild("HumanoidRootPart") then
+                    local ownerAttr = descendant:GetAttribute("Owner") or descendant:GetAttribute("Player")
+                    if ownerAttr == game.Players.LocalPlayer then
+                        foundCount = foundCount + 1
+                        scannedUnitsDatabase[foundCount] = {
+                            instance = descendant,
+                            uniqueId = descendant:GetAttribute("Id") or descendant.Name,
+                        }
+                    end
+                end
+            end
+        end)
+        return foundCount
     end
 
     local oldNamecall
@@ -399,32 +421,29 @@ function Macro.Init(Shared, UI)
                             remoteObj:FireServer(table.unpack(args))
                         end
                         task.wait(0.4)
-                        print("[Macro Debug] Placed Unit #", playPlacementCount, "Assigned ID:", playUnitIdMap[playPlacementCount])
 
                     elseif action.actionType == "UnitUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
-                        local mappedId = targetOrder and playUnitIdMap[targetOrder] or playPlacementCount
-
-                        -- [التعديل الذكي]: التأكد من نوع البيانات قبل استبدالها لعدم كسر حزمة البيانات المرسلة
-                        local replaced = false
-                        if #args >= 3 and (type(args[3]) == "number" or type(args[3]) == "string") then
-                            args[3] = mappedId
-                            replaced = true
-                        elseif #args >= 2 and (type(args[2]) == "number" or type(args[2]) == "string") then
-                            args[2] = mappedId
-                            replaced = true
+                        
+                        -- تنفيذ سكان سريع لجلب الوحدات الحقيقية الموجودة بالخريطة أثناء التشغيل
+                        scanAndBuildUnitDatabase()
+                        
+                        if targetOrder and scannedUnitsDatabase[targetOrder] then
+                            local scannedTarget = scannedUnitsDatabase[targetOrder]
+                            for i, arg in ipairs(args) do
+                                if type(arg) == "number" or type(arg) == "string" then
+                                    args[i] = scannedTarget.uniqueId
+                                    break
+                                end
+                            end
                         end
-
-                        print(string.format("[Macro Debug] Upgrading Unit order: %s | Target ID: %s | Replaced: %s", tostring(targetOrder), tostring(mappedId), tostring(replaced)))
 
                         if action.method == "InvokeServer" then
                             local ok, res = pcall(function()
                                 return remoteObj:InvokeServer(table.unpack(args))
                             end)
-                            print("[Macro Debug] Upgrade Response:", ok, res)
                         else
                             remoteObj:FireServer(table.unpack(args))
-                            print("[Macro Debug] Upgrade FireServer sent.")
                         end
                     else
                         if action.method == "InvokeServer" then
@@ -434,7 +453,7 @@ function Macro.Init(Shared, UI)
                         end
                     end
                 else
-                    warn("[Macro] Remote not found: " .. tostring(action.remoteName))
+                    warn("[Macro] Remote not found: " + tostring(action.remoteName))
                 end
             end)
         end
@@ -453,7 +472,7 @@ function Macro.Init(Shared, UI)
                 Config.CurrentMacroName = name
                 saveMacrosToFile()
                 refreshMacroList()
-                showTopNotification("Macro '" .. name .. "' created and selected!", 3)
+                showTopNotification("Macro '" + name + "' created and selected!", 3)
                 nameInput.Text = ""
             else
                 showTopNotification("Macro name already exists!", 3)
