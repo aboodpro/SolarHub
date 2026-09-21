@@ -21,94 +21,79 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
-    -- نظام استكشاف وجلب الشخصيات (محدث لفحص الـ Upvalues واستخراج جدول الوحدات بدقة)
+    -- نظام استكشاف وجلب الشخصيات (محدث لفحص الملفات الفرعية والمجلدات بدقة)
     task.spawn(function()
         print("[Macro System] Starting Units scan...")
         local success, err = pcall(function()
             local repStorage = game:GetService("ReplicatedStorage")
             local unitsModule = nil
+            local unitsFolder = nil
             
             for _, descendant in ipairs(repStorage:GetDescendants()) do
-                if descendant.Name == "Units" and descendant:IsA("ModuleScript") then
-                    unitsModule = descendant
-                    break
+                if descendant.Name == "Units" then
+                    if descendant:IsA("ModuleScript") then
+                        unitsModule = descendant
+                    elseif descendant:IsA("Folder") then
+                        unitsFolder = descendant
+                    end
                 end
             end
 
-            if unitsModule then
+            local actualList = {}
+
+            -- الطريقة الأولى: فحص الملفات الفرعية إذا كان الـ Units عبارة عن مجلد أو موديول يحوي بداخله بيانات
+            if unitsFolder then
+                for _, child in ipairs(unitsFolder:GetChildren()) do
+                    if child:IsA("ModuleScript") then
+                        local ok, data = pcall(require, child)
+                        if ok and type(data) == "table" then
+                            actualList[child.Name] = data
+                        end
+                    end
+                end
+            end
+
+            if unitsModule and next(actualList) == nil then
                 print("[Macro System] Found Units ModuleScript at: " .. unitsModule:GetFullName())
-                local ok, unitsData = pcall(require, unitsModule)
-                
-                if ok then
-                    print("[Macro System] Module required successfully. Type: " .. type(unitsData))
-                    
-                    -- التعامل الذكي مع الدوال واستخراج البيانات المخفية
-                    if type(unitsData) == "function" then
-                        local foundTableViaUpvalues = false
-                        pcall(function()
-                            for i = 1, 25 do
-                                local name, val = debug.getupvalue(unitsData, i)
-                                if type(val) == "table" and not foundTableViaUpvalues then
-                                    for _, v in pairs(val) do
-                                        if type(v) == "table" and (v.Name or v.Cost or v.ID or v.Damage or v.Model) then
-                                            unitsData = val
-                                            foundTableViaUpvalues = true
-                                            print("[Macro System] Successfully extracted units table from function upvalues!")
-                                            break
-                                        end
-                                    end
-                                end
-                                if name == nil then break end
-                            end
-                        end)
-
-                        if not foundTableViaUpvalues then
-                            local callOk, res = pcall(unitsData, {})
-                            if callOk and type(res) == "table" and next(res) ~= nil then
-                                unitsData = res
-                                print("[Macro System] Function executed with {} and returned valid table.")
-                            else
-                                local callOk2, res2 = pcall(unitsData, repStorage)
-                                if callOk2 and type(res2) == "table" and next(res2) ~= nil then
-                                    unitsData = res2
-                                    print("[Macro System] Function executed with ReplicatedStorage and returned table.")
-                                else
-                                    print("[Macro System] Function requires specific args, using fallback table.")
-                                    unitsData = {}
-                                end
-                            end
+                -- فحص ما إذا كان للموديول أبناء (Modules فرعية للشخصيات)
+                for _, child in ipairs(unitsModule:GetChildren()) do
+                    if child:IsA("ModuleScript") then
+                        local ok, data = pcall(require, child)
+                        if ok and type(data) == "table" then
+                            actualList[child.Name] = data
                         end
                     end
-
-                    if type(unitsData) == "table" then
-                        if type(unitsData.GetAll) == "function" then pcall(function() unitsData = unitsData:GetAll() end)
-                        elseif type(unitsData.GetUnits) == "function" then pcall(function() unitsData = unitsData:GetUnits() end)
-                        elseif type(unitsData.Get) == "function" then pcall(function() unitsData = unitsData:Get() end)
-                        end
-
-                        local actualList = unitsData
-                        if type(unitsData.Data) == "table" then actualList = unitsData.Data
-                        elseif type(unitsData.Units) == "table" then actualList = unitsData.Units
-                        elseif type(unitsData.Rows) == "table" then actualList = unitsData.Rows
-                        elseif type(unitsData.List) == "table" then actualList = unitsData.List
-                        end
-
-                        local totalUnits = 0
-                        if type(actualList) == "table" then
-                            for key, value in pairs(actualList) do
-                                totalUnits = totalUnits + 1
-                            end
-                        end
-                        print("[Macro System] unit list built successfully: " .. totalUnits .. " units")
-                    else
-                        print("[Macro System] Initialized with safe table format.")
-                    end
-                else
-                    warn("[Macro System] Failed to require module! Error: " .. tostring(unitsData))
                 end
-            else
-                warn("[Macro System] Could not find any ModuleScript named 'Units'!")
+
+                if next(actualList) == nil then
+                    local ok, unitsData = pcall(require, unitsModule)
+                    if ok then
+                        if type(unitsData) == "table" then
+                            actualList = unitsData
+                        elseif type(unitsData) == "function" then
+                            -- محاولة استدعاء الدالة بمتغيرات شائعة أو استخراج الجداول الداخلية
+                            local callOk, res = pcall(unitsData, repStorage)
+                            if callOk and type(res) == "table" then
+                                actualList = res
+                            else
+                                local callOk2, res2 = pcall(unitsData, game)
+                                if callOk2 and type(res2) == "table" then
+                                    actualList = res2
+                                end
+                            end
+                        end
+                    end
+                end
             end
+
+            -- حساب عدد الوحدات المكتشفة
+            local totalUnits = 0
+            if type(actualList) == "table" then
+                for _, _ in pairs(actualList) do
+                    totalUnits = totalUnits + 1
+                end
+            end
+            print("[Macro System] unit list built successfully: " .. totalUnits .. " units")
         end)
         
         if not success then
