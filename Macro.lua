@@ -21,6 +21,22 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
+    -- [الإضافة الجديدة]: نظام استكشاف وجلب جميع شخصيات اللعبة من المستودع (ReplicatedStorage)
+    task.spawn(function()
+        pcall(function()
+            local repStorage = game:GetService("ReplicatedStorage")
+            local assetsFolder = repStorage:FindFirstChild("Assets")
+            local unitsFolder = assetsFolder and assetsFolder:FindFirstChild("Units")
+            
+            if unitsFolder then
+                local totalUnits = unitsFolder:GetChildren()
+                print("[Macro System] unit list built: " .. #totalUnits .. " units")
+            else
+                warn("[Macro System] Could not find the Units folder in ReplicatedStorage.Assets")
+            end
+        end)
+    end)
+
     local function findRemote(name, className)
         local repStorage = game:GetService("ReplicatedStorage")
         local found = repStorage:FindFirstChild(name, true)
@@ -35,7 +51,7 @@ function Macro.Init(Shared, UI)
         return nil
     end
 
-    -- دالة السكان الشامل للوحدات لجلب المعرّفات الحقيقية
+    -- دالة السكان الشامل للوحدات لجلب المعرّفات الحقيقية من الخريطة للترقية
     local function scanAndBuildUnitDatabase()
         scannedUnitsDatabase = {}
         local foundCount = 0
@@ -453,7 +469,7 @@ function Macro.Init(Shared, UI)
                         end
                     end
                 else
-                    warn("[Macro] Remote not found: " + tostring(action.remoteName))
+                    warn("[Macro] Remote not found: " .. tostring(action.remoteName))
                 end
             end)
         end
@@ -472,7 +488,7 @@ function Macro.Init(Shared, UI)
                 Config.CurrentMacroName = name
                 saveMacrosToFile()
                 refreshMacroList()
-                showTopNotification("Macro '" + name + "' created and selected!", 3)
+                showTopNotification("Macro '" .. name .. "' created and selected!", 3)
                 nameInput.Text = ""
             else
                 showTopNotification("Macro name already exists!", 3)
