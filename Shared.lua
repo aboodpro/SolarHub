@@ -447,7 +447,7 @@ local function findYenCostNear(instance)
             if text and text ~= "" then
                 local numStr = text:match("¥%s*([%d,]+)")
                 if numStr then
-                    local num = tonumber((numStr:gsub(",", ""))) -- تم الإصلاح هنا (أقواس إضافية)
+                    local num = tonumber((numStr:gsub(",", "")))
                     if num then return num end
                 end
             end
@@ -467,7 +467,7 @@ local function captureVisibleUpgradeCost()
                     if nested == "" then nested = d.Text end
                     local numStr = d.Text:match("¥%s*([%d,]+)")
                     if numStr and not costFromSelf then
-                        costFromSelf = tonumber((numStr:gsub(",", ""))) -- تم الإصلاح هنا
+                        costFromSelf = tonumber((numStr:gsub(",", "")))
                     end
                 end
             end
@@ -502,7 +502,7 @@ local function captureVisiblePlacementCost(slotNumber)
                     if d:IsA("TextLabel") or d:IsA("TextButton") then
                         local numStr = (d.Text or ""):match("¥%s*([%d,]+)")
                         if numStr then
-                            cost = tonumber((numStr:gsub(",", ""))) -- تم الإصلاح هنا
+                            cost = tonumber((numStr:gsub(",", "")))
                             break
                         end
                     end
