@@ -348,7 +348,7 @@ function Macro.Init(Shared, UI)
 
     local isPlayingMacro = false
 
-    -- دالة التشغيل الكاملة والمصححة
+    -- دالة التشغيل الكاملة مع عداد الوقت والتوقيت (Seconds countdown)
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
         isPlayingMacro = true
@@ -365,6 +365,7 @@ function Macro.Init(Shared, UI)
             local actionLabel = action.actionType or "Action"
 
             if action.yenCost then
+                macroStatusLabel.Text = ("[%d/%d] Waiting for Yen (Cost: %d)..."):format(actionIndex, totalActions, action.yenCost)
                 while isPlayingMacro do
                     local yen = getCurrentYen()
                     if yen and yen >= action.yenCost then
@@ -373,12 +374,18 @@ function Macro.Init(Shared, UI)
                     task.wait(0.3)
                 end
             elseif gap > 0 then
-                task.wait(gap)
+                local remaining = gap
+                while remaining > 0 and isPlayingMacro do
+                    macroStatusLabel.Text = ("[%d/%d] Waiting %.1fs (%s)"):format(actionIndex, totalActions, remaining, actionLabel)
+                    local step = math.min(0.1, remaining)
+                    task.wait(step)
+                    remaining = remaining - step
+                end
             end
             lastTime = action.time
 
             pcall(function()
-                macroStatusLabel.Text = ("Running %d/%d: %s"):format(actionIndex, totalActions, actionLabel)
+                macroStatusLabel.Text = ("[%d/%d] Executing: %s"):format(actionIndex, totalActions, actionLabel)
             end)
 
             pcall(function()
@@ -442,6 +449,7 @@ function Macro.Init(Shared, UI)
         local name = nameInput.Text
         if name ~= "" then
             if not savedMacros[name] then
+                savedNames = name
                 savedMacros[name] = { actions = {} }
                 Config.CurrentMacroName = name
                 saveMacrosToFile()
