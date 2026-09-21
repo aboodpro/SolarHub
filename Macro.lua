@@ -21,14 +21,13 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
-    -- نظام استكشاف وجلب الشخصيات (محدث ليصطاد ModuleScript حصرياً)
+    -- نظام استكشاف وجلب الشخصيات (محدث يتعامل مع الدوال والـ Tables)
     task.spawn(function()
         print("[Macro System] Starting Units scan...")
         local success, err = pcall(function()
             local repStorage = game:GetService("ReplicatedStorage")
             local unitsModule = nil
             
-            -- البحث حصرياً عن ModuleScript يحمل اسم "Units" لتجنب المجلدات
             for _, descendant in ipairs(repStorage:GetDescendants()) do
                 if descendant.Name == "Units" and descendant:IsA("ModuleScript") then
                     unitsModule = descendant
@@ -42,6 +41,22 @@ function Macro.Init(Shared, UI)
                 
                 if ok then
                     print("[Macro System] Module required successfully. Type: " .. type(unitsData))
+                    
+                    -- إذا كان الموديول عبارة عن دالة، نقوم بتنفيذها للحصول على الجدول
+                    if type(unitsData) == "function" then
+                        local callOk, res = pcall(unitsData)
+                        if callOk and type(res) == "table" then
+                            unitsData = res
+                            print("[Macro System] Function executed and returned table successfully.")
+                        else
+                            local callOk2, res2 = pcall(unitsData, {})
+                            if callOk2 and type(res2) == "table" then
+                                unitsData = res2
+                                print("[Macro System] Function executed with args and returned table.")
+                            end
+                        end
+                    end
+
                     if type(unitsData) == "table" then
                         if type(unitsData.GetAll) == "function" then pcall(function() unitsData = unitsData:GetAll() end)
                         elseif type(unitsData.GetUnits) == "function" then pcall(function() unitsData = unitsData:GetUnits() end)
@@ -63,7 +78,7 @@ function Macro.Init(Shared, UI)
                         end
                         print("[Macro System] unit list built: " .. totalUnits .. " units")
                     else
-                        warn("[Macro System] Data is not a table, it is: " .. type(unitsData))
+                        warn("[Macro System] Data is still not a table after execution, type is: " .. type(unitsData))
                     end
                 else
                     warn("[Macro System] Failed to require module! Error: " .. tostring(unitsData))
