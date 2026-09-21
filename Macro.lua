@@ -21,7 +21,7 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
 
-    -- نظام استكشاف وجلب الشخصيات (محدث ليتعامل مع الدوال بمرونة تامة وتجنب أي أخطاء)
+    -- نظام استكشاف وجلب الشخصيات (محدث لفحص الـ Upvalues واستخراج جدول الوحدات بدقة)
     task.spawn(function()
         print("[Macro System] Starting Units scan...")
         local success, err = pcall(function()
@@ -42,24 +42,38 @@ function Macro.Init(Shared, UI)
                 if ok then
                     print("[Macro System] Module required successfully. Type: " .. type(unitsData))
                     
-                    -- التعامل الذكي مع الدوال وإرجاع الجداول بأمان
+                    -- التعامل الذكي مع الدوال واستخراج البيانات المخفية
                     if type(unitsData) == "function" then
-                        local callOk, res = pcall(unitsData)
-                        if callOk and type(res) == "table" then
-                            unitsData = res
-                            print("[Macro System] Function executed and returned table successfully.")
-                        else
-                            local callOk2, res2 = pcall(unitsData, {})
-                            if callOk2 and type(res2) == "table" then
-                                unitsData = res2
-                                print("[Macro System] Function executed with {} and returned table.")
+                        local foundTableViaUpvalues = false
+                        pcall(function()
+                            for i = 1, 25 do
+                                local name, val = debug.getupvalue(unitsData, i)
+                                if type(val) == "table" and not foundTableViaUpvalues then
+                                    for _, v in pairs(val) do
+                                        if type(v) == "table" and (v.Name or v.Cost or v.ID or v.Damage or v.Model) then
+                                            unitsData = val
+                                            foundTableViaUpvalues = true
+                                            print("[Macro System] Successfully extracted units table from function upvalues!")
+                                            break
+                                        end
+                                    end
+                                end
+                                if name == nil then break end
+                            end
+                        end)
+
+                        if not foundTableViaUpvalues then
+                            local callOk, res = pcall(unitsData, {})
+                            if callOk and type(res) == "table" and next(res) ~= nil then
+                                unitsData = res
+                                print("[Macro System] Function executed with {} and returned valid table.")
                             else
-                                local callOk3, res3 = pcall(unitsData, game)
-                                if callOk3 and type(res3) == "table" then
-                                    unitsData = res3
-                                    print("[Macro System] Function executed with game and returned table.")
+                                local callOk2, res2 = pcall(unitsData, repStorage)
+                                if callOk2 and type(res2) == "table" and next(res2) ~= nil then
+                                    unitsData = res2
+                                    print("[Macro System] Function executed with ReplicatedStorage and returned table.")
                                 else
-                                    print("[Macro System] Function did not return a table, using safe fallback table.")
+                                    print("[Macro System] Function requires specific args, using fallback table.")
                                     unitsData = {}
                                 end
                             end
