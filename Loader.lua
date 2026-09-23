@@ -71,7 +71,7 @@ local loadingSpinner
 local function createLoadingScreen()
     local player = Players.LocalPlayer
     if not player then
-        return
+        player = Players.PlayerAdded:Wait()
     end
 
     -- PlayerGui is the reliable client-side parent for a local loading screen.
