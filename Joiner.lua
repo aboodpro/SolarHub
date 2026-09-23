@@ -21,6 +21,15 @@ function Joiner.Init(Shared, UI)
         :WaitForChild("RemoteEvents")
         :WaitForChild("ReplicaSignal")
 
+    -- Expose the exact ReplicaSignal instance used by Joiner's working
+    -- Auto Vote Start path so Macro does not resolve a different remote.
+    Shared.ReplicaSignal = ReplicaSignal
+    Shared.sendGameStart = function()
+        return pcall(function()
+            ReplicaSignal:FireServer(87, "Response", true)
+        end)
+    end
+
     -- Official game Network Nodes used by the game's own actions.
     -- Story matchmaking: REQUEST_ENTER_MATCHMAKING
     -- Return lobby: REQUEST_AFK_LEAVE
