@@ -954,11 +954,20 @@ function Macro.Init(Shared, UI)
         -- depended on recordedPlacementCFrames from the recording session,
         -- which is empty when an already-saved macro is played later.
         local savedPlacementOrder = 0
+        local placementActionsByRecordedUnitId = {}
         for _, savedAction in ipairs(macroData.actions) do
             if savedAction.actionType == "UnitPlace" then
                 savedPlacementOrder += 1
                 local order = tonumber(savedAction.placementOrder) or savedPlacementOrder
                 placementActionsByOrder[order] = savedAction
+
+                -- Older saved macros may have linkedPlacementOrder missing,
+                -- but still contain the original UnitPlace recordedUnitId.
+                if savedAction.recordedUnitId ~= nil then
+                    placementActionsByRecordedUnitId[
+                        tostring(savedAction.recordedUnitId)
+                    ] = savedAction
+                end
             end
         end
 
@@ -1058,9 +1067,15 @@ function Macro.Init(Shared, UI)
                         local targetOrder = action.linkedPlacementOrder
                         local targetReplicaId = targetOrder and playbackUnitReplicaIds[targetOrder]
 
-                        -- Prefer the saved target CFrame from the recording session.
-                        -- This also works when linkedPlacementOrder was not captured.
+                        -- Recover the placement from the original recorded unit id
+                        -- for older macros that did not save linkedPlacementOrder.
                         local placementAction = targetOrder and placementActionsByOrder[targetOrder]
+                        if not placementAction and action.recordedUnitId ~= nil then
+                            placementAction = placementActionsByRecordedUnitId[
+                                tostring(action.recordedUnitId)
+                            ]
+                        end
+
                         local placementCFrame = placementAction
                             and placementAction.args
                             and placementAction.args[4]
