@@ -78,12 +78,8 @@ local function createLoadingScreen()
         return
     end
 
-    local parent = CoreGui
-    pcall(function()
-        if not CoreGui then
-            parent = player:WaitForChild("PlayerGui")
-        end
-    end)
+    -- PlayerGui is the reliable client-side parent for a local loading screen.
+    local parent = player:WaitForChild("PlayerGui")
 
     pcall(function()
         local old = parent:FindFirstChild("SolarHubLoading")
@@ -454,6 +450,9 @@ task.delay(5, function()
         local MacroModule = compiled.Macro()
         return MacroModule.Init(Shared, UI)
     end)
+
+    setLoadingProgress(100, "SolarHub ready")
+    task.spawn(finishLoadingScreen)
 end)
 
 setLoadingProgress(99, "Finalizing SolarHub...")
@@ -463,11 +462,5 @@ runModule("Webhook.Init", function()
     return WebhookModule.Init(Shared, UI)
 end)
 
-setLoadingProgress(100, "SolarHub ready")
 print("☀️ Solar Hub loaded successfully (prepared modular edition)!")
--- The Macro engine is intentionally loaded five seconds after Joiner.
--- Finish the visual loading screen after Macro initialization so "ready"
--- is not shown while a module is still starting.
-task.delay(5.25, function()
-    finishLoadingScreen()
-end)
+-- The visual loader is closed by the Macro initialization callback.
