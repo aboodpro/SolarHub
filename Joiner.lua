@@ -454,6 +454,35 @@ function Joiner.Init(Shared, UI)
             -- ReplicaSet/ReplicaCreate event as baseline, so candidateIds could
             -- NEVER be populated.
             local partyCreateSent = false
+            local partyCreateAccepted = false
+            local pendingReplicaId = nil
+            local startGameSent = false
+
+            local function tryStartGame(id)
+                if not partyCreateSent or not partyCreateAccepted or startGameSent then
+                    return
+                end
+                if type(id) ~= "number" or id <= 0 or id > 1000000 then
+                    return
+                end
+
+                task.spawn(function()
+                    local delays = {0, 0.12, 0.30, 0.60, 1.00}
+                    for attempt, delay in ipairs(delays) do
+                        if startGameSent then
+                            return
+                        end
+                        if delay > 0 then task.wait(delay) end
+                        local ok = pcall(function()
+                            ReplicaSignal:FireServer(id, "StartGame")
+                        end)
+                        if ok then
+                            Shared.logLine("[Joiner] Story StartGame attempt " .. tostring(attempt) .. " -> replica " .. tostring(id))
+                        end
+                    end
+                    startGameSent = true
+                end)
+            end
 
             local function rememberBaseline(id)
                 if type(id) == "number" then
@@ -474,24 +503,11 @@ function Joiner.Init(Shared, UI)
                 -- Match the game's exact Select Stage Start sequence:
                 -- PARTY_CREATE_RequestNODE -> ReplicaSet(newReplicaId) ->
                 -- ReplicaSignal:FireServer(newReplicaId, "StartGame")
-                if partyCreateSent and not startGameSent then
-                    startGameSent = true
-
-                    local ok = pcall(function()
-                        ReplicaSignal:FireServer(id, "StartGame")
-                    end)
-
-                    if ok then
-                        Shared.logLine(
-                            "[Joiner] Story Select Stage -> StartGame sent immediately to replica "
-                                .. tostring(id)
-                        )
+                if partyCreateSent then
+                    if partyCreateAccepted then
+                        tryStartGame(id)
                     else
-                        Shared.logLine(
-                            "[Joiner] Story Select Stage -> StartGame failed for replica "
-                                .. tostring(id)
-                        )
-                        startGameSent = false
+                        pendingReplicaId = id
                     end
                 end
             end
@@ -526,6 +542,20 @@ function Joiner.Init(Shared, UI)
                 end
             end
 
+            -- The real client receives a PARTY_CREATE_ReturnNODE
+            -- acknowledgement before/around the new ReplicaSet.
+            connections.node = UpdateNode.OnClientEvent:Connect(function(action, requestId, sequenceId, success)
+                if partyCreateSent and action == "PARTY_CREATE_ReturnNODE" and success == true then
+                    partyCreateAccepted = true
+                    Shared.logLine("[Joiner] Story PARTY_CREATE accepted")
+                    if pendingReplicaId then
+                        local id = pendingReplicaId
+                        pendingReplicaId = nil
+                        tryStartGame(id)
+                    end
+                end
+            end)
+
             -- Install listeners BEFORE PARTY_CREATE so a same-frame ReplicaSet
             -- cannot be missed.
             connections.set = replicaSet.OnClientEvent:Connect(function(replicaId, ...)
@@ -551,8 +581,6 @@ function Joiner.Init(Shared, UI)
                     end
                 end)
             end
-
-            task.wait(0.15)
 
             -- From the live game capture:
             -- {Type="Post"}, "PARTY_CREATE_RequestNODE", requestId, queueData
