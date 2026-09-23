@@ -490,9 +490,28 @@ function Joiner.Init(Shared, UI)
             local pendingReplicaId = nil
             local startGameSent = false
 
+            local function getBestCandidate()
+                local bestId = nil
+                local bestScore = -1
+                for _, id in ipairs(candidateIds) do
+                    local score = candidateScores[id] or 0
+                    if score > bestScore then
+                        bestScore = score
+                        bestId = id
+                    end
+                end
+                return bestId, bestScore
+            end
+
             local function tryStartGame(id)
                 if not partyCreateSent or not partyCreateAccepted or startGameSent then
                     return
+                end
+
+                local bestId, bestScore = getBestCandidate()
+                if bestId then
+                    id = bestId
+                    Shared.logLine("[Joiner] Story selected party replica " .. tostring(id) .. " (match score " .. tostring(bestScore) .. ")")
                 end
                 if type(id) ~= "number" or id <= 0 or id > 1000000 then
                     return
@@ -542,7 +561,9 @@ function Joiner.Init(Shared, UI)
                 -- ReplicaSignal:FireServer(newReplicaId, "StartGame")
                 if partyCreateSent then
                     if partyCreateAccepted then
-                        tryStartGame(id)
+                        task.delay(0.05, function()
+                            tryStartGame(id)
+                        end)
                     else
                         pendingReplicaId = id
                     end
@@ -588,7 +609,9 @@ function Joiner.Init(Shared, UI)
                     if pendingReplicaId then
                         local id = pendingReplicaId
                         pendingReplicaId = nil
-                        tryStartGame(id)
+                        task.delay(0.05, function()
+                            tryStartGame(id)
+                        end)
                     end
                 end
             end)
