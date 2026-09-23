@@ -1160,7 +1160,14 @@ function Macro.Init(Shared, UI)
                         end
 
                         if targetReplicaId and action.unitIdArgIndex then
-                            args[action.unitIdArgIndex] = tostring(targetReplicaId)
+                            -- Preserve the type used by the original UpgradeGameUnit call.
+                            -- Some game revisions expect a numeric replica id, while others
+                            -- expose the recorded id as a string.
+                            if type(action.recordedUnitId) == "number" then
+                                args[action.unitIdArgIndex] = tonumber(targetReplicaId)
+                            else
+                                args[action.unitIdArgIndex] = tostring(targetReplicaId)
+                            end
                             action._playbackReplicaId = targetReplicaId
                         else
                             lastError = ("Target mapping missing for placement #%s"):format(tostring(targetOrder))
