@@ -243,6 +243,15 @@ function Joiner.Init(Shared, UI)
         AutoReturnLobby = 0,
     }
 
+    -- Joiner state is tracked independently from WaveInfo. The game can have
+    -- a CurrentGameState replica while still being in the lobby/matchmaking UI.
+    local joinRequested = {
+        Story = false,
+        Raid = false,
+        Expedition = false,
+        Challenge = false,
+    }
+
     local function remoteCooldown(configKey: string, seconds: number): boolean
         local now = os.clock()
         if now < (toggleTimestamps[configKey] or 0) then
@@ -447,33 +456,54 @@ function Joiner.Init(Shared, UI)
                 end
 
                 local state = getCurrentGameState()
-                local inLobbyNow = (state == nil)
 
-                if inLobbyNow then
-                    if not Config.DisableAutoJoiners then
-                        if Config.AutoJoinStory then
-                            if Config.StoryMatchMaking then
-                                enterMatchmakingRemotely("Story", "AutoJoinStory")
-                            else
-                                startSelectedModeRemotely("Story", "AutoJoinStory")
+                -- Do not use WaveInfo as a lobby detector. It can exist before
+                -- a match starts, which previously prevented Auto Join from firing.
+                if state == "InProgress" then
+                    joinRequested.Story = false
+                    joinRequested.Raid = false
+                    joinRequested.Expedition = false
+                    joinRequested.Challenge = false
+                    runRemoteGameAutomation()
+                elseif not Config.DisableAutoJoiners then
+                    if Config.AutoJoinStory and not joinRequested.Story then
+                        if Config.StoryMatchMaking then
+                            if enterMatchmakingRemotely("Story", "AutoJoinStory") then
+                                joinRequested.Story = true
                             end
-                        elseif Config.AutoJoinRaid then
-                            if Config.RaidMatchMaking then
-                                enterMatchmakingRemotely("Raid", "AutoJoinRaid")
-                            else
-                                startSelectedModeRemotely("Raid", "AutoJoinRaid")
+                        else
+                            if startSelectedModeRemotely("Story", "AutoJoinStory") then
+                                joinRequested.Story = true
                             end
-                        elseif Config.AutoJoinExpedition then
-                            if Config.ExpeditionMatchMaking then
-                                enterMatchmakingRemotely("Expedition", "AutoJoinExpedition")
-                            else
-                                startSelectedModeRemotely("Expedition", "AutoJoinExpedition")
+                        end
+                    elseif Config.AutoJoinRaid and not joinRequested.Raid then
+                        if Config.RaidMatchMaking then
+                            if enterMatchmakingRemotely("Raid", "AutoJoinRaid") then
+                                joinRequested.Raid = true
                             end
-                        elseif Config.AutoJoinChallenge then
-                            if Config.ChallengeMatchMaking then
-                                enterMatchmakingRemotely("Challenge", "AutoJoinChallenge")
-                            else
-                                startSelectedModeRemotely("Challenge", "AutoJoinChallenge")
+                        else
+                            if startSelectedModeRemotely("Raid", "AutoJoinRaid") then
+                                joinRequested.Raid = true
+                            end
+                        end
+                    elseif Config.AutoJoinExpedition and not joinRequested.Expedition then
+                        if Config.ExpeditionMatchMaking then
+                            if enterMatchmakingRemotely("Expedition", "AutoJoinExpedition") then
+                                joinRequested.Expedition = true
+                            end
+                        else
+                            if startSelectedModeRemotely("Expedition", "AutoJoinExpedition") then
+                                joinRequested.Expedition = true
+                            end
+                        end
+                    elseif Config.AutoJoinChallenge and not joinRequested.Challenge then
+                        if Config.ChallengeMatchMaking then
+                            if enterMatchmakingRemotely("Challenge", "AutoJoinChallenge") then
+                                joinRequested.Challenge = true
+                            end
+                        else
+                            if startSelectedModeRemotely("Challenge", "AutoJoinChallenge") then
+                                joinRequested.Challenge = true
                             end
                         end
                     end
