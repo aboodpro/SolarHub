@@ -491,6 +491,12 @@ function Joiner.Init(Shared, UI)
             local startGameSent = false
             local startGameConfirmed = false
 
+            -- A ReplicaSet/ReplicaCreate event can fire multiple times for the
+            -- same server replica. Keep a per-request guard so the same replica
+            -- can never spawn multiple StartGame retry loops.
+            local attemptedReplicaIds = {}
+            local startAttemptActive = false
+
             local function getBestCandidate()
                 local bestId = nil
                 local bestScore = -1
@@ -508,14 +514,20 @@ function Joiner.Init(Shared, UI)
                 -- FireServer returning successfully only means the client
                 -- accepted the call. The real success signal is the game's
                 -- subsequent navigation/state transition.
-                if not partyCreateSent or startGameConfirmed then
+                if not partyCreateSent or startGameConfirmed or startAttemptActive then
                     return
                 end
 
                 local bestId, bestScore = getBestCandidate()
                 if bestId then
                     id = bestId
-                    Shared.logLine("[Joiner] Story selected party replica " .. tostring(id) .. " (match score " .. tostring(bestScore) .. ")")
+                    Shared.logLine(
+                        "[Joiner] Story selected party replica "
+                            .. tostring(id)
+                            .. " (match score "
+                            .. tostring(bestScore)
+                            .. ")"
+                    )
                 end
 
                 id = tonumber(id)
@@ -523,10 +535,22 @@ function Joiner.Init(Shared, UI)
                     return
                 end
 
+                -- Never start a second retry loop for the same server replica.
+                if attemptedReplicaIds[id] then
+                    return
+                end
+
+                attemptedReplicaIds[id] = true
+                startAttemptActive = true
+
                 task.spawn(function()
-                    local delays = {0, 0.15, 0.35, 0.70, 1.20, 2.00, 3.00, 4.50}
+                    -- Enough retries to survive a small replication/timing race,
+                    -- but never enough to become a spam loop.
+                    local delays = {0, 0.20, 0.50, 1.00, 2.00, 3.50}
+
                     for attempt, delay in ipairs(delays) do
                         if startGameConfirmed then
+                            startAttemptActive = false
                             return
                         end
 
@@ -535,6 +559,7 @@ function Joiner.Init(Shared, UI)
                         end
 
                         if startGameConfirmed then
+                            startAttemptActive = false
                             return
                         end
 
@@ -545,18 +570,31 @@ function Joiner.Init(Shared, UI)
                         end)
 
                         if ok then
-                            Shared.logLine("[Joiner] Story StartGame attempt " .. tostring(attempt) .. " -> replica " .. tostring(id))
+                            Shared.logLine(
+                                "[Joiner] Story StartGame attempt "
+                                    .. tostring(attempt)
+                                    .. " -> replica "
+                                    .. tostring(id)
+                            )
                         else
-                            Shared.logLine("[Joiner] Story StartGame attempt " .. tostring(attempt) .. " failed: " .. tostring(err))
+                            Shared.logLine(
+                                "[Joiner] Story StartGame attempt "
+                                    .. tostring(attempt)
+                                    .. " failed: "
+                                    .. tostring(err)
+                            )
                         end
                     end
 
-                    -- Do not permanently mark this as successful. If the
-                    -- transition was never observed, the watcher below can
-                    -- allow another candidate/attempt.
+                    startAttemptActive = false
+
                     if not startGameConfirmed then
                         startGameSent = false
-                        Shared.logLine("[Joiner] Story StartGame was not confirmed by game transition")
+                        Shared.logLine(
+                            "[Joiner] Story StartGame was not confirmed for replica "
+                                .. tostring(id)
+                                .. " after limited retries"
+                        )
                     end
                 end)
             end
@@ -721,7 +759,7 @@ function Joiner.Init(Shared, UI)
             Shared.logLine("[Joiner] Story Select Stage -> PARTY_CREATE sent; waiting for new replica")
 
             task.spawn(function()
-                local deadline = os.clock() + 10
+                local deadline = os.clock() + 15
 
                 -- Wait only for the replica created by this PARTY_CREATE.
                 -- rememberCandidate() sends StartGame immediately when it sees it,
@@ -735,7 +773,7 @@ function Joiner.Init(Shared, UI)
                 end
 
                 if not startGameConfirmed then
-                    Shared.logLine("[Joiner] Story Select Stage -> StartGame was not confirmed within 10s")
+                    Shared.logLine("[Joiner] Story Select Stage -> StartGame was not confirmed within 15s")
                     joinRequested[modeName] = false
                 else
                     Shared.logLine("[Joiner] Story Select Stage -> StartGame confirmed successfully")
