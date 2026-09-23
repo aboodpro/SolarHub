@@ -8,63 +8,110 @@ local CACHE_BUST = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 9
 -------------------------------------------------
 
 local debugGui
-local debugLabel
+local debugBox
+local debugText = ""
 
-local function showDebug(text)
+local function createDebugWindow()
+    if debugGui then
+        return
+    end
+
+    local playerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+
+    debugGui = Instance.new("ScreenGui")
+    debugGui.Name = "SolarHubDebug"
+    debugGui.ResetOnSpawn = false
+    debugGui.IgnoreGuiInset = true
+    debugGui.DisplayOrder = 999999
+    debugGui.Parent = playerGui
+
+    local frame = Instance.new("Frame")
+    frame.Name = "Window"
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+    frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    frame.Size = UDim2.new(0.82, 0, 0.72, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    frame.BorderSizePixel = 1
+    frame.Parent = debugGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -20, 0, 34)
+    title.Position = UDim2.new(0, 10, 0, 8)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(255, 210, 70)
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 20
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Text = "☀️ SolarHub Debug"
+    title.Parent = frame
+
+    local hint = Instance.new("TextLabel")
+    hint.Size = UDim2.new(1, -20, 0, 28)
+    hint.Position = UDim2.new(0, 10, 0, 42)
+    hint.BackgroundTransparency = 1
+    hint.TextColor3 = Color3.fromRGB(170, 170, 170)
+    hint.Font = Enum.Font.SourceSans
+    hint.TextSize = 15
+    hint.TextXAlignment = Enum.TextXAlignment.Left
+    hint.Text = "اضغط داخل المربع ثم Ctrl+A وبعدها Ctrl+C لنسخ اللوج"
+    hint.Parent = frame
+
+    debugBox = Instance.new("TextBox")
+    debugBox.Name = "Log"
+    debugBox.Size = UDim2.new(1, -20, 1, -84)
+    debugBox.Position = UDim2.new(0, 10, 0, 76)
+    debugBox.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+    debugBox.BorderSizePixel = 1
+    debugBox.BorderColor3 = Color3.fromRGB(65, 65, 65)
+    debugBox.TextColor3 = Color3.fromRGB(235, 235, 235)
+    debugBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+    debugBox.Font = Enum.Font.Code
+    debugBox.TextSize = 14
+    debugBox.TextXAlignment = Enum.TextXAlignment.Left
+    debugBox.TextYAlignment = Enum.TextYAlignment.Top
+    debugBox.TextWrapped = false
+    debugBox.MultiLine = true
+    debugBox.ClearTextOnFocus = false
+    debugBox.TextEditable = true
+    debugBox.Text = ""
+    debugBox.Parent = frame
+
+    local boxCorner = Instance.new("UICorner")
+    boxCorner.CornerRadius = UDim.new(0, 5)
+    boxCorner.Parent = debugBox
+end
+
+local function showDebug(message)
     pcall(function()
-        if not debugGui then
-            local playerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-
-            debugGui = Instance.new("ScreenGui")
-            debugGui.Name = "SolarHubDebug"
-            debugGui.ResetOnSpawn = false
-            debugGui.IgnoreGuiInset = true
-            debugGui.Parent = playerGui
-
-            local frame = Instance.new("Frame")
-            frame.Size = UDim2.new(0.85, 0, 0.65, 0)
-            frame.Position = UDim2.new(0.075, 0, 0.08, 0)
-            frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-            frame.BorderSizePixel = 1
-            frame.Parent = debugGui
-
-            local title = Instance.new("TextLabel")
-            title.Size = UDim2.new(1, 0, 0, 36)
-            title.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-            title.TextColor3 = Color3.fromRGB(255, 210, 70)
-            title.Font = Enum.Font.SourceSansBold
-            title.TextSize = 20
-            title.Text = "☀️ SolarHub Debug"
-            title.Parent = frame
-
-            debugLabel = Instance.new("TextLabel")
-            debugLabel.Size = UDim2.new(1, -20, 1, -50)
-            debugLabel.Position = UDim2.new(0, 10, 0, 42)
-            debugLabel.BackgroundTransparency = 1
-            debugLabel.TextColor3 = Color3.fromRGB(235, 235, 235)
-            debugLabel.Font = Enum.Font.Code
-            debugLabel.TextSize = 15
-            debugLabel.TextXAlignment = Enum.TextXAlignment.Left
-            debugLabel.TextYAlignment = Enum.TextYAlignment.Top
-            debugLabel.TextWrapped = true
-            debugLabel.Text = ""
-            debugLabel.Parent = frame
-        end
-
-        debugLabel.Text = tostring(text) .. "\n\n" .. debugLabel.Text
+        createDebugWindow()
+        debugText = debugText .. tostring(message) .. "\n"
+        debugBox.Text = debugText
+        debugBox.CursorPosition = #debugBox.Text + 1
     end)
 end
 
 local function addLog(...)
     local parts = {}
+
     for i = 1, select("#", ...) do
         parts[#parts + 1] = tostring(select(i, ...))
     end
 
     local message = table.concat(parts, " ")
+
     print(message)
     showDebug(message)
 end
+
+-------------------------------------------------
+-- START
+-------------------------------------------------
+
+createDebugWindow()
 
 addLog("========================================")
 addLog("☀️ SOLARHUB DEBUG STARTED")
@@ -165,7 +212,6 @@ local function fetch(fileName)
         end
 
         addLog("[RUNTIME OK]", fileName)
-
         return runtimeResult
     end)
 
