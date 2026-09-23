@@ -10,7 +10,7 @@ function Macro.Init(Shared, UI)
     local getCurrentYen = Shared.getCurrentYen
 
     local tabs = UI.tabs
-    ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local macroTab = tabs["Macro"]
     if not macroTab then
         warn("[Macro] Macro tab container is missing.")
@@ -30,7 +30,6 @@ function Macro.Init(Shared, UI)
     local pendingRecordWorkers = 0
     local scannedUnitsDatabase = {}
 
-    local ReplicatedStorage = nil
     local replicaClientModule = nil
 
     -- Resolve ReplicaClient lazily and defensively. Some game revisions/executors
@@ -58,7 +57,8 @@ function Macro.Init(Shared, UI)
     end
 
     local function getPlayerReplica()
-        local replicaClient = getReplicaClient()\n        if not replicaClient or type(replicaClient.FromId) ~= "function" then
+        local replicaClient = getReplicaClient()
+        if not replicaClient or type(replicaClient.FromId) ~= "function" then
             return nil
         end
 
@@ -84,7 +84,8 @@ function Macro.Init(Shared, UI)
             return out
         end
 
-        local replicaClient = getReplicaClient()\n        if not replicaClient or type(replicaClient.FromId) ~= "function" then
+        local replicaClient = getReplicaClient()
+        if not replicaClient or type(replicaClient.FromId) ~= "function" then
             return out
         end
 
@@ -114,7 +115,8 @@ function Macro.Init(Shared, UI)
 
     local function resolveRecordedPlacementOrder(recordedUnitId)
         local replicaId = tonumber(recordedUnitId)
-        local replicaClient = getReplicaClient()\n        if not replicaId or not replicaClient or type(replicaClient.FromId) ~= "function" then
+        local replicaClient = getReplicaClient()
+        if not replicaId or not replicaClient or type(replicaClient.FromId) ~= "function" then
             return nil
         end
 
@@ -178,7 +180,10 @@ function Macro.Init(Shared, UI)
         return bestId
     end
 
-    -- Unit database scanning is intentionally deferred to playback/recording paths.\n    -- Never run a large ReplicatedStorage scan while loading Macro.lua.\n\n    local function findRemote(name, className)
+    -- Unit database scanning is intentionally deferred to playback/recording paths.
+    -- Never run a large ReplicatedStorage scan while loading Macro.lua.
+
+    local function findRemote(name, className)
         local repStorage = game:GetService("ReplicatedStorage")
         local found = repStorage:FindFirstChild(name, true)
         if found and (not className or found.ClassName == className) then
@@ -659,7 +664,8 @@ function Macro.Init(Shared, UI)
     local macroLastStartedSession = {}
 
     local function getCurrentGameState()
-        local replicaClient = getReplicaClient()\n        if not replicaClient or type(replicaClient.FromId) ~= "function" then
+        local replicaClient = getReplicaClient()
+        if not replicaClient or type(replicaClient.FromId) ~= "function" then
             return nil
         end
 
