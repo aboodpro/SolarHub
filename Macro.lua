@@ -287,8 +287,9 @@ function Macro.Init(Shared, UI)
                             actionEntry.placementOrder = recordPlacementCount
                             recordUnitIdMap[recordPlacementCount] = recordPlacementCount
 
+                            local thisPlacementOrder = recordPlacementCount
                             task.spawn(function()
-                                captureNewRecordedPlacement(recordPlacementCount)
+                                captureNewRecordedPlacement(thisPlacementOrder)
                             end)
 
                         elseif actionDesc == "UnitUpgrade" then
