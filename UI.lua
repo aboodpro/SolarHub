@@ -30,6 +30,24 @@ function UI.Init(Shared)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
+    local uiScale = Instance.new("UIScale")
+    uiScale.Scale = 1
+    uiScale.Parent = mainFrame
+
+    local function updateResponsiveScale()
+        local camera = workspace.CurrentCamera
+        if not camera then return end
+        local viewport = camera.ViewportSize
+        local scaleX = (viewport.X - 20) / 586
+        local scaleY = (viewport.Y - 20) / 304
+        uiScale.Scale = math.clamp(math.min(scaleX, scaleY), 0.55, 1)
+    end
+
+    updateResponsiveScale()
+    if workspace.CurrentCamera then
+        workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateResponsiveScale)
+    end
+
     local mainCorner = Instance.new("UICorner")
     mainCorner.CornerRadius = UDim.new(0, 10)
     mainCorner.Parent = mainFrame
@@ -93,15 +111,8 @@ function UI.Init(Shared)
         end
     end)
 
-    local clickPos
-    toggleBtn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then clickPos = input.Position end
-    end)
-    toggleBtn.InputEnded:Connect(function(input)
-        if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and clickPos then
-            if (input.Position - clickPos).Magnitude < 5 then mainFrame.Visible = not mainFrame.Visible end
-            clickPos = nil
-        end
+    toggleBtn.Activated:Connect(function()
+        mainFrame.Visible = not mainFrame.Visible
     end)
 
     local topBar = Instance.new("Frame")
