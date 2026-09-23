@@ -464,38 +464,36 @@ function Joiner.Init(Shared, UI)
             local startGameSent = false
 
             local function rememberCandidate(id)
-                if type(id) == "number"
-                    and id > 0
-                    and id <= 1000000
-                    and not baselineIds[id]
-                    and not seenCandidates[id] then
+                if type(id) ~= "number" or id <= 0 or id > 1000000 then
+                    return
+                end
+
+                if not seenCandidates[id] then
                     seenCandidates[id] = true
                     table.insert(candidateIds, id)
+                end
 
-                    -- The real Select Stage Start button performs PARTY_CREATE
-                    -- and then immediately starts the newly-created party.
-                    -- As soon as the server announces that new replica, mirror
-                    -- the second half of that same Start click.
-                    if partyCreateSent and not startGameSent then
-                        startGameSent = true
-                        task.spawn(function()
-                            local ok = pcall(function()
-                                ReplicaSignal:FireServer(id, "StartGame")
-                            end)
+                -- Match the game's exact Select Stage Start sequence:
+                -- PARTY_CREATE_RequestNODE -> ReplicaSet(newReplicaId) ->
+                -- ReplicaSignal:FireServer(newReplicaId, "StartGame")
+                if partyCreateSent and not startGameSent then
+                    startGameSent = true
 
-                            if ok then
-                                Shared.logLine(
-                                    "[Joiner] Story Select Stage -> StartGame sent to new party replica "
-                                        .. tostring(id)
-                                )
-                            else
-                                Shared.logLine(
-                                    "[Joiner] Story Select Stage -> StartGame failed for replica "
-                                        .. tostring(id)
-                                )
-                                startGameSent = false
-                            end
-                        end)
+                    local ok = pcall(function()
+                        ReplicaSignal:FireServer(id, "StartGame")
+                    end)
+
+                    if ok then
+                        Shared.logLine(
+                            "[Joiner] Story Select Stage -> StartGame sent immediately to replica "
+                                .. tostring(id)
+                        )
+                    else
+                        Shared.logLine(
+                            "[Joiner] Story Select Stage -> StartGame failed for replica "
+                                .. tostring(id)
+                        )
+                        startGameSent = false
                     end
                 end
             end
@@ -532,7 +530,17 @@ function Joiner.Init(Shared, UI)
 
             -- Install listeners BEFORE PARTY_CREATE so a same-frame ReplicaSet
             -- cannot be missed.
-            connections.set = replicaSet.OnClientEvent:Connect(function(...)
+            connections.set = replicaSet.OnClientEvent:Connect(function(replicaId, ...)
+                -- ReplicaSet's first argument is the replica ID. The live
+                -- capture showed e.g. 9382 | table | false.
+                if partyCreateSent and type(replicaId) == "number" then
+                    rememberCandidate(replicaId)
+                    return
+                end
+
+                -- Keep baseline tracking for replicas that existed before the
+                -- party was created.
+                inspectValue(replicaId)
                 for _, value in ipairs({...}) do
                     inspectValue(value)
                 end
@@ -551,12 +559,8 @@ function Joiner.Init(Shared, UI)
             -- From the live game capture:
             -- {Type="Post"}, "PARTY_CREATE_RequestNODE", requestId, queueData
             local createOk, createErr = pcall(function()
-                pcall(function()
-                    if RequestLeaveMatchmaking then
-                        RequestLeaveMatchmaking:Request()
-                    end
-                end)
-
+                -- Do not send REQUEST_LEAVE_MATCHMAKING here. The real
+                -- Select Stage Start button goes straight to PARTY_CREATE.
                 matchmakingRequestId += 1
                 partyCreateSent = true
                 UpdateNode:FireServer(
