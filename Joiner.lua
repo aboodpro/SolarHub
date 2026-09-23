@@ -6,12 +6,8 @@ local Joiner = {}
 
 function Joiner.Init(Shared, UI)
     local Config = Shared.Config
-    local playerGui = Shared.playerGui
     local player = Shared.player
     local Lighting = Shared.Lighting
-    local isInLobby = Shared.isInLobby
-    local getPrompt = Shared.getPrompt
-    local clickElement = Shared.clickElement
 
     local tabs = UI.tabs
     local createSection = UI.createSection
@@ -226,15 +222,6 @@ function Joiner.Init(Shared, UI)
     -------------------------------------------------
     -- AUTOMATION LOOP
     -------------------------------------------------
-    local function triggerPrompt(modeName: string)
-        local prompt = getPrompt(modeName)
-        if prompt then
-            pcall(function() fireproximityprompt(prompt) end)
-            return true
-        end
-        return false
-    end
-
     local toggleTimestamps = {
         AutoJoinStory = 0,
         AutoJoinRaid = 0,
@@ -258,10 +245,119 @@ function Joiner.Init(Shared, UI)
 
     local function getCurrentGameState(): string?
         local _, _, state = Shared.getWaveInfo()
-        if type(state) == "string" then
-            return state
+        return type(state) == "string" and state or nil
+    end
+
+    local function prettifyName(value: string): string
+        return value:gsub("(%u)", " %1"):gsub("^%s+", "")
+    end
+
+    local function resolveMapId(modeName: string, selectedName: string): string
+        local compactSelected = selectedName:gsub("%s+", "")
+        local ok, maps = pcall(function()
+            return require(Shared.ReplicatedStorage.Shared.Information.Maps)
+        end)
+
+        if ok and type(maps) == "table" and type(maps.MapData) == "table"
+            and type(maps.MapData[modeName]) == "table" then
+            local modeData = maps.MapData[modeName]
+
+            if modeData[selectedName] then
+                return selectedName
+            end
+
+            if modeData[compactSelected] then
+                return compactSelected
+            end
+
+            for mapId, mapInfo in pairs(modeData) do
+                if type(mapId) == "string" then
+                    if mapId:gsub("%s+", ""):lower() == compactSelected:lower() then
+                        return mapId
+                    end
+
+                    if type(mapInfo) == "table" and type(mapInfo.DisplayName) == "string"
+                        and mapInfo.DisplayName:lower() == selectedName:lower() then
+                        return mapId
+                    end
+
+                    if prettifyName(mapId):lower() == selectedName:lower() then
+                        return mapId
+                    end
+                end
+            end
         end
+
+        return compactSelected
+    end
+
+    local function buildQueueData(modeName: string)
+        if modeName == "Story" then
+            return {
+                Difficulty = Config.SelectedDifficulty,
+                MapName = StoryMapDisplayToId[Config.SelectedMap] or resolveMapId("Story", Config.SelectedMap),
+                Gamemode = "Story",
+                ActName = Config.SelectedAct,
+            }
+        elseif modeName == "Raid" then
+            return {
+                MapName = resolveMapId("Raid", Config.SelectedRaidMap),
+                Gamemode = "Raid",
+                ActName = Config.SelectedRaidAct,
+            }
+        elseif modeName == "Expedition" then
+            return {
+                Difficulty = Config.SelectedExpeditionDifficulty,
+                MapName = resolveMapId("Expedition", Config.SelectedExpeditionMap),
+                Gamemode = "Expedition",
+            }
+        elseif modeName == "Challenge" then
+            return {
+                Gamemode = "Challenge",
+                ChallengeType = Config.SelectedChallengeType,
+            }
+        end
+
         return nil
+    end
+
+    local function enterMatchmakingRemotely(modeName: string, configKey: string)
+        local queueData = buildQueueData(modeName)
+        if not queueData or not RequestEnterMatchmaking then
+            return false
+        end
+
+        if not remoteCooldown(configKey, 4) then
+            return false
+        end
+
+        local ok, result = pcall(function()
+            return RequestEnterMatchmaking:Request(queueData)
+        end)
+
+        if ok then
+            Shared.logLine("[Matchmaking] " .. modeName .. " requested through REQUEST_ENTER_MATCHMAKING")
+            if result ~= nil then
+                Shared.logLine("[Matchmaking] Request node created")
+            end
+            return true
+        end
+
+        Shared.logLine("[Matchmaking] " .. modeName .. " request failed: " .. tostring(result))
+        return false
+    end
+
+    local function startSelectedModeRemotely(modeName: string, configKey: string)
+        local queueData = buildQueueData(modeName)
+        if not queueData then
+            return false
+        end
+
+        if not remoteCooldown(configKey, 4) then
+            return false
+        end
+
+        return Shared.startGameRemotely(queueData)
     end
 
     local function runRemoteGameAutomation()
@@ -297,114 +393,16 @@ function Joiner.Init(Shared, UI)
             end
         end
 
-        if Config.AutoReturnLobby then
-            if remoteCooldown("AutoReturnLobby", 10) then
-                returnToLobbyRemotely()
+        if Config.AutoReturnLobby and remoteCooldown("AutoReturnLobby", 10) then
+            local ok, err = pcall(function()
+                RequestAFKLeave:Fire()
+            end)
+            if ok then
+                Shared.logLine("[GameRemote] Auto Return Lobby -> REQUEST_AFK_LEAVE")
+            else
+                Shared.logLine("[GameRemote] Auto Return Lobby failed: " .. tostring(err))
             end
         end
-    end
-
-    local function queueStoryRemotely()
-        local toggleTime = toggleTimestamps.AutoJoinStory or 0
-        if tick() - toggleTime < 1.0 then
-            return false
-        end
-
-        local selectedMapId = StoryMapDisplayToId[Config.SelectedMap] or Config.SelectedMap
-        local selectedAct = Config.SelectedAct
-        local selectedDifficulty = Config.SelectedDifficulty
-
-        if type(selectedMapId) ~= "string" or selectedMapId == "" then
-            return false
-        end
-        if type(selectedAct) ~= "string" or selectedAct == "" then
-            return false
-        end
-        if type(selectedDifficulty) ~= "string" or selectedDifficulty == "" then
-            return false
-        end
-
-        local queueData = {
-            Difficulty = selectedDifficulty,
-            MapName = selectedMapId,
-            Gamemode = "Story",
-            ActName = selectedAct,
-        }
-
-        -- This is the same Matchmaking Node path used by the game's
-        -- StartMatchmaking action. RemoteSpy confirmed that the Node
-        -- ultimately posts to:
-        -- ReplicatedStorage.Nodes.Network.NetworkEvents._updateNode
-        local ok, requestNode = pcall(function()
-            return RequestEnterMatchmaking:Request(queueData)
-        end)
-
-        if ok then
-            Shared.logLine(("[StoryJoiner] Matchmaking request sent: %s | %s | %s"):format(
-                selectedMapId,
-                selectedAct,
-                selectedDifficulty
-            ))
-            if requestNode ~= nil then
-                Shared.logLine("[StoryJoiner] REQUEST_ENTER_MATCHMAKING request node created")
-            end
-            toggleTimestamps.AutoJoinStory = tick() + 3
-            return true
-        end
-
-        Shared.logLine("[StoryJoiner] Matchmaking request failed: " .. tostring(requestNode))
-        return false
-    end
-
-    local function returnToLobbyRemotely()
-        if not RequestAFKLeave then
-            return false
-        end
-
-        local ok, err = pcall(function()
-            RequestAFKLeave:Fire()
-        end)
-
-        if ok then
-            Shared.logLine("[GameRemote] Auto Return Lobby -> REQUEST_AFK_LEAVE")
-            return true
-        end
-
-        Shared.logLine("[GameRemote] Auto Return Lobby failed: " .. tostring(err))
-        return false
-    end
-
-    local function handleDirectAutomation(targetPromptName: string, mapName: string, actName: string, diffName: string?, configKey: string, matchmaking: boolean)
-        local toggleTime = toggleTimestamps[configKey] or 0
-        if tick() - toggleTime < 1.0 then return end
-
-        local hub = playerGui:FindFirstChild("SolarHub")
-        local foundMap, foundAct, foundDiff, foundStageBtn, foundQueueBtn = nil, nil, nil, nil, nil
-
-        for _, descendant in ipairs(playerGui:GetDescendants()) do
-            if hub and descendant:IsDescendantOf(hub) then continue end
-            if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
-                local text = descendant.Text:lower()
-                if text ~= "" then
-                    if text:find("start") or text:find("ready") or text:find("deploy") or text:find("select stage") then foundStageBtn = descendant end
-                    if (matchmaking and (text:find("matchmaking") or text:find("enter matchmaking"))) or ((not matchmaking) and (text:find("solo") or text:find("private") or text:find("start"))) then foundQueueBtn = descendant end
-                    if text:find(mapName:lower()) then foundMap = descendant end
-                    if actName ~= "" and text:find(actName:lower()) then foundAct = descendant end
-                    if diffName and diffName ~= "" and (text:find(diffName:lower()) or text:find(diffName:gsub("difficulty ", ""):lower())) then foundDiff = descendant end
-                end
-            end
-        end
-
-        if foundQueueBtn then clickElement(foundQueueBtn) return end
-        if foundStageBtn then clickElement(foundStageBtn) return end
-        if foundMap then
-            clickElement(foundMap)
-            task.wait()
-            if foundAct then clickElement(foundAct) end
-            if foundDiff then clickElement(foundDiff) end
-            return
-        end
-        triggerPrompt(targetPromptName)
     end
 
     task.spawn(function()
@@ -421,51 +419,40 @@ function Joiner.Init(Shared, UI)
                     Lighting.GlobalShadows = false
                 end
 
-                local inLobbyNow = isInLobby()
-                local hub = playerGui:FindFirstChild("SolarHub")
+                local state = getCurrentGameState()
+                local inLobbyNow = (state == nil)
 
                 if inLobbyNow then
                     if not Config.DisableAutoJoiners then
                         if Config.AutoJoinStory then
                             if Config.StoryMatchMaking then
-                                queueStoryRemotely()
+                                enterMatchmakingRemotely("Story", "AutoJoinStory")
                             else
-                                handleDirectAutomation("Story", Config.SelectedMap, Config.SelectedAct, Config.SelectedDifficulty, "AutoJoinStory", false)
+                                startSelectedModeRemotely("Story", "AutoJoinStory")
                             end
                         elseif Config.AutoJoinRaid then
-                            handleDirectAutomation("Raid", Config.SelectedRaidMap, Config.SelectedRaidAct, nil, "AutoJoinRaid", Config.RaidMatchMaking)
+                            if Config.RaidMatchMaking then
+                                enterMatchmakingRemotely("Raid", "AutoJoinRaid")
+                            else
+                                startSelectedModeRemotely("Raid", "AutoJoinRaid")
+                            end
                         elseif Config.AutoJoinExpedition then
-                            handleDirectAutomation("Expedition", Config.SelectedExpeditionMap, "", Config.SelectedExpeditionDifficulty, "AutoJoinExpedition", Config.ExpeditionMatchMaking)
+                            if Config.ExpeditionMatchMaking then
+                                enterMatchmakingRemotely("Expedition", "AutoJoinExpedition")
+                            else
+                                startSelectedModeRemotely("Expedition", "AutoJoinExpedition")
+                            end
                         elseif Config.AutoJoinChallenge then
-                            handleDirectAutomation("Challenge", Config.SelectedChallengeType, "Enter", nil, "AutoJoinChallenge", Config.ChallengeMatchMaking)
+                            if Config.ChallengeMatchMaking then
+                                enterMatchmakingRemotely("Challenge", "AutoJoinChallenge")
+                            else
+                                startSelectedModeRemotely("Challenge", "AutoJoinChallenge")
+                            end
                         end
                     end
                 else
                     runRemoteGameAutomation()
-
-                    -- Macro playback has its own remote-based action path.
-                    -- Keep the small UI helper only for the initial "ready/start" action.
-                    if Config.PlayMacro then
-                        local hub = playerGui:FindFirstChild("SolarHub")
-                        for _, descendant in ipairs(playerGui:GetDescendants()) do
-                            if hub and descendant:IsDescendantOf(hub) then
-                                continue
-                            end
-                            if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
-                                local text = descendant.Text:lower()
-                                if text ~= "" and (
-                                    text:find("start")
-                                    or text:find("ready")
-                                    or text:find("deploy")
-                                    or text:find("select stage")
-                                ) then
-                                    clickElement(descendant)
-                                    break
-                                end
-                            end
-                        end
-                    end
-                    end
+                end
             end)
         end
     end)
