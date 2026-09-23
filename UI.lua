@@ -12,7 +12,16 @@ function UI.Init(Shared)
     screenGui.Name = "SolarHub"
     screenGui.ResetOnSpawn = false
     screenGui.DisplayOrder = 999999
-    screenGui.Parent = playerGui
+
+    -- Prefer the executor's persistent UI container so the hub is not removed
+    -- when the game's PlayerGui is rebuilt during a lobby -> match transition.
+    local uiParent = playerGui
+    pcall(function()
+        if gethui then
+            uiParent = gethui()
+        end
+    end)
+    screenGui.Parent = uiParent
 
     local toggleBtn = Instance.new("TextButton")
     toggleBtn.Size = UDim2.fromOffset(40, 40)
