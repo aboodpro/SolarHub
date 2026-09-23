@@ -3,15 +3,78 @@
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local CACHE_BUST = tostring(os.clock()) .. "_" .. tostring(math.random(100000, 999999))
 
-local function addLog(...)
-    print(...)
+-------------------------------------------------
+-- ON-SCREEN DEBUG OUTPUT
+-------------------------------------------------
+
+local debugGui
+local debugLabel
+
+local function showDebug(text)
+    pcall(function()
+        if not debugGui then
+            local playerGui = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+
+            debugGui = Instance.new("ScreenGui")
+            debugGui.Name = "SolarHubDebug"
+            debugGui.ResetOnSpawn = false
+            debugGui.IgnoreGuiInset = true
+            debugGui.Parent = playerGui
+
+            local frame = Instance.new("Frame")
+            frame.Size = UDim2.new(0.85, 0, 0.65, 0)
+            frame.Position = UDim2.new(0.075, 0, 0.08, 0)
+            frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+            frame.BorderSizePixel = 1
+            frame.Parent = debugGui
+
+            local title = Instance.new("TextLabel")
+            title.Size = UDim2.new(1, 0, 0, 36)
+            title.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+            title.TextColor3 = Color3.fromRGB(255, 210, 70)
+            title.Font = Enum.Font.SourceSansBold
+            title.TextSize = 20
+            title.Text = "☀️ SolarHub Debug"
+            title.Parent = frame
+
+            debugLabel = Instance.new("TextLabel")
+            debugLabel.Size = UDim2.new(1, -20, 1, -50)
+            debugLabel.Position = UDim2.new(0, 10, 0, 42)
+            debugLabel.BackgroundTransparency = 1
+            debugLabel.TextColor3 = Color3.fromRGB(235, 235, 235)
+            debugLabel.Font = Enum.Font.Code
+            debugLabel.TextSize = 15
+            debugLabel.TextXAlignment = Enum.TextXAlignment.Left
+            debugLabel.TextYAlignment = Enum.TextYAlignment.Top
+            debugLabel.TextWrapped = true
+            debugLabel.Text = ""
+            debugLabel.Parent = frame
+        end
+
+        debugLabel.Text = tostring(text) .. "\n\n" .. debugLabel.Text
+    end)
 end
 
-print("========================================")
-print("☀️ SOLARHUB DEBUG STARTED")
-print("GameId:", game.GameId)
-print("PlaceId:", game.PlaceId)
-print("========================================")
+local function addLog(...)
+    local parts = {}
+    for i = 1, select("#", ...) do
+        parts[#parts + 1] = tostring(select(i, ...))
+    end
+
+    local message = table.concat(parts, " ")
+    print(message)
+    showDebug(message)
+end
+
+addLog("========================================")
+addLog("☀️ SOLARHUB DEBUG STARTED")
+addLog("GameId:", game.GameId)
+addLog("PlaceId:", game.PlaceId)
+addLog("========================================")
+
+-------------------------------------------------
+-- ALLOWED GAMES
+-------------------------------------------------
 
 local ALLOWED_GAMES = {
     {
@@ -22,6 +85,10 @@ local ALLOWED_GAMES = {
         },
     },
 }
+
+-------------------------------------------------
+-- GAME CHECK
+-------------------------------------------------
 
 local function getAllowedGame()
     local currentGameId = game.GameId
@@ -53,13 +120,16 @@ end
 
 addLog("[OK] Game approved:", allowedGame.Name)
 
+-------------------------------------------------
+-- MODULE FETCH
+-------------------------------------------------
+
 local function fetch(fileName)
     local ok, result = pcall(function()
         local url = BASE_URL .. fileName .. "?debug=" .. CACHE_BUST
 
         addLog("========================================")
         addLog("[FETCH]", fileName)
-        addLog("[URL]", url)
 
         local source = game:HttpGet(url)
 
@@ -69,7 +139,10 @@ local function fetch(fileName)
 
         addLog("[SOURCE LENGTH]", fileName, #source)
 
-        local chunk, compileError = loadstring(source, "@SolarHub/" .. fileName)
+        local chunk, compileError = loadstring(
+            source,
+            "@SolarHub/" .. fileName
+        )
 
         if not chunk then
             error("[COMPILE ERROR] " .. fileName .. ": " .. tostring(compileError))
@@ -80,7 +153,10 @@ local function fetch(fileName)
         local runtimeOk, runtimeResult = xpcall(
             chunk,
             function(err)
-                return debug.traceback("[RUNTIME ERROR] " .. fileName .. ": " .. tostring(err), 2)
+                return debug.traceback(
+                    "[RUNTIME ERROR] " .. fileName .. ": " .. tostring(err),
+                    2
+                )
             end
         )
 
@@ -89,6 +165,7 @@ local function fetch(fileName)
         end
 
         addLog("[RUNTIME OK]", fileName)
+
         return runtimeResult
     end)
 
@@ -103,11 +180,18 @@ local function fetch(fileName)
     return result
 end
 
+-------------------------------------------------
+-- SAFE INIT
+-------------------------------------------------
+
 local function initModule(label, callback)
     local ok, result = xpcall(
         callback,
         function(err)
-            return debug.traceback("[INIT ERROR] " .. label .. ": " .. tostring(err), 2)
+            return debug.traceback(
+                "[INIT ERROR] " .. label .. ": " .. tostring(err),
+                2
+            )
         end
     )
 
@@ -123,20 +207,28 @@ local function initModule(label, callback)
     return result
 end
 
+-------------------------------------------------
+-- LOAD MODULES
+-------------------------------------------------
+
 addLog("[LOAD] Shared.lua")
 local Shared = fetch("Shared.lua")
+
 if not Shared then
     addLog("[FATAL] Shared.lua returned nil.")
     return
 end
+
 addLog("[OK] Shared.lua loaded")
 
 addLog("[LOAD] UI.lua")
 local UIModule = fetch("UI.lua")
+
 if not UIModule then
     addLog("[FATAL] UI.lua returned nil.")
     return
 end
+
 addLog("[OK] UI.lua fetched")
 
 local UI = initModule("UI.Init", function()
@@ -147,14 +239,17 @@ if not UI then
     addLog("[FATAL] UI initialization failed.")
     return
 end
+
 addLog("[OK] UI initialized")
 
 addLog("[LOAD] Joiner.lua")
 local JoinerModule = fetch("Joiner.lua")
+
 if not JoinerModule then
     addLog("[FATAL] Joiner.lua returned nil.")
     return
 end
+
 addLog("[OK] Joiner.lua fetched")
 
 initModule("Joiner.Init", function()
@@ -193,6 +288,6 @@ else
     end)
 end
 
-print("========================================")
-print("☀️ SOLARHUB DEBUG FINISHED")
-print("========================================")
+addLog("========================================")
+addLog("☀️ SOLARHUB DEBUG FINISHED")
+addLog("========================================")
