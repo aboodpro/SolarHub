@@ -145,6 +145,7 @@ function UI.Init(Shared)
     contentArea.Parent = mainFrame
 
     local tabs, tabButtons = {}, {}
+    local tabErrors = {}
     local tabNames = { "Lobby", "Joiner", "Game", "Auto Play", "Macro", "Webhook", "Misc" }
 
     for _, name in ipairs(tabNames) do
@@ -177,6 +178,23 @@ function UI.Init(Shared)
         end)
 
         tabs[name] = tabContainer
+
+        if name == "Macro" then
+            local errorLabel = Instance.new("TextLabel")
+            errorLabel.Name = "Diagnostic"
+            errorLabel.Size = UDim2.new(1, -16, 0, 54)
+            errorLabel.BackgroundColor3 = Color3.fromRGB(70, 28, 28)
+            errorLabel.TextColor3 = Color3.fromRGB(255, 190, 190)
+            errorLabel.Text = ""
+            errorLabel.TextWrapped = true
+            errorLabel.TextSize = 10
+            errorLabel.Font = Enum.Font.Gotham
+            errorLabel.Visible = false
+            errorLabel.LayoutOrder = -1000
+            errorLabel.Parent = tabContainer
+            Instance.new("UICorner", errorLabel).CornerRadius = UDim.new(0, 8)
+            tabErrors[name] = errorLabel
+        end
 
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -6, 0, 26)
@@ -413,6 +431,18 @@ function UI.Init(Shared)
         createToggle = createToggle,
         createDropdown = createDropdown,
         createInput = createInput,
+        setTabError = function(name, message)
+            local label = tabErrors[name]
+            if label then
+                label.Text = tostring(message)
+                label.Visible = true
+                tabs[name].CanvasPosition = Vector2.zero
+            end
+        end,
+        clearTabError = function(name)
+            local label = tabErrors[name]
+            if label then label.Visible = false end
+        end,
     }
 end
 
