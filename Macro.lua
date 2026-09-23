@@ -220,7 +220,7 @@ function Macro.Init(Shared, UI)
     local function waitForNewPlacementReplica(beforeIds, placementCFrame, timeoutSeconds)
         local deadline = os.clock() + (timeoutSeconds or 12)
 
-        while os.clock() < deadline and isPlayingMacro == true do
+        while os.clock() < deadline do
             local candidates = getOwnedGameUnitReplicas()
             local bestId = nil
             local bestDistance = math.huge
