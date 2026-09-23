@@ -109,20 +109,34 @@ end
 print("[Loader] Fetching Shared.lua...")
 local Shared = fetch("Shared.lua")
 
+local function runModule(label, fn)
+    local ok, result = xpcall(fn, function(err)
+        local msg = "[Loader] " .. label .. " ERROR: " .. tostring(err)
+        warn(msg)
+        return msg
+    end)
+    if not ok then
+        warn("[Loader] SolarHub stopped while loading " .. label)
+        return nil
+    end
+    return result
+end
+
 print("[Loader] Fetching UI.lua...")
 local UIModule = fetch("UI.lua")
-local UI = UIModule.Init(Shared)
+local UI = runModule("UI.Init", function() return UIModule.Init(Shared) end)
+if not UI then return end
 
 print("[Loader] Fetching Joiner.lua...")
 local JoinerModule = fetch("Joiner.lua")
-JoinerModule.Init(Shared, UI)
+if not runModule("Joiner.Init", function() return JoinerModule.Init(Shared, UI) end) then return end
 
 print("[Loader] Fetching Macro.lua...")
 local MacroModule = fetch("Macro.lua")
-MacroModule.Init(Shared, UI)
+if not runModule("Macro.Init", function() return MacroModule.Init(Shared, UI) end) then return end
 
 print("[Loader] Fetching Webhook.lua...")
 local WebhookModule = fetch("Webhook.lua")
-WebhookModule.Init(Shared, UI)
+if not runModule("Webhook.Init", function() return WebhookModule.Init(Shared, UI) end) then return end
 
 print("☀️ Solar Hub loaded successfully (modular edition)!")
