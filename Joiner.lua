@@ -433,19 +433,38 @@ function Joiner.Init(Shared, UI)
                     while os.clock() < deadline do
                         local activated = false
 
+                        -- Fusion's Select Stage Start control is not guaranteed to be
+                        -- a TextButton/ImageButton itself. On mobile especially, the visible
+                        -- "Start" text can live inside a GuiButton or a wrapper.
+                        -- Find the visible Start label first, then walk up to the actual button.
                         for _, obj in ipairs(playerGui:GetDescendants()) do
-                            if (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Visible and obj.Active then
-                                local text = ""
-                                if obj:IsA("TextButton") then
-                                    text = tostring(obj.Text or "")
-                                else
-                                    local label = obj:FindFirstChildWhichIsA("TextLabel", true)
-                                    text = label and tostring(label.Text or "") or ""
+                            local visible = false
+                            pcall(function() visible = obj.Visible end)
+
+                            local text = ""
+                            if obj:IsA("TextButton") or obj:IsA("TextLabel") then
+                                text = tostring(obj.Text or "")
+                            elseif obj:IsA("ImageButton") then
+                                local label = obj:FindFirstChildWhichIsA("TextLabel", true)
+                                text = label and tostring(label.Text or "") or ""
+                            end
+
+                            if visible and text:lower():match("^%s*start%s*$") then
+                                local button = nil
+                                local current = obj
+
+                                for _ = 1, 8 do
+                                    if not current then break end
+                                    if current:IsA("GuiButton") then
+                                        button = current
+                                        break
+                                    end
+                                    current = current.Parent
                                 end
 
-                                if text:lower():match("^%s*start%s*$") then
+                                if button and button.Visible and button.Active then
                                     local ok = pcall(function()
-                                        obj:Activate()
+                                        button:Activate()
                                     end)
 
                                     if ok then
