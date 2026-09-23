@@ -31,10 +31,10 @@ function Joiner.Init(Shared, UI)
     createToggle(joinerSec, "Matchmaking Queue", "Enables public match queues.", "MatchMaking", 32)
 
     local sjSec = createSection(tabs["Joiner"], "Story Joiner Configuration", 195)
-    createToggle(sjSec, "Auto Join Story", "Queues into Story Mode.", "AutoJoinStory", 32)
-    createDropdown(sjSec, "Select Map", "Story map", {"School Grounds", "Flower Forest", "Rose Kingdom"}, "SelectedMap", 8, 74, 210)
-    createDropdown(sjSec, "Select Act", "Act selector", {"Act 1", "Act 2", "Act 3", "Act 4", "Act 5"}, "SelectedAct", 226, 74, 110)
-    createDropdown(sjSec, "Select Difficulty", "Normal or Hard", {"Normal", "Hard"}, "SelectedDifficulty", 8, 134, 328)
+    createToggle(sjSec, "Auto Join Story", "Queues into Story Mode using ReplicaSignal.", "AutoJoinStory", 32)
+    createDropdown(sjSec, "Select Map", "Story map", StoryMaps, "SelectedMap", 8, 74, 210)
+    createDropdown(sjSec, "Select Act", "Act selector", StoryActs, "SelectedAct", 226, 74, 110)
+    createDropdown(sjSec, "Select Difficulty", "Normal or Hard", StoryDifficulties, "SelectedDifficulty", 8, 134, 328)
 
     local rSec = createSection(tabs["Joiner"], "Raid Joiner Configuration", 135)
     createToggle(rSec, "Auto Join Raid", "Queues into Raid Mode.", "AutoJoinRaid", 32)
@@ -76,6 +76,50 @@ function Joiner.Init(Shared, UI)
     end
 
     local toggleTimestamps = { AutoJoinStory = 0, AutoJoinRaid = 0, AutoJoinExpedition = 0, AutoJoinChallenge = 0 }
+
+    local function queueStoryRemotely()
+        local toggleTime = toggleTimestamps.AutoJoinStory or 0
+        if tick() - toggleTime < 1.0 then
+            return false
+        end
+
+        local selectedMapId = StoryMapDisplayToId[Config.SelectedMap] or Config.SelectedMap
+        local selectedAct = Config.SelectedAct
+        local selectedDifficulty = Config.SelectedDifficulty
+
+        if type(selectedMapId) ~= "string" or selectedMapId == "" then
+            return false
+        end
+        if type(selectedAct) ~= "string" or selectedAct == "" then
+            return false
+        end
+        if type(selectedDifficulty) ~= "string" or selectedDifficulty == "" then
+            return false
+        end
+
+        local ok = pcall(function()
+            ReplicaSignal:FireServer(1062, "SetQueueData", {
+                Difficulty = selectedDifficulty,
+                MapName = selectedMapId,
+                Gamemode = "Story",
+                ActName = selectedAct,
+            })
+            task.wait(0.15)
+            ReplicaSignal:FireServer(1062, "StartGame")
+        end)
+
+        if ok then
+            Shared.logLine(("[StoryJoiner] Queued Story: %s | %s | %s"):format(
+                selectedMapId,
+                selectedAct,
+                selectedDifficulty
+            ))
+            toggleTimestamps.AutoJoinStory = tick() + 3
+            return true
+        end
+
+        return false
+    end
 
     local function handleDirectAutomation(targetPromptName: string, mapName: string, actName: string, diffName: string?, configKey: string)
         local toggleTime = toggleTimestamps[configKey] or 0
@@ -129,7 +173,8 @@ function Joiner.Init(Shared, UI)
 
                 if inLobbyNow then
                     if not Config.DisableAutoJoiners then
-                        if Config.AutoJoinStory then handleDirectAutomation("Story", Config.SelectedMap, Config.SelectedAct, Config.SelectedDifficulty, "AutoJoinStory")
+                        if Config.AutoJoinStory then
+                            queueStoryRemotely()
                         elseif Config.AutoJoinRaid then handleDirectAutomation("Raid", Config.SelectedRaidMap, Config.SelectedRaidAct, nil, "AutoJoinRaid")
                         elseif Config.AutoJoinExpedition then handleDirectAutomation("Expedition", Config.SelectedExpeditionMap, "", Config.SelectedExpeditionDifficulty, "AutoJoinExpedition")
                         elseif Config.AutoJoinChallenge then handleDirectAutomation("Challenge", Config.SelectedChallengeType, "Enter", nil, "AutoJoinChallenge")
