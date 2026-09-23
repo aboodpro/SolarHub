@@ -312,7 +312,7 @@ function Macro.Init(Shared, UI)
                                     tostring(currentYen),
                                     tostring(actionEntry.missingYen)))
                             end)
-                        endend
+                        end
                     end
                 end)
             end)
