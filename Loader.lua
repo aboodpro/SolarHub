@@ -70,6 +70,7 @@ local loadingStatus
 local loadingFill
 local loadingPercent
 local loadingSpinner
+local collectedCount = 0
 
 local function createLoadingScreen()
     local player = Players.LocalPlayer
@@ -366,10 +367,8 @@ for _, fileName in ipairs({
     "Macro.lua",
     "Webhook.lua",
 }) do
-    local index = _G.__SolarHubCollectIndex or 0
-    index += 1
-    _G.__SolarHubCollectIndex = index
-    setLoadingProgress(20 + index * 12, "Collecting " .. fileName .. "...")
+    collectedCount += 1
+    setLoadingProgress(20 + collectedCount * 12, "Collecting " .. fileName .. "...")
     print("[Loader] Collecting " .. fileName .. "...")
     moduleSources[fileName] = fetchSource(fileName)
 end
@@ -464,5 +463,11 @@ runModule("Webhook.Init", function()
     return WebhookModule.Init(Shared, UI)
 end)
 
+setLoadingProgress(100, "SolarHub ready")
 print("☀️ Solar Hub loaded successfully (prepared modular edition)!")
-task.spawn(finishLoadingScreen)
+-- The Macro engine is intentionally loaded five seconds after Joiner.
+-- Finish the visual loading screen after Macro initialization so "ready"
+-- is not shown while a module is still starting.
+task.delay(5.25, function()
+    finishLoadingScreen()
+end)
