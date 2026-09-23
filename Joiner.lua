@@ -19,7 +19,6 @@ function Joiner.Init(Shared, UI)
     local createDropdown = UI.createDropdown
 
     -------------------------------------------------
-    -------------------------------------------------
     -- DATA / REMOTES
     -------------------------------------------------
     local ReplicaSignal = Shared.ReplicatedStorage
@@ -319,7 +318,6 @@ function Joiner.Init(Shared, UI)
                         end
                     end
                     end
-                end
             end)
         end
     end)
