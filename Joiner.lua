@@ -446,7 +446,39 @@ function Joiner.Init(Shared, UI)
             local baselineIds = {}
             local candidateIds = {}
             local seenCandidates = {}
+            local candidateScores = {}
             local connections = {}
+
+            local function scoreReplicaValue(value)
+                if type(value) ~= "table" then
+                    return 0
+                end
+
+                local score = 0
+                local expected = {
+                    Gamemode = queueData.Gamemode,
+                    MapName = queueData.MapName,
+                    ActName = queueData.ActName,
+                    Difficulty = queueData.Difficulty,
+                }
+
+                local function walk(node, depth)
+                    if depth > 4 or type(node) ~= "table" then
+                        return
+                    end
+
+                    for key, child in pairs(node) do
+                        if expected[key] ~= nil and tostring(child) == tostring(expected[key]) then
+                            score += 2
+                        elseif type(child) == "table" then
+                            walk(child, depth + 1)
+                        end
+                    end
+                end
+
+                walk(value, 0)
+                return score
+            end
 
             -- Events received before PARTY_CREATE are baseline state. Events
             -- received after PARTY_CREATE are candidates for the new party.
@@ -490,7 +522,7 @@ function Joiner.Init(Shared, UI)
                 end
             end
 
-            local function rememberCandidate(id)
+            local function rememberCandidate(id, payload)
                 if type(id) ~= "number" or id <= 0 or id > 1000000 then
                     return
                 end
@@ -498,6 +530,11 @@ function Joiner.Init(Shared, UI)
                 if not seenCandidates[id] then
                     seenCandidates[id] = true
                     table.insert(candidateIds, id)
+                end
+
+                local score = scoreReplicaValue(payload)
+                if score > (candidateScores[id] or 0) then
+                    candidateScores[id] = score
                 end
 
                 -- Match the game's exact Select Stage Start sequence:
@@ -562,7 +599,8 @@ function Joiner.Init(Shared, UI)
                 -- ReplicaSet's first argument is the replica ID. The live
                 -- capture showed e.g. 9382 | table | false.
                 if partyCreateSent and type(replicaId) == "number" then
-                    rememberCandidate(replicaId)
+                    local payload = select(1, ...)
+                    rememberCandidate(replicaId, payload)
                     return
                 end
 
