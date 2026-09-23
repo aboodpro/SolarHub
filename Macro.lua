@@ -583,6 +583,66 @@ function Macro.Init(Shared, UI)
     macroStatusLabel.Parent = recordSec
     Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 7)
 
+    local macroOptionsSec = Instance.new("Frame")
+    macroOptionsSec.Size = UDim2.new(1, 0, 0, 118)
+    macroOptionsSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+    macroOptionsSec.Parent = macroTab
+    Instance.new("UICorner", macroOptionsSec).CornerRadius = UDim.new(0, 6)
+
+    local function makeOptionToggle(textLabel, y, configKey)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -16, 0, 24)
+        btn.Position = UDim2.fromOffset(8, y)
+        btn.BackgroundColor3 = Config[configKey] and Color3.fromRGB(40, 180, 80) or Color3.fromRGB(50, 50, 60)
+        btn.Text = (Config[configKey] and "✓ " or "○ ") .. textLabel
+        btn.Font = Enum.Font.GothamBold
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.TextSize = 10
+        btn.Parent = macroOptionsSec
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+        btn.Activated:Connect(function()
+            Config[configKey] = not Config[configKey]
+            btn.BackgroundColor3 = Config[configKey] and Color3.fromRGB(40, 180, 80) or Color3.fromRGB(50, 50, 60)
+            btn.Text = (Config[configKey] and "✓ " or "○ ") .. textLabel
+        end)
+        return btn
+    end
+
+    makeOptionToggle("Replay after stage", 6, "MacroReplay")
+    makeOptionToggle("Next after stage", 34, "MacroNext")
+    makeOptionToggle("Ignore Timing", 62, "MacroIgnoreTiming")
+
+    local retryLabel = Instance.new("TextLabel")
+    retryLabel.Size = UDim2.new(0.45, -8, 0, 24)
+    retryLabel.Position = UDim2.fromOffset(8, 90)
+    retryLabel.BackgroundTransparency = 1
+    retryLabel.Text = "Retry:"
+    retryLabel.Font = Enum.Font.GothamBold
+    retryLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+    retryLabel.TextSize = 10
+    retryLabel.TextXAlignment = Enum.TextXAlignment.Left
+    retryLabel.Parent = macroOptionsSec
+
+    local retryBox = Instance.new("TextBox")
+    retryBox.Size = UDim2.new(0.55, -8, 0, 24)
+    retryBox.Position = UDim2.new(0.45, 0, 0, 90)
+    retryBox.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    retryBox.TextColor3 = Color3.fromRGB(220, 220, 220)
+    retryBox.Text = tostring(Config.MacroRetry)
+    retryBox.PlaceholderText = "0-10"
+    retryBox.ClearTextOnFocus = false
+    retryBox.Font = Enum.Font.Gotham
+    retryBox.TextSize = 10
+    retryBox.Parent = macroOptionsSec
+    Instance.new("UICorner", retryBox).CornerRadius = UDim.new(0, 6)
+
+    retryBox.FocusLost:Connect(function()
+        local value = math.clamp(math.floor(tonumber(retryBox.Text) or Config.MacroRetry or 2), 0, 10)
+        Config.MacroRetry = value
+        retryBox.Text = tostring(value)
+    end)
+
     local isPlayingMacro = false
     local macroGameSession = 0
     local macroGameWasInProgress = false
@@ -618,8 +678,77 @@ function Macro.Init(Shared, UI)
         return state
     end
 
+    local function fireAction(remoteObj, action)
+        if not remoteObj or not remoteObj.Parent then
+            return false, "Remote not found"
+        end
+
+        local args = { table.unpack(action.args, 1, action.args.n) }
+        local ok, result = pcall(function()
+            if action.method == "InvokeServer" then
+                return remoteObj:InvokeServer(table.unpack(args))
+            end
+            remoteObj:FireServer(table.unpack(args))
+            return true
+        end)
+
+        if not ok then
+            return false, tostring(result)
+        end
+
+        return true, result
+    end
+
+    local function verifyAction(action, beforeYen, beforeUnits)
+        if action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
+            local targetId = action._playbackReplicaId
+            if not targetId or not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+                return true
+            end
+
+            local deadline = os.clock() + 1
+            while os.clock() < deadline and isPlayingMacro do
+                local ok, replica = pcall(replicaClientModule.FromId, tonumber(targetId))
+                if ok and replica and replica.Data then
+                    if action.actionType == "UnitAutoUpgrade" then
+                        -- Priority changes are difficult to verify generically.
+                        return true
+                    end
+
+                    if beforeYen ~= nil and replica.Data.Yen == nil then
+                        return true
+                    end
+
+                    local currentLevel = replica.Data.Level or replica.Data.Upgrade or replica.Data.UpgradeLevel
+                    if currentLevel ~= nil then
+                        return true
+                    end
+                end
+                task.wait(0.08)
+            end
+
+            -- If the remote executed without an observable level field, don't
+            -- falsely mark it as failed.
+            return true
+        elseif action.actionType == "UnitPlace" then
+            local deadline = os.clock() + 0.8
+            while os.clock() < deadline and isPlayingMacro do
+                local now = getOwnedGameUnitReplicas()
+                for id in pairs(now) do
+                    if not beforeUnits[id] then
+                        return true
+                    end
+                end
+                task.wait(0.08)
+            end
+            return false
+        end
+
+        return true
+    end
+
     local function runMacroOnce(macroData)
-        if isPlayingMacro then return end
+        if isPlayingMacro then return false end
         isPlayingMacro = true
         Shared.isPlayingMacro = true
 
@@ -627,27 +756,45 @@ function Macro.Init(Shared, UI)
         local playPlacementCount = 0
         local playbackUnitReplicaIds = {}
         local totalActions = #macroData.actions
+        local ignoreTiming = Config.MacroIgnoreTiming == true
+        local retryCount = math.clamp(tonumber(Config.MacroRetry) or 2, 0, 10)
 
         for actionIndex, action in ipairs(macroData.actions) do
             if not isPlayingMacro then break end
-            local gap = action.time - lastTime
-            local actionLabel = action.actionType or "Action"
 
+            local actionLabel = action.actionType or "Action"
             local effectiveYenCost = action.yenCost
             if not effectiveYenCost and action.yenBefore and action.yenAfter then
                 local delta = action.yenBefore - action.yenAfter
-                if delta > 0 then
-                    effectiveYenCost = delta
-                end
+                if delta > 0 then effectiveYenCost = delta end
             end
 
+            -- Timing is a minimum schedule only. Once the action is due,
+            -- resource readiness decides when it actually executes.
+            if not ignoreTiming then
+                local targetTime = tonumber(action.time) or lastTime
+                local elapsed = os.clock() - recordStartTime
+                local remaining = targetTime - elapsed
+                while remaining > 0 and isPlayingMacro do
+                    macroStatusLabel.Text = ("[%d/%d] Waiting %.1fs (%s)"):format(
+                        actionIndex, totalActions, remaining, actionLabel
+                    )
+                    task.wait(math.min(0.1, remaining))
+                    elapsed = os.clock() - recordStartTime
+                    remaining = targetTime - elapsed
+                end
+            end
+            lastTime = tonumber(action.time) or lastTime
+
+            -- Placement/upgrade readiness is independent from the recorded
+            -- timestamp. This prevents a late playback from getting stuck.
             if action.actionType == "UnitUpgrade" and effectiveYenCost then
                 local waitStartedAt = os.clock()
                 local lastSampleYen = getCurrentYen()
                 local lastSampleAt = os.clock()
                 local estimatedRate = nil
 
-                while isPlayingMacro do
+                while isPlayingMacro and not ignoreTiming do
                     local yen = getCurrentYen()
                     local missing = yen and math.max(0, effectiveYenCost - yen) or effectiveYenCost
                     local now = os.clock()
@@ -670,107 +817,107 @@ function Macro.Init(Shared, UI)
                     end
 
                     macroStatusLabel.Text = ("[%d/%d] Upgrade | Missing: %s Yen | Timer: %.1fs | ETA: %s"):format(
-                        actionIndex,
-                        totalActions,
-                        tostring(missing),
-                        now - waitStartedAt,
-                        etaText
+                        actionIndex, totalActions, tostring(missing),
+                        now - waitStartedAt, etaText
                     )
 
-                    if yen and yen >= effectiveYenCost then
-                        break
-                    end
-
-                    task.wait(0.25)
-                end
-            elseif gap > 0 then
-                local remaining = gap
-                while remaining > 0 and isPlayingMacro do
-                    macroStatusLabel.Text = ("[%d/%d] Waiting %.1fs (%s)"):format(actionIndex, totalActions, remaining, actionLabel)
-                    local step = math.min(0.1, remaining)
-                    task.wait(step)
-                    remaining = remaining - step
+                    if yen and yen >= effectiveYenCost then break end
+                    task.wait(0.2)
                 end
             end
-            lastTime = action.time
 
-            pcall(function()
-                macroStatusLabel.Text = ("[%d/%d] Executing: %s"):format(actionIndex, totalActions, actionLabel)
-            end)
+            if not isPlayingMacro then break end
 
-            pcall(function()
+            local success = false
+            local lastError = "unknown"
+            local attemptTotal = retryCount + 1
+
+            for attempt = 1, attemptTotal do
+                if not isPlayingMacro then break end
+
                 local remoteObj = findRemote(action.remoteName, action.remoteClass)
-                if remoteObj then
+                if not remoteObj then
+                    lastError = "Remote not found"
+                else
+                    local beforeIds = {}
+                    if action.actionType == "UnitPlace" then
+                        beforeIds = snapshotOwnedGameUnits()
+                    end
+
                     local args = { table.unpack(action.args, 1, action.args.n) }
 
                     if action.actionType == "UnitPlace" then
                         playPlacementCount = playPlacementCount + 1
-
-                        local beforeIds = snapshotOwnedGameUnits()
-
-                        if action.method == "InvokeServer" then
-                            remoteObj:InvokeServer(table.unpack(args))
-                        else
-                            remoteObj:FireServer(table.unpack(args))
-                        end
-
-                        local newReplicaId = findNewUnitReplicaId(
-                            beforeIds,
-                            args[4],
-                            3
-                        )
-
-                        if newReplicaId then
-                            playbackUnitReplicaIds[playPlacementCount] = newReplicaId
-                            print(("[Macro] Placement #%d mapped to Replica ID=%s"):format(
-                                playPlacementCount,
-                                tostring(newReplicaId)))
-                        else
-                            warn(("[Macro] Placement #%d could not be mapped to a new game-unit Replica"):format(
-                                playPlacementCount))
-                        end
-
-                        task.wait(0.2)
-
                     elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
                         local targetReplicaId = targetOrder and playbackUnitReplicaIds[targetOrder]
-
                         if targetReplicaId and action.unitIdArgIndex then
                             args[action.unitIdArgIndex] = tostring(targetReplicaId)
-
-                            print(("[Macro] %s targeting placement #%d -> Replica ID=%s"):format(
-                                action.actionType,
-                                targetOrder,
-                                tostring(targetReplicaId)))
+                            action._playbackReplicaId = targetReplicaId
                         else
-                            warn(("[Macro] %s target mapping missing for placement #%s (recordedUnitId=%s)"):format(
-                                action.actionType,
-                                tostring(targetOrder),
-                                tostring(action.recordedUnitId)))
-                        end
-
-                        if action.method == "InvokeServer" then
-                            remoteObj:InvokeServer(table.unpack(args))
-                        else
-                            remoteObj:FireServer(table.unpack(args))
-                        end
-                        task.wait(0.3)
-                    else
-                        if action.method == "InvokeServer" then
-                            remoteObj:InvokeServer(table.unpack(args))
-                        else
-                            remoteObj:FireServer(table.unpack(args))
+                            lastError = ("Target mapping missing for placement #%s"):format(tostring(targetOrder))
+                            targetReplicaId = nil
                         end
                     end
-                else
-                    warn("[Macro] Remote not found: " .. tostring(action.remoteName))
+
+                    if targetReplicaId or action.actionType == "UnitPlace" or (action.actionType ~= "UnitUpgrade" and action.actionType ~= "UnitAutoUpgrade") then
+                        local tempAction = {
+                            actionType = action.actionType,
+                            args = args,
+                            method = action.method,
+                        }
+                        local fired, err = fireAction(remoteObj, tempAction)
+                        if fired then
+                            if action.actionType == "UnitPlace" then
+                                local newReplicaId = findNewUnitReplicaId(beforeIds, args[4], 3)
+                                if newReplicaId then
+                                    playbackUnitReplicaIds[playPlacementCount] = newReplicaId
+                                else
+                                    lastError = "Placement could not be mapped"
+                                end
+                            end
+
+                            local verified = verifyAction(action, nil, beforeIds)
+                            if verified then
+                                success = true
+                            else
+                                lastError = "Action verification failed"
+                            end
+                        else
+                            lastError = err or "Remote call failed"
+                        end
+                    end
                 end
-            end)
+
+                if success then break end
+
+                if attempt < attemptTotal then
+                    macroStatusLabel.Text = ("[%d/%d] %s | Retry %d/%d"):format(
+                        actionIndex, totalActions, actionLabel, attempt, retryCount
+                    )
+                    task.wait(0.2)
+                end
+            end
+
+            if not success then
+                -- An action is skipped only after all configured retries fail.
+                warn(("[Macro] Skipping action #%d after %d failed attempt(s): %s"):format(
+                    actionIndex, attemptTotal, lastError
+                ))
+                macroStatusLabel.Text = ("[%d/%d] %s | SKIPPED"):format(
+                    actionIndex, totalActions, actionLabel
+                )
+                task.wait(0.15)
+            else
+                macroStatusLabel.Text = ("[%d/%d] %s | SUCCESS"):format(
+                    actionIndex, totalActions, actionLabel
+                )
+            end
         end
 
         isPlayingMacro = false
         Shared.isPlayingMacro = false
+        return true
     end
 
     Shared.runMacroOnce = runMacroOnce
@@ -847,33 +994,99 @@ function Macro.Init(Shared, UI)
             playBtn.Text = "⏸ Playing..."
 
             task.spawn(function()
-                -- Start the stage through the confirmed 1062 StartGame remote.
-                -- No in-game Start/Ready UI click is needed.
+                local function fireInGameStart()
+                    local remote = ReplicatedStorage:FindFirstChild("RemoteEvents")
+                    remote = remote and remote:FindFirstChild("ReplicaSignal")
+                    if not remote then
+                        warn("[Macro] ReplicaSignal not found for in-game Start")
+                        return false
+                    end
+                    local ok, err = pcall(function()
+                        remote:FireServer(87, "Response", true)
+                    end)
+                    if not ok then
+                        warn("[Macro] In-game Start failed: " .. tostring(err))
+                    end
+                    return ok
+                end
+
                 local lastStartAttempt = 0
+                local lastSession = macroGameSession
+                local runningMacroSession = false
 
                 while Config.PlayMacro do
                     local state = updateMacroGameSession()
 
-                    if state ~= "InProgress" and not isPlayingMacro then
-                        if os.clock() - lastStartAttempt >= 5 then
-                            lastStartAttempt = os.clock()
-                            Shared.startGameRemotely()
-                        end
-                    elseif state == "InProgress" and not isPlayingMacro then
-                        local macroName = Config.CurrentMacroName
-
-                        if macroName ~= "" and macroLastStartedSession[macroName] ~= macroGameSession then
-                            macroLastStartedSession[macroName] = macroGameSession
+                    if state == "InProgress" then
+                        if not runningMacroSession and lastSession ~= macroGameSession and not isPlayingMacro then
+                            lastSession = macroGameSession
+                            runningMacroSession = true
+                            macroStatusLabel.Text = "Starting macro..."
                             runMacroOnce(macroData)
+                        elseif not isPlayingMacro and lastSession == macroGameSession then
+                            -- runMacroOnce finished; do not replay the same session.
+                            runningMacroSession = true
+                        end
+                    else
+                        runningMacroSession = false
+
+                        -- When a new stage/lobby is ready, send the confirmed
+                        -- in-game Start/Vote remote. Never use the lobby queue
+                        -- StartGame remote here.
+                        if not isPlayingMacro and os.clock() - lastStartAttempt >= 3 then
+                            lastStartAttempt = os.clock()
+                            fireInGameStart()
+                        end
+
+                        -- Only Replay/Next can create a new session while Play
+                        -- remains enabled.
+                        if not isPlayingMacro and (macroGameWasInProgress == false) then
+                            if Config.MacroReplay then
+                                local remote = ReplicatedStorage:FindFirstChild("RemoteEvents")
+                                remote = remote and remote:FindFirstChild("ReplicaSignal")
+                                if remote and os.clock() - lastStartAttempt >= 1 then
+                                    local ok = pcall(function()
+                                        remote:FireServer(77, "Restart")
+                                    end)
+                                    if ok then
+                                        lastStartAttempt = os.clock()
+                                        macroStatusLabel.Text = "Replay requested..."
+                                    end
+                                end
+                            elseif Config.MacroNext then
+                                local remote = ReplicatedStorage:FindFirstChild("RemoteEvents")
+                                remote = remote and remote:FindFirstChild("ReplicaSignal")
+                                if remote and os.clock() - lastStartAttempt >= 1 then
+                                    local ok = pcall(function()
+                                        remote:FireServer(77, "Next")
+                                    end)
+                                    if ok then
+                                        lastStartAttempt = os.clock()
+                                        macroStatusLabel.Text = "Next requested..."
+                                    end
+                                end
+                            else
+                                Config.PlayMacro = false
+                                playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+                                playBtn.Text = "▶ Play Macro"
+                                macroStatusLabel.Text = "Finished"
+                                break
+                            end
                         end
                     end
 
-                    task.wait(1)
+                    task.wait(0.75)
                 end
+
+                isPlayingMacro = false
+                Shared.isPlayingMacro = false
             end)
         else
+            isPlayingMacro = false
+            Shared.isPlayingMacro = false
             playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
             playBtn.Text = "▶ Play Macro"
+            macroStatusLabel.Text = "Stopped"
         end
     end)
 end
