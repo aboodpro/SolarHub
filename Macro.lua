@@ -840,7 +840,7 @@ function Macro.Init(Shared, UI)
         local deadline = os.clock() + (timeoutSeconds or 12)
         local lastBestId = preferredId
 
-        while os.clock() < deadline and isPlayingMacro do
+        while os.clock() < deadline and isPlayingMacro == true do
             if lastBestId then
                 local data = getReplicaDataById(lastBestId, 0.15)
                 if data and data.CFrame ~= nil and data.UnitID ~= nil then
@@ -924,6 +924,7 @@ function Macro.Init(Shared, UI)
 
         return nil
     end
+
     local macroGameWasInProgress = false
     local macroLastStartedSession = {}
 
@@ -1369,13 +1370,11 @@ function Macro.Init(Shared, UI)
                             return remote
                         end
 
-                        -- Avoid a broad workspace scan unless the exact game folder
-                        -- has not appeared yet.
-                        if not folder then
-                            local fallback = findRemote("ReplicaSignal", "RemoteEvent")
-                            if fallback then
-                                return fallback
-                            end
+                        -- Some revisions expose ReplicaSignal outside RemoteEvents.
+                        -- Always use the broad fallback before giving up.
+                        local fallback = findRemote("ReplicaSignal", "RemoteEvent")
+                        if fallback then
+                            return fallback
                         end
 
                         if (waitSeconds or 0) <= 0 then
@@ -1426,7 +1425,7 @@ function Macro.Init(Shared, UI)
                 -- enters InProgress, so the Start request always happens first.
                 macroStatusLabel.Text = "Sending Start..."
                 local startOk = fireSignal(87, "Response", true)
-                startRequestedOnce = startOk
+                startRequestedOnce = startOk == true
                 lastStartAttempt = os.clock()
                 if startOk then
                     macroStatusLabel.Text = "Start requested..."
@@ -1437,7 +1436,7 @@ function Macro.Init(Shared, UI)
                 while Config.PlayMacro do
                     local state = updateMacroGameSession()
 
-                    if state == "InProgress" and not cycleStarted and startRequestedOnce then
+                    if state == "InProgress" and not cycleStarted then
                         cycleStarted = true
                         transitionSent = false
                         macroStatusLabel.Text = "Starting macro..."
