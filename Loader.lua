@@ -3,6 +3,7 @@
 -- Only approved games/places are allowed to load SolarHub modules.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
+local CACHE_BUST = tostring(os.clock())
 
 -------------------------------------------------
 -- ALLOWED GAMES
@@ -87,7 +88,7 @@ print("[Loader] PlaceId: " .. tostring(game.PlaceId))
 
 local function fetch(fileName)
     local ok, result = pcall(function()
-        return loadstring(game:HttpGet(BASE_URL .. fileName))()
+        return loadstring(game:HttpGet(BASE_URL .. fileName .. "?v=" .. CACHE_BUST))()
     end)
 
     if not ok then
