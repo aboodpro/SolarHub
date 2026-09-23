@@ -909,9 +909,22 @@ function Macro.Init(Shared, UI)
         local lastTime = 0
         local playPlacementCount = 0
         local playbackUnitReplicaIds = {}
+        local placementActionsByOrder = {}
         local totalActions = #macroData.actions
         local ignoreTiming = Config.MacroIgnoreTiming == true
         local retryCount = math.clamp(tonumber(Config.MacroRetry) or 0, 0, 10)
+
+        -- Rebuild placement order from the saved macro itself. The old code
+        -- depended on recordedPlacementCFrames from the recording session,
+        -- which is empty when an already-saved macro is played later.
+        local savedPlacementOrder = 0
+        for _, savedAction in ipairs(macroData.actions) do
+            if savedAction.actionType == "UnitPlace" then
+                savedPlacementOrder += 1
+                local order = tonumber(savedAction.placementOrder) or savedPlacementOrder
+                placementActionsByOrder[order] = savedAction
+            end
+        end
 
         for actionIndex, action in ipairs(macroData.actions) do
             if not isPlayingMacro then break end
@@ -1014,33 +1027,66 @@ function Macro.Init(Shared, UI)
                         local targetReplicaId = targetOrder and playbackUnitReplicaIds[targetOrder]
 
                         if not targetReplicaId and targetOrder then
-                            local placementCFrame = recordedPlacementCFrames[targetOrder]
-                            local deadline = os.clock() + 2
-                            while not targetReplicaId and os.clock() < deadline and isPlayingMacro do
-                                local candidates = getOwnedGameUnitReplicas()
-                                local bestId = nil
-                                local bestDistance = math.huge
+                            local placementAction = placementActionsByOrder[targetOrder]
+                            local placementCFrame = placementAction
+                                and placementAction.args
+                                and placementAction.args[4]
 
-                                for id, replica in pairs(candidates) do
-                                    if replica and replica.Data then
-                                        local cframe = replica.Data.CFrame
-                                        if typeof(placementCFrame) == "CFrame" and typeof(cframe) == "CFrame" then
-                                            local distance = (cframe.Position - placementCFrame.Position).Magnitude
-                                            if distance < bestDistance then
-                                                bestDistance = distance
-                                                bestId = id
+                            local deadline = os.clock() + 5
+
+                            while not targetReplicaId and os.clock() < deadline and isPlayingMacro do
+                                -- First prefer the exact recorded placement CFrame.
+                                if typeof(placementCFrame) == "CFrame" then
+                                    local candidates = getOwnedGameUnitReplicas()
+                                    local bestId = nil
+                                    local bestDistance = math.huge
+
+                                    for id, replica in pairs(candidates) do
+                                        if replica and replica.Data then
+                                            local cframe = replica.Data.CFrame
+                                            if typeof(cframe) == "CFrame" then
+                                                local distance = (cframe.Position - placementCFrame.Position).Magnitude
+                                                if distance < bestDistance then
+                                                    bestDistance = distance
+                                                    bestId = id
+                                                end
                                             end
                                         end
                                     end
+
+                                    if bestId and bestDistance <= 10 then
+                                        targetReplicaId = bestId
+                                        playbackUnitReplicaIds[targetOrder] = bestId
+                                        break
+                                    end
                                 end
 
-                                if bestId and bestDistance <= 8 then
-                                    targetReplicaId = bestId
-                                    playbackUnitReplicaIds[targetOrder] = bestId
-                                    break
+                                -- Placement replicas can arrive a little later.
+                                task.wait(0.1)
+                            end
+
+                            -- If a CFrame lookup is not available, use the only
+                            -- newly-created owned replica when there is exactly
+                            -- one candidate matching the placement order.
+                            if not targetReplicaId then
+                                local candidates = getOwnedGameUnitReplicas()
+                                local candidateId = nil
+                                local count = 0
+
+                                for id in pairs(candidates) do
+                                    if not candidateId then
+                                        candidateId = id
+                                    end
+                                    count += 1
+                                    if count > 1 then
+                                        break
+                                    end
                                 end
 
-                                task.wait(0.08)
+                                if count == 1 and candidateId then
+                                    targetReplicaId = candidateId
+                                    playbackUnitReplicaIds[targetOrder] = candidateId
+                                end
                             end
                         end
 
@@ -1066,17 +1112,20 @@ function Macro.Init(Shared, UI)
                                 if newReplicaId then
                                     playbackUnitReplicaIds[action._playbackPlacementOrder] = newReplicaId
                                 else
-                                    -- Placement remote succeeded. Keep going and
-                                    -- let a later Upgrade resolve the replica by CFrame.
-                                    lastError = "Placement confirmed; replica mapping delayed"
+                                    -- The PlaceGameUnit remote itself succeeded.
+                                    -- Replica creation can lag behind the remote,
+                                    -- so don't turn a valid placement into a SKIP.
+                                    lastError = "Placement sent; replica mapping pending"
                                 end
-                            end
 
-                            local verified = verifyAction(action, nil, beforeIds)
-                            if verified then
                                 success = true
                             else
-                                lastError = "Action verification failed"
+                                local verified = verifyAction(action, nil, beforeIds)
+                                if verified then
+                                    success = true
+                                else
+                                    lastError = "Action verification failed"
+                                end
                             end
                         else
                             lastError = err or "Remote call failed"
@@ -1211,11 +1260,20 @@ function Macro.Init(Shared, UI)
                 local cycleStarted = false
                 local transitionSent = false
                 local lastStartAttempt = 0
+                local startRequestedOnce = false
+
+                -- Play Macro must press the in-game Start/Vote immediately,
+                -- before waiting for InProgress and before running any action.
+                if fireSignal(87, "Response", true) then
+                    startRequestedOnce = true
+                    lastStartAttempt = os.clock()
+                    macroStatusLabel.Text = "Start requested..."
+                end
 
                 while Config.PlayMacro do
                     local state = updateMacroGameSession()
 
-                    if state == "InProgress" and not cycleStarted then
+                    if state == "InProgress" and not cycleStarted and startRequestedOnce then
                         cycleStarted = true
                         transitionSent = false
                         macroStatusLabel.Text = "Starting macro..."
@@ -1252,9 +1310,10 @@ function Macro.Init(Shared, UI)
                     end
 
                     if state ~= "InProgress" and not transitionSent then
-                        if os.clock() - lastStartAttempt >= 3 then
+                        if os.clock() - lastStartAttempt >= 1.5 then
                             lastStartAttempt = os.clock()
                             if fireSignal(87, "Response", true) then
+                                startRequestedOnce = true
                                 macroStatusLabel.Text = "Start requested..."
                             end
                         end
