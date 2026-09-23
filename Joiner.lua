@@ -775,6 +775,22 @@ function Joiner.Init(Shared, UI)
 
                 local state = getCurrentGameState()
 
+                -- Auto Vote Start must be requested before the game reaches
+                -- InProgress. After Select Stage/Joiner transitions into the
+                -- gamemode, keep sending the vote while the game is waiting
+                -- to start. The old logic waited for InProgress first, which
+                -- is exactly too late for the game's Start button.
+                if Config.AutoVoteStart
+                    and (joinRequested.Story or joinRequested.Raid
+                        or joinRequested.Expedition or joinRequested.Challenge)
+                    and state ~= "InProgress"
+                    and remoteCooldown("AutoVoteStart", 3) then
+                    pcall(function()
+                        ReplicaSignal:FireServer(87, "Response", true)
+                    end)
+                    Shared.logLine("[GameRemote] Auto Vote Start -> 87 Response true (pre-InProgress)")
+                end
+
                 -- Do not use WaveInfo as a lobby detector. It can exist before
                 -- a match starts, which previously prevented Auto Join from firing.
                 if state == "InProgress" then
