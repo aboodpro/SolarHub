@@ -17,6 +17,7 @@ function Macro.Init(Shared, UI)
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
     local recordedPlacementCFrames = {}
+    local pendingRecordWorkers = 0
     local scannedUnitsDatabase = {}
 
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -247,6 +248,7 @@ function Macro.Init(Shared, UI)
         local result = table.pack(oldNamecall(self, ...))
 
         if isRemoteCall and Config.RecordMacro then
+            pendingRecordWorkers = pendingRecordWorkers + 1
             task.spawn(function()
                 pcall(function()
                     local remoteNameLower = selfRef.Name:lower()
@@ -337,6 +339,7 @@ function Macro.Init(Shared, UI)
                         end
                     end
                 end)
+                pendingRecordWorkers = math.max(0, pendingRecordWorkers - 1)
             end)
         end
 
@@ -738,12 +741,22 @@ function Macro.Init(Shared, UI)
             recordPlacementCount = 0
             recordUnitIdMap = {}
             recordedPlacementCFrames = {}
+            pendingRecordWorkers = 0
             recordBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
             recordBtn.Text = "🔴 Recording..."
             showTopNotification("Recording started...", 3)
         else
             recordBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
             recordBtn.Text = "🔴 Record Macro"
+
+            -- Remote recording/enrichment runs in small worker tasks.
+            -- Wait for them to finish before serializing, otherwise the last
+            -- Upgrade may be saved before its Yen cost is attached.
+            local saveDeadline = os.clock() + 1.5
+            while pendingRecordWorkers > 0 and os.clock() < saveDeadline do
+                task.wait(0.05)
+            end
+
             if savedMacros[Config.CurrentMacroName] then
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
                 saveMacrosToFile()
