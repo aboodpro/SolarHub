@@ -188,19 +188,18 @@ function Joiner.Init(Shared, UI)
     -------------------------------------------------
     -- Joiner Tab
     -------------------------------------------------
-    local joinerSec = createSection(tabs["Joiner"], "Queue Settings", 75)
-    createToggle(joinerSec, "Matchmaking Queue", "Enables public match queues.", "MatchMaking", 32)
-
-    local sjSec = createSection(tabs["Joiner"], "Story Joiner Configuration", 195)
-    createToggle(sjSec, "Auto Join Story", "Queues into Story Mode using the game's official Matchmaking Node.", "AutoJoinStory", 32)
+    local sjSec = createSection(tabs["Joiner"], "Story Joiner Configuration", 235)
+    createToggle(sjSec, "Auto Join Story", "Automatically enters the selected Story stage.", "AutoJoinStory", 32)
     createDropdown(sjSec, "Select Map", "Story map", StoryMaps, "SelectedMap", 8, 74, 210)
     createDropdown(sjSec, "Select Act", "Act selector", StoryActs, "SelectedAct", 226, 74, 110)
     createDropdown(sjSec, "Select Difficulty", "Normal or Hard", StoryDifficulties, "SelectedDifficulty", 8, 134, 328)
+    createToggle(sjSec, "Matchmaking", "Use public matchmaking instead of joining solo.", "StoryMatchMaking", 194)
 
-    local rSec = createSection(tabs["Joiner"], "Raid Joiner Configuration", 135)
-    createToggle(rSec, "Auto Join Raid", "Queues into Raid Mode.", "AutoJoinRaid", 32)
+    local rSec = createSection(tabs["Joiner"], "Raid Joiner Configuration", 175)
+    createToggle(rSec, "Auto Join Raid", "Automatically enters the selected Raid stage.", "AutoJoinRaid", 32)
     createDropdown(rSec, "Select Raid Map", "Raid map", {"Spirit City", "Hill Of Swords"}, "SelectedRaidMap", 8, 74, 210)
     createDropdown(rSec, "Select Raid Act", "Raid Act", {"Act 1", "Act 2", "Act 3"}, "SelectedRaidAct", 226, 74, 110)
+    createToggle(rSec, "Matchmaking", "Use public matchmaking instead of joining solo.", "RaidMatchMaking", 134)
 
     -------------------------------------------------
     -- Game Tab
@@ -375,7 +374,7 @@ function Joiner.Init(Shared, UI)
         return false
     end
 
-    local function handleDirectAutomation(targetPromptName: string, mapName: string, actName: string, diffName: string?, configKey: string)
+    local function handleDirectAutomation(targetPromptName: string, mapName: string, actName: string, diffName: string?, configKey: string, matchmaking: boolean)
         local toggleTime = toggleTimestamps[configKey] or 0
         if tick() - toggleTime < 1.0 then return end
 
@@ -388,7 +387,7 @@ function Joiner.Init(Shared, UI)
                 local text = descendant.Text:lower()
                 if text ~= "" then
                     if text:find("start") or text:find("ready") or text:find("deploy") or text:find("select stage") then foundStageBtn = descendant end
-                    if (Config.MatchMaking and (text:find("matchmaking") or text:find("enter matchmaking"))) or (not Config.MatchMaking and text:find("solo")) then foundQueueBtn = descendant end
+                    if (matchmaking and (text:find("matchmaking") or text:find("enter matchmaking"))) or ((not matchmaking) and (text:find("solo") or text:find("private") or text:find("start"))) then foundQueueBtn = descendant end
                     if text:find(mapName:lower()) then foundMap = descendant end
                     if actName ~= "" and text:find(actName:lower()) then foundAct = descendant end
                     if diffName and diffName ~= "" and (text:find(diffName:lower()) or text:find(diffName:gsub("difficulty ", ""):lower())) then foundDiff = descendant end
@@ -428,10 +427,17 @@ function Joiner.Init(Shared, UI)
                 if inLobbyNow then
                     if not Config.DisableAutoJoiners then
                         if Config.AutoJoinStory then
-                            queueStoryRemotely()
-                        elseif Config.AutoJoinRaid then handleDirectAutomation("Raid", Config.SelectedRaidMap, Config.SelectedRaidAct, nil, "AutoJoinRaid")
-                        elseif Config.AutoJoinExpedition then handleDirectAutomation("Expedition", Config.SelectedExpeditionMap, "", Config.SelectedExpeditionDifficulty, "AutoJoinExpedition")
-                        elseif Config.AutoJoinChallenge then handleDirectAutomation("Challenge", Config.SelectedChallengeType, "Enter", nil, "AutoJoinChallenge")
+                            if Config.StoryMatchMaking then
+                                queueStoryRemotely()
+                            else
+                                handleDirectAutomation("Story", Config.SelectedMap, Config.SelectedAct, Config.SelectedDifficulty, "AutoJoinStory", false)
+                            end
+                        elseif Config.AutoJoinRaid then
+                            handleDirectAutomation("Raid", Config.SelectedRaidMap, Config.SelectedRaidAct, nil, "AutoJoinRaid", Config.RaidMatchMaking)
+                        elseif Config.AutoJoinExpedition then
+                            handleDirectAutomation("Expedition", Config.SelectedExpeditionMap, "", Config.SelectedExpeditionDifficulty, "AutoJoinExpedition", Config.ExpeditionMatchMaking)
+                        elseif Config.AutoJoinChallenge then
+                            handleDirectAutomation("Challenge", Config.SelectedChallengeType, "Enter", nil, "AutoJoinChallenge", Config.ChallengeMatchMaking)
                         end
                     end
                 else
