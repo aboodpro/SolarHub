@@ -19,6 +19,52 @@ function Joiner.Init(Shared, UI)
     local createDropdown = UI.createDropdown
 
     -------------------------------------------------
+    -------------------------------------------------
+    -- DATA / REMOTES
+    -------------------------------------------------
+    local ReplicaSignal = Shared.ReplicatedStorage
+        :WaitForChild("RemoteEvents")
+        :WaitForChild("ReplicaSignal")
+
+    local StoryMaps = {}
+    local StoryMapDisplayToId = {}
+    local StoryActs = {"Act 1", "Act 2", "Act 3", "Act 4", "Act 5"}
+    local StoryDifficulties = {"Normal", "Hard"}
+
+    local function prettifyStoryMap(mapName: string): string
+        local ok, maps = pcall(function()
+            return require(Shared.ReplicatedStorage.Shared.Information.Maps)
+        end)
+
+        if ok and maps and maps.PreviewInfo and maps.PreviewInfo[mapName] then
+            local displayName = maps.PreviewInfo[mapName].DisplayName
+            if type(displayName) == "string" and displayName ~= "" then
+                return displayName
+            end
+        end
+
+        local pretty = mapName:gsub("(%u)", " %1"):gsub("^%s+", "")
+        return pretty
+    end
+
+    pcall(function()
+        local maps = require(Shared.ReplicatedStorage.Shared.Information.Maps)
+        if maps.MapData and maps.MapData.Story then
+            for mapName in pairs(maps.MapData.Story) do
+                local displayName = prettifyStoryMap(mapName)
+                table.insert(StoryMaps, displayName)
+                StoryMapDisplayToId[displayName] = mapName
+            end
+        end
+    end)
+
+    table.sort(StoryMaps)
+
+    if #StoryMaps == 0 then
+        StoryMaps = {"School Grounds"}
+        StoryMapDisplayToId["School Grounds"] = "SchoolGrounds"
+    end
+
     -- Lobby Tab
     -------------------------------------------------
     local lobbySec = createSection(tabs["Lobby"], "Lobby Utilities", 80)
@@ -75,7 +121,74 @@ function Joiner.Init(Shared, UI)
         return false
     end
 
-    local toggleTimestamps = { AutoJoinStory = 0, AutoJoinRaid = 0, AutoJoinExpedition = 0, AutoJoinChallenge = 0 }
+    local toggleTimestamps = {
+        AutoJoinStory = 0,
+        AutoJoinRaid = 0,
+        AutoJoinExpedition = 0,
+        AutoJoinChallenge = 0,
+        AutoVoteStart = 0,
+        AutoSkipWave = 0,
+        AutoReplay = 0,
+        AutoNext = 0,
+        AutoReturnLobby = 0,
+    }
+
+    local function remoteCooldown(configKey: string, seconds: number): boolean
+        local now = os.clock()
+        if now < (toggleTimestamps[configKey] or 0) then
+            return false
+        end
+        toggleTimestamps[configKey] = now + seconds
+        return true
+    end
+
+    local function getCurrentGameState(): string?
+        local _, _, state = Shared.getWaveInfo()
+        if type(state) == "string" then
+            return state
+        end
+        return nil
+    end
+
+    local function runRemoteGameAutomation()
+        if Config.AutoVoteStart and remoteCooldown("AutoVoteStart", 3) then
+            pcall(function()
+                ReplicaSignal:FireServer(87, "Response", true)
+            end)
+            Shared.logLine("[GameRemote] Auto Vote Start -> 87 Response true")
+        end
+
+        if Config.AutoSkipWave and remoteCooldown("AutoSkipWave", 2) then
+            pcall(function()
+                ReplicaSignal:FireServer(215, "Response", true)
+            end)
+            Shared.logLine("[GameRemote] Auto Skip -> 215 Response true")
+        end
+
+        local state = getCurrentGameState()
+
+        if Config.AutoReplay and state and state ~= "InProgress" then
+            if remoteCooldown("AutoReplay", 6) then
+                pcall(function()
+                    ReplicaSignal:FireServer(77, "Restart")
+                end)
+                Shared.logLine(("[GameRemote] Auto Replay/Restart -> 77 Restart (state=%s)"):format(state))
+            end
+        elseif Config.AutoNext and state and state ~= "InProgress" then
+            if remoteCooldown("AutoNext", 6) then
+                pcall(function()
+                    ReplicaSignal:FireServer(77, "Next")
+                end)
+                Shared.logLine(("[GameRemote] Auto Next -> 77 Next (state=%s)"):format(state))
+            end
+        end
+
+        if Config.AutoReturnLobby then
+            if remoteCooldown("AutoReturnLobby", 10) then
+                Shared.logLine("[GameRemote] Auto Return Lobby pending: remote not discovered yet")
+            end
+        end
+    end
 
     local function queueStoryRemotely()
         local toggleTime = toggleTimestamps.AutoJoinStory or 0
@@ -181,38 +294,30 @@ function Joiner.Init(Shared, UI)
                         end
                     end
                 else
-                    local needsScan = Config.PlayMacro or Config.AutoVoteStart or Config.AutoSkipWave
-                        or Config.AutoReplay or Config.AutoNext or Config.AutoReturnLobby
+                    runRemoteGameAutomation()
 
-                    if needsScan then
+                    -- Macro playback has its own remote-based action path.
+                    -- Keep the small UI helper only for the initial "ready/start" action.
+                    if Config.PlayMacro then
+                        local hub = playerGui:FindFirstChild("SolarHub")
                         for _, descendant in ipairs(playerGui:GetDescendants()) do
-                            if hub and descendant:IsDescendantOf(hub) then continue end
+                            if hub and descendant:IsDescendantOf(hub) then
+                                continue
+                            end
                             if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
                                 local text = descendant.Text:lower()
-                                if text ~= "" then
-                                    if Config.PlayMacro and (text:find("start") or text:find("ready") or text:find("deploy") or text:find("select stage")) then
-                                        clickElement(descendant)
-                                    end
-
-                                    if Config.AutoVoteStart and (text:find("vote") or text:find("start match") or text:find("yes")) then
-                                        clickElement(descendant)
-                                        task.wait(2)
-                                    elseif Config.AutoSkipWave and (text:find("skip") or text:find("skip wave")) then
-                                        clickElement(descendant)
-                                        task.wait(2)
-                                    elseif Config.AutoReplay and (text:find("replay") or text:find("repeat") or text:find("restart") or text:find("play again") or text:find("retry")) then
-                                        clickElement(descendant)
-                                        task.wait(5)
-                                    elseif Config.AutoNext and (text:find("next") or text:find("next stage") or text:find("next act")) then
-                                        clickElement(descendant)
-                                        task.wait(5)
-                                    elseif Config.AutoReturnLobby and (text:find("lobby") or text:find("home") or text:find("main menu")) then
-                                        clickElement(descendant)
-                                        task.wait(5)
-                                    end
+                                if text ~= "" and (
+                                    text:find("start")
+                                    or text:find("ready")
+                                    or text:find("deploy")
+                                    or text:find("select stage")
+                                ) then
+                                    clickElement(descendant)
+                                    break
                                 end
                             end
                         end
+                    end
                     end
                 end
             end)
