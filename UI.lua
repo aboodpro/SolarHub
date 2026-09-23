@@ -25,7 +25,11 @@ function UI.Init(Shared)
 
     -- Responsive scale: the same UI/layout works on desktop and mobile.\n    -- All buttons use Activated so mouse and touch input share the same handlers.\n    local mainFrame = Instance.new("Frame")
     mainFrame.Size = UDim2.fromOffset(586, 304)
-    mainFrame.Position = UDim2.new(0.5, -293, 0.5, -152)
+    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    mainFrame.Visible = true
+    mainFrame.Active = true
+    mainFrame.ZIndex = 20
     mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
@@ -34,12 +38,15 @@ function UI.Init(Shared)
     uiScale.Scale = 1
     uiScale.Parent = mainFrame
 
+    -- Keep the toggle above the main window on both PC and mobile.
+    toggleBtn.ZIndex = 100
+
     local function updateResponsiveScale()
         local camera = workspace.CurrentCamera
         if not camera then return end
         local viewport = camera.ViewportSize
-        local scaleX = (viewport.X - 20) / 586
-        local scaleY = (viewport.Y - 20) / 304
+        local scaleX = (viewport.X - 24) / 586
+        local scaleY = (viewport.Y - 24) / 304
         uiScale.Scale = math.clamp(math.min(scaleX, scaleY), 0.55, 1)
     end
 
