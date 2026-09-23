@@ -10,6 +10,7 @@ function Macro.Init(Shared, UI)
     local getCurrentYen = Shared.getCurrentYen
 
     local tabs = UI.tabs
+    ReplicatedStorage = game:GetService("ReplicatedStorage")
     local macroTab = tabs["Macro"]
     if not macroTab then
         warn("[Macro] Macro tab container is missing.")
@@ -29,7 +30,7 @@ function Macro.Init(Shared, UI)
     local pendingRecordWorkers = 0
     local scannedUnitsDatabase = {}
 
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local ReplicatedStorage = nil
     local replicaClientModule = nil
 
     -- Resolve ReplicaClient lazily and defensively. Some game revisions/executors
