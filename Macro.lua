@@ -25,6 +25,8 @@ function Macro.Init(Shared, UI)
     local recordUnitIdMap = {}
     local scannedUnitsDatabase = {}
     local connectedAutoUpgradeButtons = setmetatable({}, { __mode = "k" })
+    local recordedUnitOrdersById = {}
+    local knownRecordedUnitIds = {}
 
     -- نظام فحص آمن لقاعدة بيانات الوحدات (99 وحدة)
     task.spawn(function()
@@ -85,6 +87,81 @@ function Macro.Init(Shared, UI)
             end
         end)
         return foundCount
+    end
+
+    local function unitOwnerMatches(model)
+        local owner = model:GetAttribute("Owner") or model:GetAttribute("Player")
+        local lp = game.Players.LocalPlayer
+        return owner == lp
+            or owner == lp.UserId
+            or owner == lp.Name
+            or tostring(owner) == tostring(lp.UserId)
+    end
+
+    local function getUnitIdentifier(model)
+        if not model then return nil end
+        return model:GetAttribute("Id") or model:GetAttribute("UnitId") or model.Name
+    end
+
+    local function getCandidateUnitModels()
+        local result = {}
+        pcall(function()
+            for _, descendant in ipairs(workspace:GetDescendants()) do
+                if descendant:IsA("Model") and descendant:FindFirstChild("HumanoidRootPart") then
+                    if (descendant.Parent and descendant.Parent.Name == "Units") or unitOwnerMatches(descendant) then
+                        table.insert(result, descendant)
+                    end
+                end
+            end
+        end)
+        return result
+    end
+
+    local function refreshKnownRecordedUnits()
+        for _, model in ipairs(getCandidateUnitModels()) do
+            local id = getUnitIdentifier(model)
+            if id ~= nil then
+                knownRecordedUnitIds[tostring(id)] = true
+            end
+        end
+    end
+
+    local function captureNewRecordedPlacement(orderNumber)
+        local deadline = os.clock() + 2
+        while os.clock() < deadline do
+            for _, model in ipairs(getCandidateUnitModels()) do
+                local id = getUnitIdentifier(model)
+                local key = id ~= nil and tostring(id) or nil
+                if key and not knownRecordedUnitIds[key] then
+                    knownRecordedUnitIds[key] = true
+                    recordedUnitOrdersById[key] = orderNumber
+                    logLine(("[Macro Record] Placement #%d -> UnitId %s"):format(orderNumber, key))
+                    return model
+                end
+            end
+            task.wait(0.05)
+        end
+        refreshKnownRecordedUnits()
+        return nil
+    end
+
+    local function findRecordedPlacementFromUpgradeArgs(args)
+        for i = 1, (args.n or #args) do
+            local arg = args[i]
+            if typeof(arg) == "string" or typeof(arg) == "number" then
+                local order = recordedUnitOrdersById[tostring(arg)]
+                if order then
+                    return order, arg
+                end
+            elseif typeof(arg) == "Instance" and arg:IsA("Model") then
+                local id = getUnitIdentifier(arg)
+                local order = id and recordedUnitOrdersById[tostring(id)]
+                if order then
+                    return order, id
+                end
+            end
+        end
+        return nil, nil
     end
 
     local function getButtonTextRecursive(button)
@@ -174,18 +251,21 @@ function Macro.Init(Shared, UI)
                     local isAutoUpgradeRemote = remoteNameLower:find("autoupgrade")
                         or (remoteNameLower:find("auto") and remoteNameLower:find("upgrade"))
 
-                    -- Auto Upgrade is a UI/toggle action. Do not also record its Remote
-                    -- as a normal UnitUpgrade, otherwise one click becomes 2 actions.
                     if isAutoUpgradeRemote then
                         return
                     end
 
-                    if remoteNameLower:find("upgrade") or remoteNameLower:find("lvl") or remoteNameLower:find("level") or remoteNameLower:find("evolve") or remoteNameLower:find("rank") then
+                    if remoteNameLower:find("upgrade")
+                        or remoteNameLower:find("lvl")
+                        or remoteNameLower:find("level")
+                        or remoteNameLower:find("evolve")
+                        or remoteNameLower:find("rank") then
                         actionDesc = "UnitUpgrade"
-                    elseif remoteNameLower:find("place") or remoteNameLower:find("spawn") or remoteNameLower:find("deploy") then
+                    elseif remoteNameLower:find("place")
+                        or remoteNameLower:find("spawn")
+                        or remoteNameLower:find("deploy") then
                         actionDesc = "UnitPlace"
                     elseif remoteNameLower:find("buy") and remoteNameLower:find("unit") then
-                        -- Only treat a BuyUnit-style remote as placement.
                         actionDesc = "UnitPlace"
                     end
 
@@ -203,26 +283,20 @@ function Macro.Init(Shared, UI)
                             #recordedActions, actionDesc, selfRef.Name))
 
                         if actionDesc == "UnitPlace" then
-                            local slotNum = nil
-                            pcall(function()
-                                for _, arg in ipairs(packedArgs) do
-                                    if typeof(arg) == "number" and arg < 10 then
-                                        slotNum = arg
-                                        break
-                                    end
-                                end
-                            end)
-                            
-                            pcall(function()
-                                recordPlacementCount = recordPlacementCount + 1
-                                actionEntry.placementOrder = recordPlacementCount
-                                recordUnitIdMap[recordPlacementCount] = recordPlacementCount
-                            end)
-                        elseif actionDesc == "UnitUpgrade" then
-                            actionEntry.linkedPlacementOrder = recordPlacementCount
+                            recordPlacementCount = recordPlacementCount + 1
+                            actionEntry.placementOrder = recordPlacementCount
+                            recordUnitIdMap[recordPlacementCount] = recordPlacementCount
 
-                            -- Capture the actual upgrade cost here. This is metadata on the
-                            -- UnitUpgrade action, not a separate Macro action.
+                            task.spawn(function()
+                                captureNewRecordedPlacement(recordPlacementCount)
+                            end)
+
+                        elseif actionDesc == "UnitUpgrade" then
+                            local linkedOrder, linkedId = findRecordedPlacementFromUpgradeArgs(packedArgs)
+
+                            actionEntry.linkedPlacementOrder = linkedOrder or recordPlacementCount
+                            actionEntry.linkedUnitId = linkedId
+
                             pcall(function()
                                 local cost = Shared.captureVisibleUpgradeCost()
                                 local currentYen = getCurrentYen()
@@ -231,13 +305,14 @@ function Macro.Init(Shared, UI)
                                 if cost and currentYen then
                                     actionEntry.missingYen = math.max(0, cost - currentYen)
                                 end
-                                logLine(("[Macro Record] Upgrade #%d cost=%s currentYen=%s missing=%s"):format(
-                                    recordPlacementCount,
+                                logLine(("[Macro Record] Upgrade -> placement #%s | UnitId=%s | cost=%s currentYen=%s missing=%s"):format(
+                                    tostring(actionEntry.linkedPlacementOrder),
+                                    tostring(linkedId),
                                     tostring(cost),
                                     tostring(currentYen),
                                     tostring(actionEntry.missingYen)))
                             end)
-                        end
+                        endend
                     end
                 end)
             end)
@@ -580,59 +655,68 @@ function Macro.Init(Shared, UI)
                     task.wait(0.2)
 
                 elseif action.actionType == "UnitUpgrade" then
-                        local targetOrder = action.linkedPlacementOrder
-                        local targetModel = targetOrder and playbackUnitsByOrder[targetOrder]
+                    local targetOrder = action.linkedPlacementOrder
+                    local targetModel = targetOrder and playbackUnitsByOrder[targetOrder]
 
-                        if targetModel and isUnitModelValid(targetModel) then
-                            local targetId = targetModel:GetAttribute("Id") or targetModel.Name
-                            local replaced = false
+                    if targetModel and isUnitModelValid(targetModel) then
+                        local targetId = targetModel:GetAttribute("Id") or targetModel.Name
+                        local replaced = false
 
-                            -- Prefer the argument type that was recorded. If the game used a
-                            -- Model instance, send the new Model; otherwise replace only the
-                            -- first plausible unit identifier, preserving other arguments.
+                        if action.linkedUnitId ~= nil then
                             for i, arg in ipairs(args) do
-                                if typeof(arg) == "Instance" then
+                                if tostring(arg) == tostring(action.linkedUnitId) then
+                                    args[i] = targetId
+                                    replaced = true
+                                    break
+                                end
+                            end
+                        end
+
+                        if not replaced then
+                            for i, arg in ipairs(args) do
+                                if typeof(arg) == "Instance" and arg:IsA("Model") then
                                     args[i] = targetModel
                                     replaced = true
                                     break
                                 end
                             end
+                        end
 
-                            if not replaced then
-                                for i, arg in ipairs(args) do
-                                    if type(arg) == "string" or type(arg) == "number" then
-                                        args[i] = targetId
-                                        replaced = true
-                                        break
-                                    end
+                        if not replaced then
+                            for i, arg in ipairs(args) do
+                                if type(arg) == "string" or type(arg) == "number" then
+                                    args[i] = targetId
+                                    replaced = true
+                                    break
                                 end
-                            end
-
-                            if not replaced then
-                                warn(("[Macro] Could not replace UnitUpgrade target for placement #%s"):format(tostring(targetOrder)))
-                            end
-                        else
-                            -- Legacy fallback for macros recorded before placement mapping.
-                            scanAndBuildUnitDatabase()
-                            if targetOrder and scannedUnitsDatabase[targetOrder] then
-                                local scannedTarget = scannedUnitsDatabase[targetOrder]
-                                for i, arg in ipairs(args) do
-                                    if type(arg) == "number" or type(arg) == "string" then
-                                        args[i] = scannedTarget.uniqueId
-                                        break
-                                    end
-                                end
-                            else
-                                warn(("[Macro] UnitUpgrade target not found for placement #%s"):format(tostring(targetOrder)))
                             end
                         end
 
-                        if action.method == "InvokeServer" then
-                            remoteObj:InvokeServer(table.unpack(args))
-                        else
-                            remoteObj:FireServer(table.unpack(args))
+                        if not replaced then
+                            warn(("[Macro] Could not replace UnitUpgrade target for placement #%s"):format(tostring(targetOrder)))
                         end
-                        task.wait(0.3)
+                    else
+                        scanAndBuildUnitDatabase()
+                        if targetOrder and scannedUnitsDatabase[targetOrder] then
+                            local scannedTarget = scannedUnitsDatabase[targetOrder]
+                            for i, arg in ipairs(args) do
+                                if type(arg) == "number" or type(arg) == "string" then
+                                    args[i] = scannedTarget.uniqueId
+                                    break
+                                end
+                            end
+                        else
+                            warn(("[Macro] UnitUpgrade target not found for placement #%s"):format(tostring(targetOrder)))
+                        end
+                    end
+
+                    if action.method == "InvokeServer" then
+                        remoteObj:InvokeServer(table.unpack(args))
+                    else
+                        remoteObj:FireServer(table.unpack(args))
+                    end
+                    task.wait(0.3)
+
                     else
                         if action.method == "InvokeServer" then
                             remoteObj:InvokeServer(table.unpack(args))
@@ -681,6 +765,9 @@ function Macro.Init(Shared, UI)
             recordStartTime = os.clock()
             recordPlacementCount = 0
             recordUnitIdMap = {}
+            recordedUnitOrdersById = {}
+            knownRecordedUnitIds = {}
+            refreshKnownRecordedUnits()
             pcall(clearPendingModels)
             recordBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
             recordBtn.Text = "🔴 Recording..."
@@ -690,9 +777,12 @@ function Macro.Init(Shared, UI)
             recordBtn.Text = "🔴 Record Macro"
             if savedMacros[Config.CurrentMacroName] then
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
-                saveMacrosToFile()
+                local savedOk = saveMacrosToFile()
                 showTopNotification("Macro saved to file (" .. #recordedActions .. " actions)!", 3)
-                print("[Macro Record] Saved " .. #recordedActions .. " actions.")
+                print("[Macro Record] Saved " .. #recordedActions .. " actions. save=" .. tostring(savedOk))
+                for i, a in ipairs(recordedActions) do
+                    print(("[Macro Record] ACTION %d = %s"):format(i, tostring(a.actionType)))
+                end
             end
         end
     end)
