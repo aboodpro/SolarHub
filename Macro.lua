@@ -194,7 +194,7 @@ function Macro.Init(Shared, UI)
             for id, replica in pairs(candidates) do
                 if not beforeIds[id] and replica and replica.Data then
                     local cframe = replica.Data.CFrame
-                    local distance = 0
+                    local distance = math.huge
 
                     if typeof(placementCFrame) == "CFrame" and typeof(cframe) == "CFrame" then
                         distance = (cframe.Position - placementCFrame.Position).Magnitude
@@ -832,6 +832,98 @@ function Macro.Init(Shared, UI)
 
     local isPlayingMacro = false
     local macroGameSession = 0
+
+    -- Resolve a playback unit after the placement remote has already fired.
+    -- Ignore Timing removes timestamp waits, not the game's replication/readiness
+    -- requirements. Keep resolving until the correct live unit is visible.
+    local function resolvePlaybackUnitReplicaId(targetCFrame, targetUnitID, timeoutSeconds, preferredId)
+        local deadline = os.clock() + (timeoutSeconds or 12)
+        local lastBestId = preferredId
+
+        while os.clock() < deadline and isPlayingMacro do
+            if lastBestId then
+                local data = getReplicaDataById(lastBestId, 0.15)
+                if data and data.CFrame ~= nil and data.UnitID ~= nil then
+                    local cframeMatches = true
+                    local unitMatches = true
+
+                    if typeof(targetCFrame) == "CFrame"
+                        and typeof(data.CFrame) == "CFrame" then
+                        cframeMatches =
+                            (data.CFrame.Position - targetCFrame.Position).Magnitude <= 12
+                    end
+
+                    if targetUnitID ~= nil then
+                        unitMatches = tostring(data.UnitID or "") == targetUnitID
+                    end
+
+                    if cframeMatches and unitMatches then
+                        return lastBestId
+                    end
+                end
+            end
+
+            local candidates = getOwnedGameUnitReplicas()
+            local bestId = nil
+            local bestScore = math.huge
+            local fallbackId = nil
+            local fallbackDistance = math.huge
+
+            for id, replica in pairs(candidates) do
+                if replica and replica.Data then
+                    local data = replica.Data
+                    local distance = math.huge
+
+                    if typeof(targetCFrame) == "CFrame"
+                        and typeof(data.CFrame) == "CFrame" then
+                        distance = (data.CFrame.Position - targetCFrame.Position).Magnitude
+                    end
+
+                    local unitMatches = targetUnitID == nil
+                        or tostring(data.UnitID or "") == targetUnitID
+
+                    if unitMatches and distance < bestScore then
+                        bestScore = distance
+                        bestId = id
+                    end
+
+                    if distance < fallbackDistance then
+                        fallbackDistance = distance
+                        fallbackId = id
+                    end
+                end
+            end
+
+            if bestId and (typeof(targetCFrame) ~= "CFrame" or bestScore <= 12) then
+                return bestId
+            end
+
+            if fallbackId and targetUnitID == nil
+                and (typeof(targetCFrame) ~= "CFrame" or fallbackDistance <= 12) then
+                return fallbackId
+            end
+
+            if targetCFrame == nil and targetUnitID == nil then
+                local onlyId = nil
+                local count = 0
+                for id in pairs(candidates) do
+                    onlyId = id
+                    count += 1
+                    if count > 1 then
+                        break
+                    end
+                end
+
+                if count == 1 and onlyId then
+                    return onlyId
+                end
+            end
+
+            task.wait(0.1)
+        end
+
+        return nil
+    end
     local macroGameWasInProgress = false
     local macroLastStartedSession = {}
 
@@ -1083,79 +1175,15 @@ function Macro.Init(Shared, UI)
                             or placementCFrame
                         local targetUnitID = action.targetUnitID and tostring(action.targetUnitID) or nil
 
-                        if not targetReplicaId then
-                            local deadline = os.clock() + 5
+                        targetReplicaId = resolvePlaybackUnitReplicaId(
+                            targetCFrame,
+                            targetUnitID,
+                            15,
+                            targetReplicaId
+                        )
 
-                            while not targetReplicaId and os.clock() < deadline and isPlayingMacro do
-                                local candidates = getOwnedGameUnitReplicas()
-                                local bestId = nil
-                                local bestScore = math.huge
-                                local fallbackId = nil
-                                local fallbackDistance = math.huge
-
-                                for id, replica in pairs(candidates) do
-                                    if replica and replica.Data then
-                                        local data = replica.Data
-                                        local distance = math.huge
-                                        if typeof(targetCFrame) == "CFrame"
-                                            and typeof(data.CFrame) == "CFrame" then
-                                            distance = (data.CFrame.Position - targetCFrame.Position).Magnitude
-                                        end
-
-                                        local unitMatches = targetUnitID ~= nil
-                                            and tostring(data.UnitID or "") == targetUnitID
-
-                                        -- Matching unit type + nearby recorded position wins.
-                                        if unitMatches and distance < bestScore then
-                                            bestScore = distance
-                                            bestId = id
-                                        end
-
-                                        if distance < fallbackDistance then
-                                            fallbackDistance = distance
-                                            fallbackId = id
-                                        end
-                                    end
-                                end
-
-                                if bestId and (typeof(targetCFrame) ~= "CFrame" or bestScore <= 12) then
-                                    targetReplicaId = bestId
-                                elseif fallbackId
-                                    and (typeof(targetCFrame) ~= "CFrame" or fallbackDistance <= 12) then
-                                    targetReplicaId = fallbackId
-                                end
-
-                                if targetReplicaId and targetOrder then
-                                    playbackUnitReplicaIds[targetOrder] = targetReplicaId
-                                end
-
-                                if not targetReplicaId then
-                                    task.wait(0.1)
-                                end
-                            end
-
-                            -- Last fallback: when there is exactly one owned unit,
-                            -- use it rather than silently dropping the Upgrade.
-                            if not targetReplicaId then
-                                local candidates = getOwnedGameUnitReplicas()
-                                local candidateId = nil
-                                local count = 0
-
-                                for id in pairs(candidates) do
-                                    candidateId = id
-                                    count += 1
-                                    if count > 1 then
-                                        break
-                                    end
-                                end
-
-                                if count == 1 and candidateId then
-                                    targetReplicaId = candidateId
-                                    if targetOrder then
-                                        playbackUnitReplicaIds[targetOrder] = candidateId
-                                    end
-                                end
-                            end
+                        if targetReplicaId and targetOrder then
+                            playbackUnitReplicaIds[targetOrder] = targetReplicaId
                         end
 
                         if targetReplicaId and action.unitIdArgIndex then
@@ -1169,7 +1197,7 @@ function Macro.Init(Shared, UI)
                             end
                             action._playbackReplicaId = targetReplicaId
                         else
-                            lastError = ("Target mapping missing for placement #%s"):format(tostring(targetOrder))
+                            lastError = ("Target unit not ready for placement #%s"):format(tostring(targetOrder))
                             targetReplicaId = nil
                         end
                     end
@@ -1183,14 +1211,27 @@ function Macro.Init(Shared, UI)
                         local fired, err = fireAction(remoteObj, tempAction)
                         if fired then
                             if action.actionType == "UnitPlace" then
+                                local placementOrder = action._playbackPlacementOrder
                                 local newReplicaId = findNewUnitReplicaId(beforeIds, args[4], 4)
+
                                 if newReplicaId then
-                                    playbackUnitReplicaIds[action._playbackPlacementOrder] = newReplicaId
+                                    playbackUnitReplicaIds[placementOrder] = newReplicaId
                                 else
-                                    -- The PlaceGameUnit remote itself succeeded.
-                                    -- Replica creation can lag behind the remote,
-                                    -- so don't turn a valid placement into a SKIP.
-                                    lastError = "Placement sent; replica mapping pending"
+                                    -- The placement succeeded; ReplicaClient may simply
+                                    -- be a little late. Resolve in the background so a
+                                    -- following Upgrade can use the real replica ID.
+                                    task.spawn(function()
+                                        local resolvedId = resolvePlaybackUnitReplicaId(
+                                            typeof(args[4]) == "CFrame" and args[4] or nil,
+                                            nil,
+                                            15,
+                                            nil
+                                        )
+
+                                        if resolvedId and isPlayingMacro then
+                                            playbackUnitReplicaIds[placementOrder] = resolvedId
+                                        end
+                                    end)
                                 end
 
                                 success = true
