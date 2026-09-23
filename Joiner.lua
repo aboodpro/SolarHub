@@ -35,8 +35,49 @@ function Joiner.Init(Shared, UI)
 
     local StoryMaps = {}
     local StoryMapDisplayToId = {}
-    local StoryActs = {"Act 1", "Act 2", "Act 3", "Act 4", "Act 5"}
-    local StoryDifficulties = {"Normal", "Hard"}
+    local StoryActs = {}
+    local StoryDifficulties = {}
+
+    local function addUnique(list: {string}, value: string)
+        if value == "" then
+            return
+        end
+
+        for _, existing in ipairs(list) do
+            if existing == value then
+                return
+            end
+        end
+
+        table.insert(list, value)
+    end
+
+    local function sortActs(a: string, b: string): boolean
+        local an = tonumber(a:match("%d+")) or math.huge
+        local bn = tonumber(b:match("%d+")) or math.huge
+
+        if an == bn then
+            return a < b
+        end
+
+        return an < bn
+    end
+
+    local function sortDifficulties(a: string, b: string): boolean
+        local order = {
+            Normal = 1,
+            Hard = 2,
+        }
+
+        local ao = order[a] or 100
+        local bo = order[b] or 100
+
+        if ao == bo then
+            return a < b
+        end
+
+        return ao < bo
+    end
 
     local function prettifyStoryMap(mapName: string): string
         local ok, maps = pcall(function()
@@ -54,22 +95,89 @@ function Joiner.Init(Shared, UI)
         return pretty
     end
 
+    -- Read Story data directly from the game's own data path.
+    -- New Story maps/acts/difficulties automatically appear here without
+    -- needing a manual edit to SolarHub.
     pcall(function()
         local maps = require(Shared.ReplicatedStorage.Shared.Information.Maps)
-        if maps.MapData and maps.MapData.Story then
-            for mapName in pairs(maps.MapData.Story) do
-                local displayName = prettifyStoryMap(mapName)
-                table.insert(StoryMaps, displayName)
-                StoryMapDisplayToId[displayName] = mapName
+        local storyData = maps and maps.MapData and maps.MapData.Story
+
+        if type(storyData) == "table" then
+            local orderedMaps = {}
+
+            for mapName, mapInfo in pairs(storyData) do
+                if type(mapName) == "string" then
+                    local displayName = prettifyStoryMap(mapName)
+
+                    table.insert(orderedMaps, {
+                        Id = mapName,
+                        DisplayName = displayName,
+                        ProgressionIndex = (type(mapInfo) == "table" and tonumber(mapInfo.ProgressionIndex)) or math.huge,
+                        Info = mapInfo,
+                    })
+
+                    StoryMapDisplayToId[displayName] = mapName
+
+                    if type(mapInfo) == "table" then
+                        local acts = mapInfo.Acts
+                        if type(acts) == "table" then
+                            for actName, actInfo in pairs(acts) do
+                                if type(actName) == "string" then
+                                    addUnique(StoryActs, actName)
+                                elseif type(actInfo) == "table" and type(actInfo.Name) == "string" then
+                                    addUnique(StoryActs, actInfo.Name)
+                                end
+                            end
+                        end
+
+                        local difficulties = mapInfo.Difficulties
+                        if type(difficulties) == "table" then
+                            for _, difficulty in pairs(difficulties) do
+                                if type(difficulty) == "string" then
+                                    addUnique(StoryDifficulties, difficulty)
+                                end
+                            end
+
+                            for difficultyName, difficultyValue in pairs(difficulties) do
+                                if type(difficultyName) == "string" then
+                                    addUnique(StoryDifficulties, difficultyName)
+                                elseif type(difficultyValue) == "table" and type(difficultyValue.Name) == "string" then
+                                    addUnique(StoryDifficulties, difficultyValue.Name)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            table.sort(orderedMaps, function(a, b)
+                if a.ProgressionIndex == b.ProgressionIndex then
+                    return a.Id < b.Id
+                end
+                return a.ProgressionIndex < b.ProgressionIndex
+            end)
+
+            for _, entry in ipairs(orderedMaps) do
+                table.insert(StoryMaps, entry.DisplayName)
             end
         end
     end)
 
-    table.sort(StoryMaps)
+    table.sort(StoryActs, sortActs)
+    table.sort(StoryDifficulties, sortDifficulties)
 
+    -- Only used if the game's data module is unavailable.
     if #StoryMaps == 0 then
         StoryMaps = {"School Grounds"}
         StoryMapDisplayToId["School Grounds"] = "SchoolGrounds"
+    end
+
+    if #StoryActs == 0 then
+        StoryActs = {"Act 1"}
+    end
+
+    if #StoryDifficulties == 0 then
+        StoryDifficulties = {"Normal"}
     end
 
     -- Lobby Tab
