@@ -1,11 +1,10 @@
---!strict
 -- Loader.lua - game-gated modular loader.
 -- Only approved games/places are allowed to load SolarHub modules.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 -- Unique query per loader execution so GitHub/raw CDN and executor HTTP caches
 -- cannot reuse an older SolarHub module after a GitHub update.
-local CACHE_BUST = tostring(DateTime.now().UnixTimestampMillis) .. "_" .. tostring(math.random(100000, 999999))
+local CACHE_BUST = tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
 
 -------------------------------------------------
 -- ALLOWED GAMES
@@ -53,7 +52,7 @@ local function getAllowedGame()
     local currentPlaceId = game.PlaceId
 
     for _, entry in ipairs(ALLOWED_GAMES) do
-        if currentGameId == entry.GameId then
+        if currentGameId == entry.GameId or (entry.PlaceIds and entry.PlaceIds[currentPlaceId] == true) then
 
             -- If PlaceIds is omitted, the whole universe is allowed.
             if entry.PlaceIds == nil then
@@ -116,7 +115,7 @@ local function runModule(label, fn)
         return msg
     end)
     if not ok then
-        warn("[Loader] SolarHub stopped while loading " .. label)
+        warn("[Loader] " .. label .. " failed; continuing where possible.")
         return nil
     end
     return result
@@ -129,14 +128,14 @@ if not UI then return end
 
 print("[Loader] Fetching Joiner.lua...")
 local JoinerModule = fetch("Joiner.lua")
-if not runModule("Joiner.Init", function() return JoinerModule.Init(Shared, UI) end) then return end
+runModule("Joiner.Init", function() return JoinerModule.Init(Shared, UI) end)
 
 print("[Loader] Fetching Macro.lua...")
 local MacroModule = fetch("Macro.lua")
-if not runModule("Macro.Init", function() return MacroModule.Init(Shared, UI) end) then return end
+runModule("Macro.Init", function() return MacroModule.Init(Shared, UI) end)
 
 print("[Loader] Fetching Webhook.lua...")
 local WebhookModule = fetch("Webhook.lua")
-if not runModule("Webhook.Init", function() return WebhookModule.Init(Shared, UI) end) then return end
+runModule("Webhook.Init", function() return WebhookModule.Init(Shared, UI) end)
 
 print("☀️ Solar Hub loaded successfully (modular edition)!")
