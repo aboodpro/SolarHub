@@ -638,9 +638,7 @@ function Macro.Init(Shared, UI)
         return btn
     end
 
-    makeOptionToggle("Replay after stage", 6, "MacroReplay")
-    makeOptionToggle("Next after stage", 34, "MacroNext")
-    makeOptionToggle("Ignore Timing", 62, "MacroIgnoreTiming")
+    makeOptionToggle("Ignore Timing", 6, "MacroIgnoreTiming")
 
     local retryLabel = Instance.new("TextLabel")
     retryLabel.Size = UDim2.new(0.45, -8, 0, 24)
@@ -1066,13 +1064,13 @@ function Macro.Init(Shared, UI)
 
                         if not transitionSent then
                             transitionSent = true
-                            if Config.MacroReplay then
+                            if Config.AutoReplay then
                                 if fireSignal(77, "Restart") then
                                     macroStatusLabel.Text = "Replay requested..."
                                 else
                                     macroStatusLabel.Text = "Replay request failed..."
                                 end
-                            elseif Config.MacroNext then
+                            elseif Config.AutoNext then
                                 if fireSignal(77, "Next") then
                                     macroStatusLabel.Text = "Next requested..."
                                 else
