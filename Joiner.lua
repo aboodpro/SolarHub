@@ -542,7 +542,11 @@ function Joiner.Init(Shared, UI)
             end
 
             local function rememberCandidate(id, payload)
-                if type(id) ~= "number" or id <= 0 or id > 1000000 then
+                -- ReplicaSet sends the replica id as a string in the live client
+                -- event (for example: "79"), while FireServer accepts the
+                -- numeric replica id. Normalize it here.
+                id = tonumber(id)
+                if not id or id <= 0 or id > 1000000 then
                     return
                 end
 
@@ -619,12 +623,16 @@ function Joiner.Init(Shared, UI)
             -- Install listeners BEFORE PARTY_CREATE so a same-frame ReplicaSet
             -- cannot be missed.
             connections.set = replicaSet.OnClientEvent:Connect(function(replicaId, ...)
-                -- ReplicaSet's first argument is the replica ID. The live
-                -- capture showed e.g. 9382 | table | false.
-                if partyCreateSent and type(replicaId) == "number" then
-                    local payload = select(1, ...)
-                    rememberCandidate(replicaId, payload)
-                    return
+                -- ReplicaSet's first argument is the replica ID. In the live
+                -- capture it arrives as a STRING, e.g. "79". Normalize it
+                -- before using it as the StartGame replica id.
+                if partyCreateSent then
+                    local numericReplicaId = tonumber(replicaId)
+                    if numericReplicaId then
+                        local payload = select(1, ...)
+                        rememberCandidate(numericReplicaId, payload)
+                        return
+                    end
                 end
 
                 -- Keep baseline tracking for replicas that existed before the
