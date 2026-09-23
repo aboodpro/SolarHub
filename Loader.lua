@@ -63,14 +63,10 @@ end
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
-local CoreGui = game:GetService("CoreGui")
 
 local loadingGui
 local loadingStatus
-local loadingFill
-local loadingPercent
 local loadingSpinner
-local collectedCount = 0
 
 local function createLoadingScreen()
     local player = Players.LocalPlayer
@@ -167,42 +163,6 @@ local function createLoadingScreen()
     loadingStatus.TextSize = 12
     loadingStatus.Parent = card
 
-    local bar = Instance.new("Frame")
-    bar.AnchorPoint = Vector2.new(0.5, 0)
-    bar.Position = UDim2.new(0.5, 0, 0, 153)
-    bar.Size = UDim2.fromOffset(350, 8)
-    bar.BackgroundColor3 = Color3.fromRGB(31, 33, 43)
-    bar.BorderSizePixel = 0
-    bar.Parent = card
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
-
-    loadingFill = Instance.new("Frame")
-    loadingFill.Size = UDim2.new(0.04, 0, 1, 0)
-    loadingFill.BackgroundColor3 = Color3.fromRGB(255, 188, 58)
-    loadingFill.BorderSizePixel = 0
-    loadingFill.Parent = bar
-    Instance.new("UICorner", loadingFill).CornerRadius = UDim.new(1, 0)
-
-    local shine = Instance.new("UIGradient")
-    shine.Rotation = 0
-    shine.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 165, 45)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 220, 105)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 165, 45)),
-    })
-    shine.Parent = loadingFill
-
-    loadingPercent = Instance.new("TextLabel")
-    loadingPercent.AnchorPoint = Vector2.new(0.5, 0)
-    loadingPercent.Position = UDim2.new(0.5, 0, 0, 173)
-    loadingPercent.Size = UDim2.fromOffset(350, 22)
-    loadingPercent.BackgroundTransparency = 1
-    loadingPercent.Font = Enum.Font.GothamMedium
-    loadingPercent.Text = "4%"
-    loadingPercent.TextColor3 = Color3.fromRGB(255, 195, 75)
-    loadingPercent.TextSize = 11
-    loadingPercent.Parent = card
-
     loadingSpinner = Instance.new("TextLabel")
     loadingSpinner.AnchorPoint = Vector2.new(1, 0.5)
     loadingSpinner.Position = UDim2.new(1, -26, 0, 29)
@@ -227,25 +187,9 @@ local function createLoadingScreen()
     end)
 end
 
-local function setLoadingProgress(percent, status)
-    if not loadingGui or not loadingGui.Parent then
-        return
-    end
-
-    percent = math.clamp(tonumber(percent) or 0, 0, 100)
-
-    if loadingStatus then
+local function setLoadingStatus(status)
+    if loadingGui and loadingGui.Parent and loadingStatus then
         loadingStatus.Text = status or "Loading..."
-    end
-    if loadingPercent then
-        loadingPercent.Text = ("%d%%"):format(math.floor(percent + 0.5))
-    end
-    if loadingFill then
-        TweenService:Create(
-            loadingFill,
-            TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {Size = UDim2.new(percent / 100, 0, 1, 0)}
-        ):Play()
     end
 end
 
@@ -254,8 +198,8 @@ local function finishLoadingScreen()
         return
     end
 
-    setLoadingProgress(100, "SolarHub loaded")
-    task.wait(0.25)
+    setLoadingStatus("SolarHub ready")
+    task.wait(0.35)
 
     local background = loadingGui:FindFirstChildWhichIsA("Frame")
     if background then
@@ -274,193 +218,195 @@ end
 
 createLoadingScreen()
 
--------------------------------------------------
--- PREPARATION
--------------------------------------------------
-
-local PREP_MIN_SECONDS = 4
-local PREP_TIMEOUT_SECONDS = 25
-local prepStartedAt = os.clock()
-
-print("[Loader] Preparing SolarHub...")
-print("[Loader] Game: " .. allowedGame.Name)
-setLoadingProgress(5, "Preparing environment...")
-
--- Do not begin module loading immediately. Give Roblox a short preparation
--- window first, while also waiting for the important game-side objects.
-local function getRemoteEvents()
-    return game:GetService("ReplicatedStorage"):FindFirstChild("RemoteEvents")
-end
-
-local function getReplicaClientModule()
-    local sharedFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Shared")
-    local module = sharedFolder and sharedFolder:FindFirstChild("ReplicaClient")
-    if module and module:IsA("ModuleScript") then
-        return module
+task.spawn(function()
+    -------------------------------------------------
+    -- PREPARATION
+    -------------------------------------------------
+    
+    local PREP_MIN_SECONDS = 4
+    local PREP_TIMEOUT_SECONDS = 25
+    local prepStartedAt = os.clock()
+    
+    print("[Loader] Preparing SolarHub...")
+    print("[Loader] Game: " .. allowedGame.Name)
+    setLoadingStatus("Preparing environment...")
+    
+    -- Do not begin module loading immediately. Give Roblox a short preparation
+    -- window first, while also waiting for the important game-side objects.
+    local function getRemoteEvents()
+        return game:GetService("ReplicatedStorage"):FindFirstChild("RemoteEvents")
     end
-    return nil
-end
-
-local function isPrepared()
-    local loaded = true
-    pcall(function()
-        loaded = game:IsLoaded()
-    end)
-
-    local player = game:GetService("Players").LocalPlayer
-    local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
-    local remoteEvents = getRemoteEvents()
-    local replicaClient = getReplicaClientModule()
-
-    return loaded
-        and player ~= nil
-        and playerGui ~= nil
-        and remoteEvents ~= nil
-        and replicaClient ~= nil
-end
-
-while os.clock() - prepStartedAt < PREP_TIMEOUT_SECONDS do
-    local elapsed = os.clock() - prepStartedAt
-    local remaining = math.max(0, PREP_MIN_SECONDS - elapsed)
-
-    if elapsed >= PREP_MIN_SECONDS and isPrepared() then
-        break
-    end
-
-    task.wait(math.min(0.25, math.max(0.05, remaining)))
-end
-
-setLoadingProgress(20, "Collecting Solar modules...")
-print("[Loader] Preparation complete. Collecting modules...")
-
--------------------------------------------------
--- COLLECT
--------------------------------------------------
-
-local function fetchSource(fileName)
-    local ok, result = pcall(function()
-        local url = BASE_URL .. fileName .. "?solarhub_version=" .. CACHE_BUST
-        return game:HttpGet(url)
-    end)
-
-    if not ok then
-        error("[Loader] FAILED to fetch " .. fileName .. ": " .. tostring(result))
-    end
-
-    if type(result) ~= "string" or result == "" then
-        error("[Loader] FAILED to fetch " .. fileName .. ": empty response")
-    end
-
-    return result
-end
-
-local moduleSources = {}
-
-for _, fileName in ipairs({
-    "Shared.lua",
-    "UI.lua",
-    "Joiner.lua",
-    "Macro.lua",
-    "Webhook.lua",
-}) do
-    collectedCount += 1
-    setLoadingProgress(20 + collectedCount * 12, "Collecting " .. fileName .. "...")
-    print("[Loader] Collecting " .. fileName .. "...")
-    moduleSources[fileName] = fetchSource(fileName)
-end
-
--------------------------------------------------
--- COMPILE / PREPARE
--------------------------------------------------
-
-local function compile(fileName)
-    local source = moduleSources[fileName]
-    if not source then
-        error("[Loader] Missing collected source: " .. fileName)
-    end
-
-    local ok, chunk = pcall(loadstring, source)
-    if not ok or type(chunk) ~= "function" then
-        error("[Loader] COMPILE ERROR in " .. fileName .. ": " .. tostring(chunk))
-    end
-
-    return chunk
-end
-
-setLoadingProgress(82, "Compiling modules...")
-print("[Loader] Compiling modules...")
-
-local compiled = {
-    Shared = compile("Shared.lua"),
-    UI = compile("UI.lua"),
-    Joiner = compile("Joiner.lua"),
-    Macro = compile("Macro.lua"),
-    Webhook = compile("Webhook.lua"),
-}
-
-moduleSources = nil
-
--------------------------------------------------
--- LOAD / INIT
--------------------------------------------------
-
-local function runModule(label, fn)
-    local ok, result = xpcall(fn, function(err)
-        local msg = "[Loader] " .. label .. " ERROR: " .. tostring(err)
-        warn(msg)
-        return debug.traceback(tostring(err), 2)
-    end)
-
-    if not ok then
-        warn("[Loader] " .. label .. " failed; continuing where possible.")
+    
+    local function getReplicaClientModule()
+        local sharedFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Shared")
+        local module = sharedFolder and sharedFolder:FindFirstChild("ReplicaClient")
+        if module and module:IsA("ModuleScript") then
+            return module
+        end
         return nil
     end
-
-    return result
-end
-
-setLoadingProgress(88, "Loading Shared...")
-print("[Loader] Loading Shared...")
-local Shared = runModule("Shared", function()
-    return compiled.Shared()
-end)
-if not Shared then return end
-
-setLoadingProgress(91, "Building Solar UI...")
-print("[Loader] Loading UI...")
-local UI = runModule("UI.Init", function()
-    local UIModule = compiled.UI()
-    return UIModule.Init(Shared)
-end)
-if not UI then return end
-
-setLoadingProgress(94, "Connecting game systems...")
-print("[Loader] Loading Joiner...")
-runModule("Joiner.Init", function()
-    local JoinerModule = compiled.Joiner()
-    return JoinerModule.Init(Shared, UI)
-end)
-
--- Joiner gets a clean startup window before Macro is initialized.
--- Macro's recording hook is still lazy and is only installed when recording starts.
-task.delay(5, function()
-    setLoadingProgress(97, "Loading Macro engine...")
-    print("[Loader] Loading Macro...")
-    runModule("Macro.Init", function()
-        local MacroModule = compiled.Macro()
-        return MacroModule.Init(Shared, UI)
+    
+    local function isPrepared()
+        local loaded = true
+        pcall(function()
+            loaded = game:IsLoaded()
+        end)
+    
+        local player = game:GetService("Players").LocalPlayer
+        local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
+        local remoteEvents = getRemoteEvents()
+        local replicaClient = getReplicaClientModule()
+    
+        return loaded
+            and player ~= nil
+            and playerGui ~= nil
+            and remoteEvents ~= nil
+            and replicaClient ~= nil
+    end
+    
+    while os.clock() - prepStartedAt < PREP_TIMEOUT_SECONDS do
+        local elapsed = os.clock() - prepStartedAt
+        local remaining = math.max(0, PREP_MIN_SECONDS - elapsed)
+    
+        if elapsed >= PREP_MIN_SECONDS and isPrepared() then
+            break
+        end
+    
+        task.wait(math.min(0.25, math.max(0.05, remaining)))
+    end
+    
+    setLoadingStatus("Preparing Solar modules...")
+    print("[Loader] Preparation complete. Collecting modules...")
+    
+    -------------------------------------------------
+    -- COLLECT
+    -------------------------------------------------
+    
+    local function fetchSource(fileName)
+        local ok, result = pcall(function()
+            local url = BASE_URL .. fileName .. "?solarhub_version=" .. CACHE_BUST
+            return game:HttpGet(url)
+        end)
+    
+        if not ok then
+            error("[Loader] FAILED to fetch " .. fileName .. ": " .. tostring(result))
+        end
+    
+        if type(result) ~= "string" or result == "" then
+            error("[Loader] FAILED to fetch " .. fileName .. ": empty response")
+        end
+    
+        return result
+    end
+    
+    local moduleSources = {}
+    
+    for _, fileName in ipairs({
+        "Shared.lua",
+        "UI.lua",
+        "Joiner.lua",
+        "Macro.lua",
+        "Webhook.lua",
+    }) do
+        setLoadingStatus("Loading " .. fileName .. "...")
+        print("[Loader] Collecting " .. fileName .. "...")
+        moduleSources[fileName] = fetchSource(fileName)
+    end
+    
+    -------------------------------------------------
+    -- COMPILE / PREPARE
+    -------------------------------------------------
+    
+    local function compile(fileName)
+        local source = moduleSources[fileName]
+        if not source then
+            error("[Loader] Missing collected source: " .. fileName)
+        end
+    
+        local ok, chunk = pcall(loadstring, source)
+        if not ok or type(chunk) ~= "function" then
+            error("[Loader] COMPILE ERROR in " .. fileName .. ": " .. tostring(chunk))
+        end
+    
+        return chunk
+    end
+    
+    setLoadingStatus("Compiling Solar modules...")
+    print("[Loader] Compiling modules...")
+    
+    local compiled = {
+        Shared = compile("Shared.lua"),
+        UI = compile("UI.lua"),
+        Joiner = compile("Joiner.lua"),
+        Macro = compile("Macro.lua"),
+        Webhook = compile("Webhook.lua"),
+    }
+    
+    moduleSources = nil
+    
+    -------------------------------------------------
+    -- LOAD / INIT
+    -------------------------------------------------
+    
+    local function runModule(label, fn)
+        local ok, result = xpcall(fn, function(err)
+            local msg = "[Loader] " .. label .. " ERROR: " .. tostring(err)
+            warn(msg)
+            return debug.traceback(tostring(err), 2)
+        end)
+    
+        if not ok then
+            warn("[Loader] " .. label .. " failed; continuing where possible.")
+            return nil
+        end
+    
+        return result
+    end
+    
+    setLoadingStatus("Starting SolarHub...")
+    print("[Loader] Loading Shared...")
+    local Shared = runModule("Shared", function()
+        return compiled.Shared()
     end)
-
-    setLoadingProgress(100, "SolarHub ready")
-    task.spawn(finishLoadingScreen)
+    if not Shared then return end
+    
+    setLoadingStatus("Building interface...")
+    print("[Loader] Loading UI...")
+    local UI = runModule("UI.Init", function()
+        local UIModule = compiled.UI()
+        return UIModule.Init(Shared)
+    end)
+    if not UI then return end
+    
+    setLoadingStatus("Connecting game systems...")
+    print("[Loader] Loading Joiner...")
+    runModule("Joiner.Init", function()
+        local JoinerModule = compiled.Joiner()
+        return JoinerModule.Init(Shared, UI)
+    end)
+    
+    -- Joiner gets a clean startup window before Macro is initialized.
+    -- Macro's recording hook is still lazy and is only installed when recording starts.
+    task.delay(5, function()
+        setLoadingStatus("Loading Macro engine...")
+        print("[Loader] Loading Macro...")
+        runModule("Macro.Init", function()
+            local MacroModule = compiled.Macro()
+            return MacroModule.Init(Shared, UI)
+        end)
+    
+        setLoadingStatus("SolarHub ready")
+        task.spawn(finishLoadingScreen)
+    end)
+    
+    setLoadingStatus("Finalizing SolarHub...")
+    print("[Loader] Loading Webhook...")
+    runModule("Webhook.Init", function()
+        local WebhookModule = compiled.Webhook()
+        return WebhookModule.Init(Shared, UI)
+    end)
+    
+    print("☀️ Solar Hub loaded successfully (prepared modular edition)!")
+    -- The visual loader is closed by the Macro initialization callback.
+    
 end)
-
-setLoadingProgress(99, "Finalizing SolarHub...")
-print("[Loader] Loading Webhook...")
-runModule("Webhook.Init", function()
-    local WebhookModule = compiled.Webhook()
-    return WebhookModule.Init(Shared, UI)
-end)
-
-print("☀️ Solar Hub loaded successfully (prepared modular edition)!")
--- The visual loader is closed by the Macro initialization callback.
