@@ -317,6 +317,22 @@ end
 
 Shared.showSessionLogWindow = showSessionLogWindow
 
+-- Publish a direct executor command. Use both environments because different
+-- executors isolate getgenv() and _G differently.
+pcall(function()
+    _G.SolarHub_ShowLog = showSessionLogWindow
+end)
+
+pcall(function()
+    if type(getgenv) == "function" then
+        local env = getgenv()
+        env.SolarHub_ShowLog = showSessionLogWindow
+        env.SolarHub = env.SolarHub or {}
+        env.SolarHub.ShowLog = showSessionLogWindow
+        env.SolarHub.Shared = Shared
+    end
+end)
+
 local function showTopNotification(message, duration)
     duration = duration or 3
     logLine("[Notification] " .. message)
