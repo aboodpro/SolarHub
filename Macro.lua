@@ -415,7 +415,7 @@ function Macro.Init(Shared, UI)
     listLayout.Parent = macrosListContainer
 
     local dropdownOpen = true
-    hisHeader.MouseButton1Click:Connect(function()
+    hisHeader.Activated:Connect(function()
         dropdownOpen = not dropdownOpen
         macrosListContainer.Visible = dropdownOpen
         hisHeader.Text = dropdownOpen and "▼  Your macros" or "▶  Your macros"
@@ -474,7 +474,7 @@ function Macro.Init(Shared, UI)
             btn.Parent = macrosListContainer
             Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
 
-            btn.MouseButton1Click:Connect(function()
+            btn.Activated:Connect(function()
                 Config.CurrentMacroName = macroName
                 showTopNotification(string.format("Macro '%s' selected.", macroName), 3)
                 refreshMacroList()
@@ -485,7 +485,7 @@ function Macro.Init(Shared, UI)
 
     refreshMacroList()
 
-    deleteMacroBtn.MouseButton1Click:Connect(function()
+    deleteMacroBtn.Activated:Connect(function()
         if Config.CurrentMacroName == "" or not savedMacros[Config.CurrentMacroName] then
             showTopNotification("Select a macro first!", 2)
             return
@@ -498,7 +498,7 @@ function Macro.Init(Shared, UI)
         showTopNotification("Deleted macro '" .. deletedName .. "'", 3)
     end)
 
-    exportMacroBtn.MouseButton1Click:Connect(function()
+    exportMacroBtn.Activated:Connect(function()
         if Config.CurrentMacroName == "" or not savedMacros[Config.CurrentMacroName] then
             showTopNotification("Select a macro first!", 2)
             return
@@ -775,7 +775,7 @@ function Macro.Init(Shared, UI)
 
     Shared.runMacroOnce = runMacroOnce
 
-    createBtn.MouseButton1Click:Connect(function()
+    createBtn.Activated:Connect(function()
         local name = nameInput.Text -- تم التصحيح هنا وإزالة .Test الخاطئة
         if name ~= "" then
             if not savedMacros[name] then
@@ -793,7 +793,7 @@ function Macro.Init(Shared, UI)
         end
     end)
 
-    recordBtn.MouseButton1Click:Connect(function()
+    recordBtn.Activated:Connect(function()
         if Config.CurrentMacroName == "" then
             showTopNotification("Select a macro first!", 3)
             return
@@ -829,7 +829,7 @@ function Macro.Init(Shared, UI)
         end
     end)
 
-    playBtn.MouseButton1Click:Connect(function()
+    playBtn.Activated:Connect(function()
         if Config.CurrentMacroName == "" or not savedMacros[Config.CurrentMacroName] then
             showTopNotification("Select a valid macro first!", 3)
             return
