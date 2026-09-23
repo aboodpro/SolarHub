@@ -584,7 +584,7 @@ function Macro.Init(Shared, UI)
     Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 7)
 
     local macroOptionsSec = Instance.new("Frame")
-    macroOptionsSec.Size = UDim2.new(1, 0, 0, 118)
+    macroOptionsSec.Size = UDim2.new(1, 0, 0, 126)
     macroOptionsSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     macroOptionsSec.Parent = macroTab
     Instance.new("UICorner", macroOptionsSec).CornerRadius = UDim.new(0, 6)
@@ -630,7 +630,7 @@ function Macro.Init(Shared, UI)
     retryBox.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
     retryBox.TextColor3 = Color3.fromRGB(220, 220, 220)
     retryBox.Text = tostring(Config.MacroRetry)
-    retryBox.PlaceholderText = "0-10"
+    retryBox.PlaceholderText = "1-10"
     retryBox.ClearTextOnFocus = false
     retryBox.Font = Enum.Font.Gotham
     retryBox.TextSize = 10
@@ -638,7 +638,7 @@ function Macro.Init(Shared, UI)
     Instance.new("UICorner", retryBox).CornerRadius = UDim.new(0, 6)
 
     retryBox.FocusLost:Connect(function()
-        local value = math.clamp(math.floor(tonumber(retryBox.Text) or Config.MacroRetry or 2), 0, 10)
+        local value = math.clamp(math.floor(tonumber(retryBox.Text) or Config.MacroRetry or 2), 1, 10)
         Config.MacroRetry = value
         retryBox.Text = tostring(value)
     end)
@@ -750,6 +750,7 @@ function Macro.Init(Shared, UI)
     local function runMacroOnce(macroData)
         if isPlayingMacro then return false end
         isPlayingMacro = true
+        local playbackStartTime = os.clock()
         Shared.isPlayingMacro = true
 
         local lastTime = 0
@@ -757,7 +758,7 @@ function Macro.Init(Shared, UI)
         local playbackUnitReplicaIds = {}
         local totalActions = #macroData.actions
         local ignoreTiming = Config.MacroIgnoreTiming == true
-        local retryCount = math.clamp(tonumber(Config.MacroRetry) or 2, 0, 10)
+        local retryCount = math.clamp(tonumber(Config.MacroRetry) or 2, 1, 10)
 
         for actionIndex, action in ipairs(macroData.actions) do
             if not isPlayingMacro then break end
@@ -773,7 +774,7 @@ function Macro.Init(Shared, UI)
             -- resource readiness decides when it actually executes.
             if not ignoreTiming then
                 local targetTime = tonumber(action.time) or lastTime
-                local elapsed = os.clock() - recordStartTime
+                local elapsed = os.clock() - playbackStartTime
                 local remaining = targetTime - elapsed
                 while remaining > 0 and isPlayingMacro do
                     macroStatusLabel.Text = ("[%d/%d] Waiting %.1fs (%s)"):format(
@@ -830,7 +831,7 @@ function Macro.Init(Shared, UI)
 
             local success = false
             local lastError = "unknown"
-            local attemptTotal = retryCount + 1
+            local attemptTotal = retryCount
 
             for attempt = 1, attemptTotal do
                 if not isPlayingMacro then break end
@@ -1013,51 +1014,50 @@ function Macro.Init(Shared, UI)
                 end
 
                 local lastState = getCurrentGameState()
+                local cycleStarted = false
+                local transitionSent = false
                 local lastStartAttempt = 0
-                local lastTransitionAction = 0
-                local startedThisPlay = false
 
                 while Config.PlayMacro do
                     local state = updateMacroGameSession()
 
-                    if state == "InProgress" and lastState ~= "InProgress" then
-                        startedThisPlay = true
+                    if state == "InProgress" and not cycleStarted then
+                        cycleStarted = true
+                        transitionSent = false
                         macroStatusLabel.Text = "Starting macro..."
-                        runMacroOnce(macroData)
+                        task.spawn(function()
+                            runMacroOnce(macroData)
+                        end)
                     end
 
                     if lastState == "InProgress" and state ~= "InProgress" then
-                        startedThisPlay = false
+                        cycleStarted = false
 
-                        if Config.MacroReplay or Config.MacroNext then
-                            local actionNow = os.clock()
-                            if actionNow - lastTransitionAction >= 2 then
-                                lastTransitionAction = actionNow
-
-                                if Config.MacroReplay then
-                                    if fireSignal(77, "Restart") then
-                                        macroStatusLabel.Text = "Replay requested..."
-                                    else
-                                        macroStatusLabel.Text = "Replay request failed..."
-                                    end
-                                elseif Config.MacroNext then
-                                    if fireSignal(77, "Next") then
-                                        macroStatusLabel.Text = "Next requested..."
-                                    else
-                                        macroStatusLabel.Text = "Next request failed..."
-                                    end
+                        if not transitionSent then
+                            transitionSent = true
+                            if Config.MacroReplay then
+                                if fireSignal(77, "Restart") then
+                                    macroStatusLabel.Text = "Replay requested..."
+                                else
+                                    macroStatusLabel.Text = "Replay request failed..."
                                 end
+                            elseif Config.MacroNext then
+                                if fireSignal(77, "Next") then
+                                    macroStatusLabel.Text = "Next requested..."
+                                else
+                                    macroStatusLabel.Text = "Next request failed..."
+                                end
+                            else
+                                Config.PlayMacro = false
+                                playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+                                playBtn.Text = "▶ Play Macro"
+                                macroStatusLabel.Text = "Finished"
+                                break
                             end
-                        else
-                            Config.PlayMacro = false
-                            playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-                            playBtn.Text = "▶ Play Macro"
-                            macroStatusLabel.Text = "Finished"
-                            break
                         end
                     end
 
-                    if state ~= "InProgress" and (not startedThisPlay) then
+                    if state ~= "InProgress" and not transitionSent then
                         if os.clock() - lastStartAttempt >= 3 then
                             lastStartAttempt = os.clock()
                             if fireSignal(87, "Response", true) then
