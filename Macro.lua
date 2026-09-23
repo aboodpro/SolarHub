@@ -781,7 +781,7 @@ function Macro.Init(Shared, UI)
                         actionIndex, totalActions, remaining, actionLabel
                     )
                     task.wait(math.min(0.1, remaining))
-                    elapsed = os.clock() - recordStartTime
+                    elapsed = os.clock() - playbackStartTime
                     remaining = targetTime - elapsed
                 end
             end
