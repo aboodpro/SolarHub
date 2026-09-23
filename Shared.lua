@@ -132,6 +132,8 @@ local function serializeMacros(sourceTable)
                 yenBefore = action.yenBefore,
                 yenAfter = action.yenAfter,
                 missingYenAtRecord = action.missingYenAtRecord,
+                targetCFrame = action.targetCFrame and serializeArgValue(action.targetCFrame) or nil,
+                targetUnitID = action.targetUnitID,
             })
         end
         out[name] = { actions = actions }
@@ -174,6 +176,8 @@ local function deserializeMacroActions(actions)
             yenBefore = a.yenBefore,
             yenAfter = a.yenAfter,
             missingYenAtRecord = a.missingYenAtRecord,
+            targetCFrame = a.targetCFrame and deserializeArgValue(a.targetCFrame) or nil,
+            targetUnitID = a.targetUnitID,
         })
     end
     return out
