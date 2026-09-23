@@ -31,17 +31,38 @@ function Macro.Init(Shared, UI)
 
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local replicaClientModule = nil
-    pcall(function()
-        replicaClientModule = require(ReplicatedStorage.Shared.ReplicaClient)
-    end)
+
+    -- Resolve ReplicaClient lazily and defensively. Some game revisions/executors
+    -- expose the module later, so requiring it during module fetch can break the
+    -- entire Macro chunk before Init() has a chance to build the UI.
+    local function getReplicaClient()
+        if replicaClientModule then
+            return replicaClientModule
+        end
+
+        local ok, result = pcall(function()
+            local sharedFolder = ReplicatedStorage:FindFirstChild("Shared")
+            local module = sharedFolder and sharedFolder:FindFirstChild("ReplicaClient")
+            if not module or not module:IsA("ModuleScript") then
+                return nil
+            end
+            return require(module)
+        end)
+
+        if ok and result and type(result.FromId) == "function" then
+            replicaClientModule = result
+        end
+
+        return replicaClientModule
+    end
 
     local function getPlayerReplica()
-        if not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+        local replicaClient = getReplicaClient()\n        if not replicaClient or type(replicaClient.FromId) ~= "function" then
             return nil
         end
 
         for id = 1, 300 do
-            local ok, replica = pcall(replicaClientModule.FromId, id)
+            local ok, replica = pcall(replicaClient.FromId, id)
             if ok and replica and replica.Data and replica.Data.TotalUnitsPlaced ~= nil then
                 return replica
             end
@@ -62,12 +83,12 @@ function Macro.Init(Shared, UI)
             return out
         end
 
-        if not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+        local replicaClient = getReplicaClient()\n        if not replicaClient or type(replicaClient.FromId) ~= "function" then
             return out
         end
 
         for id = 1, 2000 do
-            local ok, replica = pcall(replicaClientModule.FromId, id)
+            local ok, replica = pcall(replicaClient.FromId, id)
             if ok and replica and replica.Data then
                 local data = replica.Data
                 if tostring(data.GamePlayerID or "") == playerId
@@ -92,11 +113,11 @@ function Macro.Init(Shared, UI)
 
     local function resolveRecordedPlacementOrder(recordedUnitId)
         local replicaId = tonumber(recordedUnitId)
-        if not replicaId or not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+        local replicaClient = getReplicaClient()\n        if not replicaId or not replicaClient or type(replicaClient.FromId) ~= "function" then
             return nil
         end
 
-        local ok, replica = pcall(replicaClientModule.FromId, replicaId)
+        local ok, replica = pcall(replicaClient.FromId, replicaId)
         if not ok or not replica or not replica.Data or typeof(replica.Data.CFrame) ~= "CFrame" then
             return nil
         end
@@ -156,34 +177,7 @@ function Macro.Init(Shared, UI)
         return bestId
     end
 
-    -- نظام فحص آمن لقاعدة بيانات الوحدات (99 وحدة)
-    task.spawn(function()
-        print("[Macro System] Starting Units scan (Safe Mode)...")
-        pcall(function()
-            local repStorage = game:GetService("ReplicatedStorage")
-            local actualList = {}
-
-            for _, descendant in ipairs(repStorage:GetDescendants()) do
-                if descendant:IsA("ModuleScript") then
-                    local name = descendant.Name:lower()
-                    local fullName = descendant:GetFullName()
-                    
-                    if not fullName:find("FusionPackage") and not fullName:find("Components") and not fullName:find("UI") and not fullName:find("SandboxControls") then
-                        if name == "units" or name == "unitdata" or name == "characters" or name == "unitconfig" then
-                            local ok, data = pcall(require, descendant)
-                            if ok and type(data) == "table" and next(data) ~= nil then
-                                actualList = data
-                                print("[Macro System] Loaded units data from: " .. descendant:GetFullName())
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-        end)
-    end)
-
-    local function findRemote(name, className)
+    -- Unit database scanning is intentionally deferred to playback/recording paths.\n    -- Never run a large ReplicatedStorage scan while loading Macro.lua.\n\n    local function findRemote(name, className)
         local repStorage = game:GetService("ReplicatedStorage")
         local found = repStorage:FindFirstChild(name, true)
         if found and (not className or found.ClassName == className) then
@@ -664,12 +658,12 @@ function Macro.Init(Shared, UI)
     local macroLastStartedSession = {}
 
     local function getCurrentGameState()
-        if not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+        local replicaClient = getReplicaClient()\n        if not replicaClient or type(replicaClient.FromId) ~= "function" then
             return nil
         end
 
         for id = 1, 200 do
-            local ok, replica = pcall(replicaClientModule.FromId, id)
+            local ok, replica = pcall(replicaClient.FromId, id)
             if ok and replica and replica.Data and replica.Data.CurrentGameState ~= nil then
                 return tostring(replica.Data.CurrentGameState)
             end
@@ -723,7 +717,7 @@ function Macro.Init(Shared, UI)
 
             local deadline = os.clock() + 1
             while os.clock() < deadline and isPlayingMacro do
-                local ok, replica = pcall(replicaClientModule.FromId, tonumber(targetId))
+                local ok, replica = pcall(getReplicaClient().FromId, tonumber(targetId))
                 if ok and replica and replica.Data then
                     if action.actionType == "UnitAutoUpgrade" then
                         -- Priority changes are difficult to verify generically.
