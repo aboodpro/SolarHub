@@ -6,6 +6,8 @@ function Macro.Init(Shared, UI)
     local savedMacros = Shared.savedMacros
     local saveMacrosToFile = Shared.saveMacrosToFile
     local showTopNotification = Shared.showTopNotification
+    local playerGui = Shared.playerGui
+    local logLine = Shared.logLine
     local HttpService = Shared.HttpService
     local captureVisiblePlacementCost = Shared.captureVisiblePlacementCost
     local getCurrentYen = Shared.getCurrentYen
@@ -104,7 +106,8 @@ function Macro.Init(Shared, UI)
         if not (button:IsA("TextButton") or button:IsA("ImageButton")) then
             return false
         end
-        if button:IsDescendantOf(playerGui:FindFirstChild("SolarHub") or Instance.new("Folder")) then
+        local hub = playerGui:FindFirstChild("SolarHub")
+        if hub and button:IsDescendantOf(hub) then
             return false
         end
         local name = button.Name:lower()
