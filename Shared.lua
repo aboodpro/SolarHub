@@ -384,6 +384,11 @@ local function isRemoteValid(action)
 end
 Shared.isRemoteValid = isRemoteValid
 
+local function isUnitModelValid(model)
+    return model ~= nil and model.Parent ~= nil and model:IsDescendantOf(workspace)
+end
+Shared.isUnitModelValid = isUnitModelValid
+
 local SelectInstanceAction = nil
 pcall(function()
     SelectInstanceAction = require(ReplicatedStorage.FusionPackage.Actions.SelectInstance)
