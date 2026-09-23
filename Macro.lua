@@ -248,19 +248,32 @@ function Macro.Init(Shared, UI)
         return foundCount
     end
 
-    -- Recording hook is optional. A missing/unsupported hook must NEVER
-    -- prevent the Macro UI from being created.
-    if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" and type(checkcaller) == "function" then
+    -- Install the recording hook only when the user actually starts recording.
+    -- This keeps Macro initialization from installing a global __namecall hook
+    -- before the Joiner has finished its own game-start work.
+    local recordingHookInstalled = false
+    local recordingHookAvailable =
+        type(hookmetamethod) == "function"
+        and type(getnamecallmethod) == "function"
+        and type(checkcaller) == "function"
+
+    local function installRecordingHook()
+        if recordingHookInstalled or not recordingHookAvailable then
+            return recordingHookInstalled
+        end
+
+        local ok = pcall(function()
             local oldNamecall
             oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 local method = getnamecallmethod()
                 local packedArgs = table.pack(...)
-                local isRemoteCall = (not checkcaller()) and (method == "FireServer" or method == "InvokeServer")
+                local isRemoteCall = (not checkcaller())
+                    and (method == "FireServer" or method == "InvokeServer")
                 local selfRef = self
-        
+
                 local yenBefore = nil
                 local replicaActionBefore = nil
-        
+
                 if isRemoteCall and Config.RecordMacro then
                     pcall(function()
                         if selfRef.Name == "ReplicaSignal" then
@@ -271,32 +284,32 @@ function Macro.Init(Shared, UI)
                         end
                     end)
                 end
-        
+
                 local result = table.pack(oldNamecall(self, ...))
-        
+
                 if isRemoteCall and Config.RecordMacro then
                     pendingRecordWorkers = pendingRecordWorkers + 1
                     task.spawn(function()
                         pcall(function()
                             local remoteNameLower = selfRef.Name:lower()
-                            
-                            if remoteNameLower:find("chat") or remoteNameLower:find("ping") or remoteNameLower:find("analytics") or remoteNameLower:find("mouse") or remoteNameLower:find("camera") then
+
+                            if remoteNameLower:find("chat")
+                                or remoteNameLower:find("ping")
+                                or remoteNameLower:find("analytics")
+                                or remoteNameLower:find("mouse")
+                                or remoteNameLower:find("camera") then
                                 return
                             end
-        
+
                             local actionDesc = nil
                             local isReplicaSignal = (selfRef.Name == "ReplicaSignal")
-        
+
                             if isReplicaSignal then
-                                -- ReplicaSignal exposes the real gameplay operation in args[2].
-                                -- Only these are meaningful Macro actions.
                                 actionDesc = getReplicaSignalAction(packedArgs)
-                            elseif remoteNameLower == "_updatenode" or remoteNameLower:find("networkevents") then
-                                -- Visual/node traffic such as PlacementVFX is not a Macro action.
+                            elseif remoteNameLower == "_updatenode"
+                                or remoteNameLower:find("networkevents") then
                                 actionDesc = nil
                             else
-                                -- Keep the generic fallback for other gameplay remotes, but do not
-                                -- infer an action from arbitrary argument strings like "PlacementVFX".
                                 if remoteNameLower:find("upgrade")
                                     or remoteNameLower:find("lvl")
                                     or remoteNameLower:find("level")
@@ -309,7 +322,7 @@ function Macro.Init(Shared, UI)
                                     actionDesc = "UnitPlace"
                                 end
                             end
-        
+
                             if actionDesc then
                                 local actionEntry = {
                                     time = os.clock() - recordStartTime,
@@ -320,44 +333,50 @@ function Macro.Init(Shared, UI)
                                     args = packedArgs,
                                     yenBefore = yenBefore,
                                 }
-        
-                                if isReplicaSignal and (actionDesc == "UnitUpgrade" or actionDesc == "UnitAutoUpgrade") then
+
+                                if isReplicaSignal
+                                    and (actionDesc == "UnitUpgrade"
+                                        or actionDesc == "UnitAutoUpgrade") then
                                     actionEntry.recordedUnitId = packedArgs[3]
                                     actionEntry.unitIdArgIndex = 3
                                 end
-        
+
                                 table.insert(recordedActions, actionEntry)
-                                print(("[Macro Record] #%d %s"):format(#recordedActions, actionDesc))
-        
+                                print(("[Macro Record] #%d %s"):format(
+                                    #recordedActions,
+                                    actionDesc
+                                ))
+
                                 if actionDesc == "UnitPlace" then
                                     recordPlacementCount = recordPlacementCount + 1
                                     actionEntry.placementOrder = recordPlacementCount
                                     actionEntry.recordedUnitId = packedArgs[3]
                                     recordedPlacementCFrames[recordPlacementCount] = packedArgs[4]
 
-                                    -- Keep a direct mapping from the game's recorded
-                                    -- unit ID to the order in which that unit was placed.
-                                    -- This is more reliable than resolving a Replica
-                                    -- immediately when the later upgrade is captured.
                                     if packedArgs[3] ~= nil then
-                                        recordedUnitToPlacementOrder[tostring(packedArgs[3])] = recordPlacementCount
+                                        recordedUnitToPlacementOrder[
+                                            tostring(packedArgs[3])
+                                        ] = recordPlacementCount
                                     end
-        
+
                                 elseif actionDesc == "UnitUpgrade" then
                                     actionEntry.linkedPlacementOrder =
                                         recordedUnitToPlacementOrder[tostring(packedArgs[3])]
                                         or resolveRecordedPlacementOrder(packedArgs[3])
-        
+
                                     pcall(function()
                                         local yenAfter = getCurrentYen()
                                         local deadline = os.clock() + 1
-                                        while yenBefore and yenAfter == yenBefore and os.clock() < deadline do
+
+                                        while yenBefore
+                                            and yenAfter == yenBefore
+                                            and os.clock() < deadline do
                                             task.wait(0.05)
                                             yenAfter = getCurrentYen()
                                         end
-        
+
                                         actionEntry.yenAfter = yenAfter
-        
+
                                         if yenBefore and yenAfter then
                                             local delta = yenBefore - yenAfter
                                             if delta > 0 then
@@ -365,13 +384,14 @@ function Macro.Init(Shared, UI)
                                                 actionEntry.missingYenAtRecord = 0
                                             end
                                         end
-        
+
                                         print(("[Macro Record] Upgrade cost=%s | Yen %s -> %s"):format(
                                             tostring(actionEntry.yenCost),
                                             tostring(yenBefore),
-                                            tostring(yenAfter)))
+                                            tostring(yenAfter)
+                                        ))
                                     end)
-        
+
                                 elseif actionDesc == "UnitAutoUpgrade" then
                                     actionEntry.linkedPlacementOrder =
                                         recordedUnitToPlacementOrder[tostring(packedArgs[3])]
@@ -379,13 +399,26 @@ function Macro.Init(Shared, UI)
                                 end
                             end
                         end)
+
                         pendingRecordWorkers = math.max(0, pendingRecordWorkers - 1)
                     end)
                 end
-        
+
                 return table.unpack(result, 1, result.n)
             end)
-    else
+
+            recordingHookInstalled = true
+        end)
+
+        if not ok then
+            recordingHookInstalled = false
+            warn("[Macro] Failed to install recording hook.")
+        end
+
+        return recordingHookInstalled
+    end
+
+    if not recordingHookAvailable then
         warn("[Macro] Recording hook unavailable; playback UI will still load.")
     end
 
@@ -1109,6 +1142,7 @@ function Macro.Init(Shared, UI)
         end
         Config.RecordMacro = not Config.RecordMacro
         if Config.RecordMacro then
+            installRecordingHook()
             recordedActions = {}
             recordStartTime = os.clock()
             recordPlacementCount = 0
