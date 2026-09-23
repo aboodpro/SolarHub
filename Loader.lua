@@ -1,26 +1,14 @@
--- Loader.lua - game-gated modular loader.
--- Only approved games/places are allowed to load SolarHub modules.
+-- Loader.lua - prepare first, then compile/fetch, then load SolarHub.
+-- The loader intentionally does NOT initialize SolarHub immediately after execution.
+-- It first waits for the Roblox client/game environment and required game objects
+-- to become available, then fetches/compiles all modules, and only after that
+-- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
--- Unique query per loader execution so GitHub/raw CDN and executor HTTP caches
--- cannot reuse an older SolarHub module after a GitHub update.
 local CACHE_BUST = tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
 
 -------------------------------------------------
 -- ALLOWED GAMES
---
--- Add another game later by adding another entry.
--- GameId = UniverseId.
--- PlaceIds limits the loader to specific places inside that universe.
---
--- Example:
--- {
---     Name = "Another Game",
---     GameId = 123456789,
---     PlaceIds = {
---         [987654321] = true,
---     },
--- },
 -------------------------------------------------
 
 local ALLOWED_GAMES = {
@@ -31,16 +19,6 @@ local ALLOWED_GAMES = {
             [84515722934860] = true,
         },
     },
-
-    -- Add future allowed games here:
-    --
-    -- {
-    --     Name = "Another Game",
-    --     GameId = 123456789,
-    --     PlaceIds = {
-    --         [987654321] = true,
-    --     },
-    -- },
 }
 
 -------------------------------------------------
@@ -52,9 +30,9 @@ local function getAllowedGame()
     local currentPlaceId = game.PlaceId
 
     for _, entry in ipairs(ALLOWED_GAMES) do
-        if currentGameId == entry.GameId or (entry.PlaceIds and entry.PlaceIds[currentPlaceId] == true) then
+        if currentGameId == entry.GameId
+            or (entry.PlaceIds and entry.PlaceIds[currentPlaceId] == true) then
 
-            -- If PlaceIds is omitted, the whole universe is allowed.
             if entry.PlaceIds == nil then
                 return entry
             end
@@ -79,82 +57,179 @@ if not allowedGame then
     return
 end
 
-print("[Loader] Approved game: " .. allowedGame.Name)
-print("[Loader] GameId: " .. tostring(game.GameId))
-print("[Loader] PlaceId: " .. tostring(game.PlaceId))
-
 -------------------------------------------------
--- MODULE FETCH
+-- PREPARATION
 -------------------------------------------------
 
-local function fetch(fileName)
+local PREP_MIN_SECONDS = 4
+local PREP_TIMEOUT_SECONDS = 25
+local prepStartedAt = os.clock()
+
+print("[Loader] Preparing SolarHub...")
+print("[Loader] Game: " .. allowedGame.Name)
+
+-- Do not begin module loading immediately. Give Roblox a short preparation
+-- window first, while also waiting for the important game-side objects.
+local function getRemoteEvents()
+    return game:GetService("ReplicatedStorage"):FindFirstChild("RemoteEvents")
+end
+
+local function getReplicaClientModule()
+    local sharedFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Shared")
+    local module = sharedFolder and sharedFolder:FindFirstChild("ReplicaClient")
+    if module and module:IsA("ModuleScript") then
+        return module
+    end
+    return nil
+end
+
+local function isPrepared()
+    local loaded = true
+    pcall(function()
+        loaded = game:IsLoaded()
+    end)
+
+    local player = game:GetService("Players").LocalPlayer
+    local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
+    local remoteEvents = getRemoteEvents()
+    local replicaClient = getReplicaClientModule()
+
+    return loaded
+        and player ~= nil
+        and playerGui ~= nil
+        and remoteEvents ~= nil
+        and replicaClient ~= nil
+end
+
+while os.clock() - prepStartedAt < PREP_TIMEOUT_SECONDS do
+    local elapsed = os.clock() - prepStartedAt
+    local remaining = math.max(0, PREP_MIN_SECONDS - elapsed)
+
+    if elapsed >= PREP_MIN_SECONDS and isPrepared() then
+        break
+    end
+
+    task.wait(math.min(0.25, math.max(0.05, remaining)))
+end
+
+print("[Loader] Preparation complete. Collecting modules...")
+
+-------------------------------------------------
+-- COLLECT
+-------------------------------------------------
+
+local function fetchSource(fileName)
     local ok, result = pcall(function()
         local url = BASE_URL .. fileName .. "?solarhub_version=" .. CACHE_BUST
-        return loadstring(game:HttpGet(url))()
+        return game:HttpGet(url)
     end)
 
     if not ok then
-        warn("[Loader] FAILED to load " .. fileName .. ": " .. tostring(result))
-        error("[Loader] Stopping - " .. fileName .. " could not be loaded.")
+        error("[Loader] FAILED to fetch " .. fileName .. ": " .. tostring(result))
+    end
+
+    if type(result) ~= "string" or result == "" then
+        error("[Loader] FAILED to fetch " .. fileName .. ": empty response")
     end
 
     return result
 end
 
+local moduleSources = {}
+
+for _, fileName in ipairs({
+    "Shared.lua",
+    "UI.lua",
+    "Joiner.lua",
+    "Macro.lua",
+    "Webhook.lua",
+}) do
+    print("[Loader] Collecting " .. fileName .. "...")
+    moduleSources[fileName] = fetchSource(fileName)
+end
+
 -------------------------------------------------
--- LOAD SOLARHUB
+-- COMPILE / PREPARE
 -------------------------------------------------
 
-print("[Loader] Fetching Shared.lua...")
-local Shared = fetch("Shared.lua")
+local function compile(fileName)
+    local source = moduleSources[fileName]
+    if not source then
+        error("[Loader] Missing collected source: " .. fileName)
+    end
+
+    local ok, chunk = pcall(loadstring, source)
+    if not ok or type(chunk) ~= "function" then
+        error("[Loader] COMPILE ERROR in " .. fileName .. ": " .. tostring(chunk))
+    end
+
+    return chunk
+end
+
+print("[Loader] Compiling modules...")
+
+local compiled = {
+    Shared = compile("Shared.lua"),
+    UI = compile("UI.lua"),
+    Joiner = compile("Joiner.lua"),
+    Macro = compile("Macro.lua"),
+    Webhook = compile("Webhook.lua"),
+}
+
+moduleSources = nil
+
+-------------------------------------------------
+-- LOAD / INIT
+-------------------------------------------------
 
 local function runModule(label, fn)
     local ok, result = xpcall(fn, function(err)
         local msg = "[Loader] " .. label .. " ERROR: " .. tostring(err)
         warn(msg)
-        return msg
-    end)
-    if not ok then
-        warn("[Loader] " .. label .. " failed; continuing where possible.")
-        return nil
-    end
-    return result
-end
-
-print("[Loader] Fetching UI.lua...")
-local UIModule = fetch("UI.lua")
-local UI = runModule("UI.Init", function() return UIModule.Init(Shared) end)
-if not UI then return end
-
-print("[Loader] Fetching Joiner.lua...")
-local JoinerModule = fetch("Joiner.lua")
-runModule("Joiner.Init", function() return JoinerModule.Init(Shared, UI) end)
-
-print("[Loader] Fetching Macro.lua...")
-local MacroModule = fetch("Macro.lua")
-
--- Macro initialization is deliberately delayed so the Joiner can finish its
--- lobby/Select Stage -> StartGame flow first. Macro itself does not need to
--- initialize before the player opens the Macro tab.
-task.delay(5, function()
-    local ok, result = xpcall(function()
-        return MacroModule.Init(Shared, UI)
-    end, function(err)
         return debug.traceback(tostring(err), 2)
     end)
 
     if not ok then
-        warn("[Loader] Macro.Init ERROR:\n" .. tostring(result))
-        if UI.setTabError then
-            UI.setTabError("Macro", "Macro failed to initialize:\n" .. tostring(result))
-        end
-    elseif UI.clearTabError then
-        UI.clearTabError("Macro")
+        warn("[Loader] " .. label .. " failed; continuing where possible.")
+        return nil
     end
+
+    return result
+end
+
+print("[Loader] Loading Shared...")
+local Shared = runModule("Shared", function()
+    return compiled.Shared()
+end)
+if not Shared then return end
+
+print("[Loader] Loading UI...")
+local UI = runModule("UI.Init", function()
+    local UIModule = compiled.UI()
+    return UIModule.Init(Shared)
+end)
+if not UI then return end
+
+print("[Loader] Loading Joiner...")
+runModule("Joiner.Init", function()
+    local JoinerModule = compiled.Joiner()
+    return JoinerModule.Init(Shared, UI)
 end)
 
-print("[Loader] Fetching Webhook.lua...")
-local WebhookModule = fetch("Webhook.lua")
-runModule("Webhook.Init", function() return WebhookModule.Init(Shared, UI) end)
+-- Joiner gets a clean startup window before Macro is initialized.
+-- Macro's recording hook is still lazy and is only installed when recording starts.
+task.delay(5, function()
+    print("[Loader] Loading Macro...")
+    runModule("Macro.Init", function()
+        local MacroModule = compiled.Macro()
+        return MacroModule.Init(Shared, UI)
+    end)
+end)
 
-print("☀️ Solar Hub loaded successfully (modular edition)!")
+print("[Loader] Loading Webhook...")
+runModule("Webhook.Init", function()
+    local WebhookModule = compiled.Webhook()
+    return WebhookModule.Init(Shared, UI)
+end)
+
+print("☀️ Solar Hub loaded successfully (prepared modular edition)!")
