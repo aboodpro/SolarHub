@@ -320,20 +320,70 @@ local ReplicaSignal = ReplicatedStorage
     :WaitForChild("RemoteEvents")
     :WaitForChild("ReplicaSignal")
 
-local QUEUE_REPLICA_ID = 1062
+local function queueDataMatches(data, queueData)
+    if type(data) ~= "table" or type(queueData) ~= "table" then
+        return false
+    end
+
+    local score = 0
+    for _, key in ipairs({"Gamemode", "MapName", "ActName", "Difficulty", "ChallengeType"}) do
+        local expected = queueData[key]
+        local actual = data[key]
+        if expected ~= nil and actual ~= nil and tostring(expected) == tostring(actual) then
+            score += 1
+        end
+    end
+
+    return score >= 1
+end
+
+local function findQueueReplica(queueData)
+    if not replicaClientModule or not replicaClientModule.FromId then
+        return nil
+    end
+
+    -- Queue replica IDs are server-assigned and can change between sessions.
+    -- Never hard-code the old 1062 ID.
+    for id = 1, 300 do
+        local ok, replica = pcall(replicaClientModule.FromId, id)
+        if ok and replica and replica.Data then
+            local data = replica.Data
+            local candidates = {
+                data.QueueData,
+                data.LocalQueueData,
+                data,
+            }
+
+            for _, candidate in ipairs(candidates) do
+                if queueDataMatches(candidate, queueData) then
+                    return id
+                end
+            end
+        end
+    end
+
+    return nil
+end
 
 local function startGameRemotely(queueData)
+    local queueReplicaId = findQueueReplica(queueData or {})
+
+    if not queueReplicaId then
+        logLine("[GameRemote] No active queue replica found")
+        return false
+    end
+
     local ok, err = pcall(function()
         if queueData then
-            ReplicaSignal:FireServer(QUEUE_REPLICA_ID, "SetQueueData", queueData)
+            ReplicaSignal:FireServer(queueReplicaId, "SetQueueData", queueData)
             task.wait(0.12)
         end
 
-        ReplicaSignal:FireServer(QUEUE_REPLICA_ID, "StartGame")
+        ReplicaSignal:FireServer(queueReplicaId, "StartGame")
     end)
 
     if ok then
-        logLine("[GameRemote] StartGame -> 1062 StartGame")
+        logLine(("[GameRemote] StartGame -> queue replica %d"):format(queueReplicaId))
         return true
     end
 
