@@ -584,6 +584,39 @@ function Macro.Init(Shared, UI)
     Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 4)
 
     local isPlayingMacro = false
+    local macroGameSession = 0
+    local macroGameWasInProgress = false
+    local macroLastStartedSession = {}
+
+    local function getCurrentGameState()
+        if not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+            return nil
+        end
+
+        for id = 1, 200 do
+            local ok, replica = pcall(replicaClientModule.FromId, id)
+            if ok and replica and replica.Data and replica.Data.CurrentGameState ~= nil then
+                return tostring(replica.Data.CurrentGameState)
+            end
+        end
+
+        return nil
+    end
+
+    local function updateMacroGameSession()
+        local state = getCurrentGameState()
+
+        if state == "InProgress" then
+            if not macroGameWasInProgress then
+                macroGameSession = macroGameSession + 1
+                macroGameWasInProgress = true
+            end
+        else
+            macroGameWasInProgress = false
+        end
+
+        return state
+    end
 
     local function runMacroOnce(macroData)
         if isPlayingMacro then return end
@@ -783,9 +816,22 @@ function Macro.Init(Shared, UI)
             playBtn.Text = "⏸ Playing..."
 
             task.spawn(function()
+                -- A macro is allowed to run once per game session.
+                -- The same macro can run again automatically when the game
+                -- leaves InProgress and later enters a new InProgress session.
                 while Config.PlayMacro do
-                    runMacroOnce(macroData)
-                    task.wait(2)
+                    local state = updateMacroGameSession()
+
+                    if state == "InProgress" and not isPlayingMacro then
+                        local macroName = Config.CurrentMacroName
+
+                        if macroName ~= "" and macroLastStartedSession[macroName] ~= macroGameSession then
+                            macroLastStartedSession[macroName] = macroGameSession
+                            runMacroOnce(macroData)
+                        end
+                    end
+
+                    task.wait(1)
                 end
             end)
         else
