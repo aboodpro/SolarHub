@@ -132,7 +132,21 @@ runModule("Joiner.Init", function() return JoinerModule.Init(Shared, UI) end)
 
 print("[Loader] Fetching Macro.lua...")
 local MacroModule = fetch("Macro.lua")
-runModule("Macro.Init", function() return MacroModule.Init(Shared, UI) end)
+do
+    local ok, result = xpcall(function()
+        return MacroModule.Init(Shared, UI)
+    end, function(err)
+        return debug.traceback(tostring(err), 2)
+    end)
+    if not ok then
+        warn("[Loader] Macro.Init ERROR:\n" .. tostring(result))
+        if UI.setTabError then
+            UI.setTabError("Macro", "Macro failed to initialize:\n" .. tostring(result))
+        end
+    elseif UI.clearTabError then
+        UI.clearTabError("Macro")
+    end
+end
 
 print("[Loader] Fetching Webhook.lua...")
 local WebhookModule = fetch("Webhook.lua")
