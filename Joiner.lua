@@ -422,20 +422,49 @@ function Joiner.Init(Shared, UI)
             if ok then
                 Shared.logLine("[Joiner] Story Select Stage -> PARTY_CREATE sent")
 
-                -- PARTY_CREATE only opens/creates the Select Stage party.
-                -- The actual Start button is a second request against the
-                -- newly-created queue replica. Give ReplicaClient a moment
-                -- to receive it, then send StartGame.
+                -- PARTY_CREATE opens Select Stage. The game's Start action is
+                -- handled by the menu's local/Fusion button, not ReplicaSignal.
+                -- Find the real interactive button by its visible text and
+                -- activate it once the party UI has finished mounting.
                 task.spawn(function()
-                    local deadline = os.clock() + 3
+                    local playerGui = Shared.playerGui
+                    local deadline = os.clock() + 8
+
                     while os.clock() < deadline do
-                        if Shared.startGameRemotely(queueData) then
-                            Shared.logLine("[Joiner] Story Select Stage -> StartGame sent")
+                        local activated = false
+
+                        for _, obj in ipairs(playerGui:GetDescendants()) do
+                            if (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Visible and obj.Active then
+                                local text = ""
+                                if obj:IsA("TextButton") then
+                                    text = tostring(obj.Text or "")
+                                else
+                                    local label = obj:FindFirstChildWhichIsA("TextLabel", true)
+                                    text = label and tostring(label.Text or "") or ""
+                                end
+
+                                if text:lower():match("^%s*start%s*$") then
+                                    local ok = pcall(function()
+                                        obj:Activate()
+                                    end)
+
+                                    if ok then
+                                        Shared.logLine("[Joiner] Story Select Stage -> Start button activated")
+                                        activated = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+
+                        if activated then
                             return
                         end
+
                         task.wait(0.2)
                     end
-                    Shared.logLine("[Joiner] Story Select Stage -> queue created, but StartGame replica was not found")
+
+                    Shared.logLine("[Joiner] Story Select Stage -> Start button not found")
                 end)
 
                 return true
