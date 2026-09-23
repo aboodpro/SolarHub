@@ -123,8 +123,6 @@ local function serializeMacros(sourceTable)
                 method = action.method,
                 args = argsCopy,
                 argsN = action.args.n or #action.args,
-                isUIReplay = action.isUIReplay,
-                uiClickButtonName = action.uiClickButtonName,
                 linkedPlacementOrder = action.linkedPlacementOrder,
                 recordedUnitId = action.recordedUnitId,
                 unitIdArgIndex = action.unitIdArgIndex,
@@ -167,8 +165,6 @@ local function deserializeMacroActions(actions)
             remoteClass = a.remoteClass,
             method = a.method,
             args = argsCopy,
-            isUIReplay = a.isUIReplay,
-            uiClickButtonName = a.uiClickButtonName,
             linkedPlacementOrder = a.linkedPlacementOrder,
             recordedUnitId = a.recordedUnitId,
             unitIdArgIndex = a.unitIdArgIndex,
@@ -254,45 +250,6 @@ local function showTopNotification(message, duration)
 end
 Shared.showTopNotification = showTopNotification
 
-local function getPrompt(modeName: string)
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") and (obj.Parent.Name == modeName or obj.ObjectText == modeName) then
-            return obj
-        end
-    end
-    return nil
-end
-Shared.getPrompt = getPrompt
-
-local function isInLobby()
-    return getPrompt("Story") ~= nil or getPrompt("Raid") ~= nil or getPrompt("Challenge") ~= nil or getPrompt("Expedition") ~= nil
-end
-Shared.isInLobby = isInLobby
-
-local function getBtn(desc)
-    if not desc then return nil end
-    if desc:IsA("TextButton") or desc:IsA("ImageButton") then return desc end
-    return desc:FindFirstAncestorWhichIsA("TextButton") or desc:FindFirstAncestorWhichIsA("ImageButton")
-end
-Shared.getBtn = getBtn
-
-local function clickElement(element)
-    local targetBtn = getBtn(element)
-    if not targetBtn then return end
-    pcall(function()
-        if firesignal then
-            firesignal(targetBtn.MouseButton1Click)
-            firesignal(targetBtn.MouseButton1Down)
-            firesignal(targetBtn.MouseButton1Up)
-            firesignal(targetBtn.Activated)
-        elseif getconnections then
-            for _, conn in ipairs(getconnections(targetBtn.MouseButton1Click)) do conn:Fire() end
-            for _, conn in ipairs(getconnections(targetBtn.Activated)) do conn:Fire() end
-        end
-    end)
-end
-Shared.clickElement = clickElement
-
 local replicaClientModule = nil
 pcall(function()
     replicaClientModule = require(ReplicatedStorage.Shared.ReplicaClient)
@@ -356,6 +313,36 @@ local function getCurrentYen()
     return nil
 end
 Shared.getCurrentYen = getCurrentYen
+-------------------------------------------------
+-- DIRECT GAME REMOTES
+-------------------------------------------------
+local ReplicaSignal = ReplicatedStorage
+    :WaitForChild("RemoteEvents")
+    :WaitForChild("ReplicaSignal")
+
+local QUEUE_REPLICA_ID = 1062
+
+local function startGameRemotely(queueData)
+    local ok, err = pcall(function()
+        if queueData then
+            ReplicaSignal:FireServer(QUEUE_REPLICA_ID, "SetQueueData", queueData)
+            task.wait(0.12)
+        end
+
+        ReplicaSignal:FireServer(QUEUE_REPLICA_ID, "StartGame")
+    end)
+
+    if ok then
+        logLine("[GameRemote] StartGame -> 1062 StartGame")
+        return true
+    end
+
+    logLine("[GameRemote] StartGame failed: " .. tostring(err))
+    return false
+end
+Shared.startGameRemotely = startGameRemotely
+
+
 
 local pendingNewModels = {}
 workspace.DescendantAdded:Connect(function(inst)
@@ -401,239 +388,6 @@ local function isRemoteValid(action)
     return action.remote ~= nil and action.remote.Parent ~= nil
 end
 Shared.isRemoteValid = isRemoteValid
-
-local SelectInstanceAction = nil
-pcall(function()
-    SelectInstanceAction = require(ReplicatedStorage.FusionPackage.Actions.SelectInstance)
-end)
-
-local function selectUnitModel(model)
-    if not model or not model.Parent then
-        showTopNotification("Upgrade failed: unit model not found", 3)
-        return false
-    end
-
-    if SelectInstanceAction then
-        local ok = pcall(function()
-            if typeof(SelectInstanceAction) == "function" then
-                SelectInstanceAction(model)
-            elseif typeof(SelectInstanceAction) == "table" then
-                if typeof(SelectInstanceAction.SelectInstance) == "function" then
-                    SelectInstanceAction.SelectInstance(model)
-                else
-                    (SelectInstanceAction :: any)(model)
-                end
-            end
-        end)
-        if ok then
-            logLine("[UnitSelect] Selected via SelectInstance action: " .. model:GetFullName())
-            return true
-        end
-    end
-
-    local detector = model:FindFirstChildWhichIsA("ClickDetector", true)
-    if detector and fireclickdetector then
-        local ok = pcall(function()
-            fireclickdetector(detector)
-        end)
-        if ok then
-            logLine("[UnitSelect] Selected via ClickDetector: " .. model:GetFullName())
-            return true
-        end
-    end
-
-    showTopNotification("Upgrade failed: could not select unit (no SelectInstance/ClickDetector)", 3)
-    return false
-end
-Shared.selectUnitModel = selectUnitModel
-
-local function findNestedText(instance)
-    for _, d in ipairs(instance:GetDescendants()) do
-        if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
-            return d.Text
-        end
-    end
-    return ""
-end
-Shared.findNestedText = findNestedText
-
-local function findYenCostNear(instance)
-    if not instance or not instance.Parent then return nil end
-    for _, d in ipairs(instance.Parent:GetDescendants()) do
-        if d:IsA("TextLabel") or d:IsA("TextButton") then
-            local text = d.Text
-            if text and text ~= "" then
-                local numStr = text:match("¥%s*([%d,]+)")
-                if numStr then
-                    local num = tonumber((numStr:gsub(",", "")))
-                    if num then return num end
-                end
-            end
-        end
-    end
-    return nil
-end
-Shared.findYenCostNear = findYenCostNear
-
-local function captureVisibleUpgradeCost()
-    for _, descendant in ipairs(playerGui:GetDescendants()) do
-        if descendant:IsA("TextButton") then
-            local nested = ""
-            local costFromSelf = nil
-            for _, d in ipairs(descendant:GetDescendants()) do
-                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
-                    if nested == "" then nested = d.Text end
-                    local numStr = d.Text:match("¥%s*([%d,]+)")
-                    if numStr and not costFromSelf then
-                        costFromSelf = tonumber((numStr:gsub(",", "")))
-                    end
-                end
-            end
-            if nested:lower():find("upgrade") then
-                local cost = costFromSelf or findYenCostNear(descendant)
-                logLine(("[YenCapture] Upgrade button found, nested='%s', cost=%s"):format(nested, tostring(cost)))
-                if cost then return cost end
-            end
-        end
-    end
-    logLine("[YenCapture] No 'upgrade' labeled button found while capturing cost")
-    return nil
-end
-Shared.captureVisibleUpgradeCost = captureVisibleUpgradeCost
-
-local function captureVisiblePlacementCost(slotNumber)
-    if not slotNumber then
-        logLine("[YenCapture] No slot number available for placement cost capture")
-        return nil
-    end
-    local ok, result = pcall(function()
-        local bottomHud = playerGui:FindFirstChild("BottomHUD")
-        if not bottomHud then
-            logLine("[YenCapture] BottomHUD not found")
-            return nil
-        end
-        local candidates = {}
-        for _, descendant in ipairs(bottomHud:GetDescendants()) do
-            if descendant:IsA("TextButton") then
-                local cost = nil
-                for _, d in ipairs(descendant:GetDescendants()) do
-                    if d:IsA("TextLabel") or d:IsA("TextButton") then
-                        local numStr = (d.Text or ""):match("¥%s*([%d,]+)")
-                        if numStr then
-                            cost = tonumber((numStr:gsub(",", "")))
-                            break
-                        end
-                    end
-                end
-                cost = cost or findYenCostNear(descendant)
-                if cost then
-                    table.insert(candidates, { instance = descendant, cost = cost })
-                end
-            end
-        end
-        logLine(("[YenCapture] Placement: found %d priced hotbar slots, looking for slot %d"):format(#candidates, slotNumber))
-        if candidates[slotNumber] then return candidates[slotNumber].cost end
-        return nil
-    end)
-    if ok then return result end
-    logLine("[YenCapture] Placement cost capture errored: " .. tostring(result))
-    return nil
-end
-Shared.captureVisiblePlacementCost = captureVisiblePlacementCost
-
-local function clickNamedUIButton(buttonName, isAutoUpgrade)
-    for _, descendant in ipairs(playerGui:GetDescendants()) do
-        if descendant.Name == buttonName and (descendant:IsA("TextButton") or descendant:IsA("ImageButton")) then
-            logLine("[ButtonClick] Method 1 (exact Name) matched: " .. descendant:GetFullName())
-            clickElement(descendant)
-            return true
-        end
-    end
-
-    for _, descendant in ipairs(playerGui:GetDescendants()) do
-        if descendant:IsA("TextButton") then
-            local text = descendant.Text:lower()
-            if text ~= "" then
-                if isAutoUpgrade then
-                    if text:find("auto") and text:find("upgrade") then
-                        logLine("[ButtonClick] Method 2 (own text) matched: " .. descendant:GetFullName())
-                        clickElement(descendant)
-                        return true
-                    end
-                else
-                    if text:find("upgrade") and not text:find("auto") then
-                        logLine("[ButtonClick] Method 2 (own text) matched: " .. descendant:GetFullName())
-                        clickElement(descendant)
-                        return true
-                    end
-                end
-            end
-        end
-    end
-
-    for _, descendant in ipairs(playerGui:GetDescendants()) do
-        if descendant:IsA("TextButton") then
-            local nested = findNestedText(descendant):lower()
-            if nested ~= "" then
-                if isAutoUpgrade then
-                    if nested:find("auto") and nested:find("upgrade") then
-                        logLine("[ButtonClick] Method 3 (nested text) matched: " .. descendant:GetFullName() .. " nested='" .. nested .. "'")
-                        clickElement(descendant)
-                        return true
-                    end
-                else
-                    if nested:find("upgrade") and not nested:find("auto") then
-                        logLine("[ButtonClick] Method 3 (nested text) matched: " .. descendant:GetFullName() .. " nested='" .. nested .. "'")
-                        clickElement(descendant)
-                        return true
-                    end
-                end
-            end
-        end
-    end
-
-    if isAutoUpgrade then
-        for _, descendant in ipairs(playerGui:GetDescendants()) do
-            if descendant:IsA("TextButton") then
-                local nested = findNestedText(descendant):lower()
-                if nested:find("upgrade") then
-                    logLine("[ButtonClick] Method 4 (auto fallback to manual upgrade) matched: " .. descendant:GetFullName())
-                    clickElement(descendant)
-                    return true
-                end
-            end
-        end
-    end
-
-    showTopNotification("Upgrade failed: button not found - check console for visible buttons dump", 4)
-    pcall(function()
-        logLine("========================================")
-        logLine("[UpgradeButtonSearch] Looking for: " .. buttonName .. (isAutoUpgrade and " (auto)" or " (manual)"))
-        local count = 0
-        for _, descendant in ipairs(playerGui:GetDescendants()) do
-            if descendant:IsA("TextButton") and descendant.Visible then
-                count = count + 1
-                local nested = findNestedText(descendant)
-                logLine(("  [%d] Name=%s | Text=%s | NestedText=%s | Path=%s"):format(
-                    count, descendant.Name, descendant.Text, nested, descendant:GetFullName()))
-            end
-        end
-        if count == 0 then
-            logLine("  (no visible TextButtons found at all - the unit selection UI may not have opened)")
-        end
-        logLine("========================================")
-    end)
-    return false
-end
-Shared.clickNamedUIButton = clickNamedUIButton
-
-local function performUnitUIUpgrade(model, buttonName)
-    if not selectUnitModel(model) then return false end
-    task.wait(0.5)
-    local isAutoUpgrade = buttonName == "AutoUpgradeButton"
-    return clickNamedUIButton(buttonName, isAutoUpgrade)
-end
-Shared.performUnitUIUpgrade = performUnitUIUpgrade
 
 Shared.isPlayingMacro = false
 Shared.runMacroOnce = nil
