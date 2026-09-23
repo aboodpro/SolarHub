@@ -106,32 +106,22 @@ local function serializeMacros(sourceTable)
     local out = {}
     for name, macro in pairs(sourceTable) do
         local actions = {}
-        for _, action in ipairs(macro.actions or {}) do
+        for _, action in ipairs(macro.actions) do
             local argsCopy = {}
-            local argCount = 0
-            if action.args then
-                argCount = action.args.n or #action.args
-                for i = 1, argCount do
-                    argsCopy[i] = serializeArgValue(action.args[i])
-                end
+            for i = 1, (action.args.n or #action.args) do
+                argsCopy[i] = serializeArgValue(action.args[i])
             end
-
             table.insert(actions, {
                 time = action.time,
                 actionType = action.actionType,
-                remotePath = action.remote and action.remote:GetFullName() or action.remotePath,
-                remoteName = action.remoteName,
-                remoteClass = action.remoteClass,
+                remotePath = action.remote and action.remote:GetFullName() or nil,
                 method = action.method,
                 args = argsCopy,
-                argsN = argCount,
+                argsN = action.args.n or #action.args,
                 isUIReplay = action.isUIReplay,
                 uiClickButtonName = action.uiClickButtonName,
                 linkedPlacementOrder = action.linkedPlacementOrder,
-                linkedUnitId = action.linkedUnitId,
                 yenCost = action.yenCost,
-                yenAtRecord = action.yenAtRecord,
-                missingYen = action.missingYen,
             })
         end
         out[name] = { actions = actions }
@@ -152,32 +142,22 @@ Shared.saveMacrosToFile = saveMacrosToFile
 
 local function deserializeMacroActions(actions)
     local out = {}
-    for _, a in ipairs(actions or {}) do
+    for _, a in ipairs(actions) do
         local argsCopy = {}
-        local argCount = a.argsN or (a.args and #a.args) or 0
-        if a.args then
-            for i = 1, argCount do
-                argsCopy[i] = deserializeArgValue(a.args[i])
-            end
+        for i = 1, (a.argsN or #a.args) do
+            argsCopy[i] = deserializeArgValue(a.args[i])
         end
-        argsCopy.n = argCount
-
+        argsCopy.n = a.argsN or #a.args
         table.insert(out, {
             time = a.time,
             actionType = a.actionType,
             remote = resolveInstanceByPath(a.remotePath),
-            remotePath = a.remotePath,
-            remoteName = a.remoteName,
-            remoteClass = a.remoteClass,
             method = a.method,
             args = argsCopy,
             isUIReplay = a.isUIReplay,
             uiClickButtonName = a.uiClickButtonName,
             linkedPlacementOrder = a.linkedPlacementOrder,
-            linkedUnitId = a.linkedUnitId,
             yenCost = a.yenCost,
-            yenAtRecord = a.yenAtRecord,
-            missingYen = a.missingYen,
         })
     end
     return out
@@ -404,11 +384,6 @@ local function isRemoteValid(action)
 end
 Shared.isRemoteValid = isRemoteValid
 
-local function isUnitModelValid(model)
-    return model ~= nil and model.Parent ~= nil and model:IsDescendantOf(workspace)
-end
-Shared.isUnitModelValid = isUnitModelValid
-
 local SelectInstanceAction = nil
 pcall(function()
     SelectInstanceAction = require(ReplicatedStorage.FusionPackage.Actions.SelectInstance)
@@ -483,81 +458,27 @@ end
 Shared.findYenCostNear = findYenCostNear
 
 local function captureVisibleUpgradeCost()
-    local exact = {}
-    local fallback = {}
-
-    local function readCostInside(button)
-        local selfText = button:IsA("TextButton") and (button.Text or "") or ""
-        if selfText ~= "" then
-            local numStr = selfText:match("¥%s*([%d,]+)")
-            if numStr then
-                return tonumber((numStr:gsub(",", ""))), selfText
-            end
-        end
-
-        local firstText = selfText
-        for _, d in ipairs(button:GetDescendants()) do
-            if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
-                if firstText == "" then firstText = d.Text end
-                local numStr = d.Text:match("¥%s*([%d,]+)")
-                if numStr then
-                    return tonumber((numStr:gsub(",", ""))), firstText
-                end
-            end
-        end
-        return nil, firstText
-    end
-
     for _, descendant in ipairs(playerGui:GetDescendants()) do
-        if descendant:IsA("TextButton") and descendant.Visible then
-            local selfText = descendant.Text or ""
-            local nestedText = findNestedText(descendant)
-            local combined = (selfText .. " " .. nestedText):lower()
-            local nameLower = descendant.Name:lower()
-
-            local hasNormalUpgradeText = combined:find("upgrade") and not combined:find("auto")
-            local exactName = nameLower == "upgradebutton" or nameLower == "upgrade"
-
-            if exactName or hasNormalUpgradeText then
-                local cost, innerText = readCostInside(descendant)
-
-                if not cost and descendant.Parent then
-                    for _, sibling in ipairs(descendant.Parent:GetDescendants()) do
-                        if sibling:IsA("TextLabel") or sibling:IsA("TextButton") then
-                            local numStr = (sibling.Text or ""):match("¥%s*([%d,]+)")
-                            if numStr then
-                                cost = tonumber((numStr:gsub(",", "")))
-                                break
-                            end
-                        end
+        if descendant:IsA("TextButton") then
+            local nested = ""
+            local costFromSelf = nil
+            for _, d in ipairs(descendant:GetDescendants()) do
+                if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
+                    if nested == "" then nested = d.Text end
+                    local numStr = d.Text:match("¥%s*([%d,]+)")
+                    if numStr and not costFromSelf then
+                        costFromSelf = tonumber((numStr:gsub(",", "")))
                     end
                 end
-
-                local entry = {
-                    button = descendant,
-                    cost = cost,
-                    text = selfText ~= "" and selfText or innerText,
-                }
-
-                if exactName then
-                    table.insert(exact, entry)
-                else
-                    table.insert(fallback, entry)
-                end
+            end
+            if nested:lower():find("upgrade") then
+                local cost = costFromSelf or findYenCostNear(descendant)
+                logLine(("[YenCapture] Upgrade button found, nested='%s', cost=%s"):format(nested, tostring(cost)))
+                if cost then return cost end
             end
         end
     end
-
-    local candidates = (#exact > 0) and exact or fallback
-    for _, entry in ipairs(candidates) do
-        logLine(("[YenCapture] Upgrade button '%s' text='%s' cost=%s"):format(
-            entry.button:GetFullName(), entry.text, tostring(entry.cost)))
-        if entry.cost then
-            return entry.cost
-        end
-    end
-
-    logLine("[YenCapture] No normal Upgrade button/cost found")
+    logLine("[YenCapture] No 'upgrade' labeled button found while capturing cost")
     return nil
 end
 Shared.captureVisibleUpgradeCost = captureVisibleUpgradeCost
