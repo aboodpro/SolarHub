@@ -92,32 +92,19 @@ local function createLoadingScreen()
     loadingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     loadingGui.Parent = parent
 
-    local background = Instance.new("Frame")
-    background.Size = UDim2.fromScale(1, 1)
-    background.BackgroundColor3 = Color3.fromRGB(7, 8, 12)
-    background.BorderSizePixel = 0
-    background.Parent = loadingGui
-
-    local overlay = Instance.new("Frame")
-    overlay.Size = UDim2.fromScale(1, 1)
-    overlay.BackgroundColor3 = Color3.fromRGB(11, 12, 18)
-    overlay.BackgroundTransparency = 0.18
-    overlay.BorderSizePixel = 0
-    overlay.Parent = background
-
     local card = Instance.new("Frame")
     card.AnchorPoint = Vector2.new(0.5, 0.5)
     card.Position = UDim2.fromScale(0.5, 0.5)
-    card.Size = UDim2.fromOffset(430, 245)
-    card.BackgroundColor3 = Color3.fromRGB(16, 18, 26)
+    card.Size = UDim2.fromOffset(586, 304)
+    card.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
     card.BorderSizePixel = 0
-    card.Parent = overlay
+    card.Parent = loadingGui
 
     Instance.new("UICorner", card).CornerRadius = UDim.new(0, 18)
 
     local stroke = Instance.new("UIStroke")
     stroke.Color = Color3.fromRGB(255, 190, 65)
-    stroke.Transparency = 0.72
+    stroke.Transparency = 0.78
     stroke.Thickness = 1.2
     stroke.Parent = card
 
@@ -132,7 +119,7 @@ local function createLoadingScreen()
 
     local icon = Instance.new("TextLabel")
     icon.AnchorPoint = Vector2.new(0.5, 0)
-    icon.Position = UDim2.new(0.5, 0, 0, 25)
+    icon.Position = UDim2.new(0.5, 0, 0, 72)
     icon.Size = UDim2.fromOffset(64, 48)
     icon.BackgroundTransparency = 1
     icon.Font = Enum.Font.GothamBlack
@@ -143,8 +130,8 @@ local function createLoadingScreen()
 
     local title = Instance.new("TextLabel")
     title.AnchorPoint = Vector2.new(0.5, 0)
-    title.Position = UDim2.new(0.5, 0, 0, 74)
-    title.Size = UDim2.fromOffset(360, 36)
+    title.Position = UDim2.new(0.5, 0, 0, 122)
+    title.Size = UDim2.fromOffset(420, 34)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.GothamBold
     title.Text = "Loading Solar..."
@@ -154,8 +141,8 @@ local function createLoadingScreen()
 
     loadingStatus = Instance.new("TextLabel")
     loadingStatus.AnchorPoint = Vector2.new(0.5, 0)
-    loadingStatus.Position = UDim2.new(0.5, 0, 0, 112)
-    loadingStatus.Size = UDim2.fromOffset(370, 24)
+    loadingStatus.Position = UDim2.new(0.5, 0, 0, 164)
+    loadingStatus.Size = UDim2.fromOffset(460, 24)
     loadingStatus.BackgroundTransparency = 1
     loadingStatus.Font = Enum.Font.Gotham
     loadingStatus.Text = "Preparing environment"
@@ -165,7 +152,7 @@ local function createLoadingScreen()
 
     loadingSpinner = Instance.new("TextLabel")
     loadingSpinner.AnchorPoint = Vector2.new(1, 0.5)
-    loadingSpinner.Position = UDim2.new(1, -26, 0, 29)
+    loadingSpinner.Position = UDim2.new(1, -24, 0, 24)
     loadingSpinner.Size = UDim2.fromOffset(28, 28)
     loadingSpinner.BackgroundTransparency = 1
     loadingSpinner.Font = Enum.Font.GothamBold
@@ -201,10 +188,10 @@ local function finishLoadingScreen()
     setLoadingStatus("SolarHub ready")
     task.wait(0.35)
 
-    local background = loadingGui:FindFirstChildWhichIsA("Frame")
-    if background then
+    local card = loadingGui:FindFirstChildWhichIsA("Frame")
+    if card then
         local tween = TweenService:Create(
-            background,
+            card,
             TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
             {BackgroundTransparency = 1}
         )
