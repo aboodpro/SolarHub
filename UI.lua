@@ -159,11 +159,22 @@ function UI.Init(Shared)
 
         local layout = Instance.new("UIListLayout")
         layout.Padding = UDim.new(0, 8)
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
         layout.Parent = tabContainer
 
         local pad = Instance.new("UIPadding")
-        pad.PaddingTop = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8); pad.PaddingRight = UDim.new(0, 8)
+        pad.PaddingTop = UDim.new(0, 8)
+        pad.PaddingLeft = UDim.new(0, 8)
+        pad.PaddingRight = UDim.new(0, 8)
+        pad.PaddingBottom = UDim.new(0, 8)
         pad.Parent = tabContainer
+
+        layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            tabContainer.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 16)
+        end)
+        task.defer(function()
+            tabContainer.CanvasSize = UDim2.fromOffset(0, layout.AbsoluteContentSize.Y + 16)
+        end)
 
         tabs[name] = tabContainer
 
@@ -181,10 +192,13 @@ function UI.Init(Shared)
 
         btn.Activated:Connect(function()
             for tName, container in pairs(tabs) do
-                container.Visible = (tName == name)
-                tabButtons[tName].BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+                local selected = (tName == name)
+                container.Visible = selected
+                tabButtons[tName].BackgroundColor3 = selected and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(24, 24, 30)
+                if selected then
+                    container.CanvasPosition = Vector2.zero
+                end
             end
-            btn.BackgroundColor3 = Color3.fromRGB(220, 140, 40)
         end)
     end
 
