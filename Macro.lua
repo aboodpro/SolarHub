@@ -40,6 +40,7 @@ function Macro.Init(Shared, UI)
     local recordStartTime = 0
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
+    local recordedUnitToPlacementOrder = {}
     local recordedPlacementCFrames = {}
     local pendingRecordWorkers = 0
     local scannedUnitsDatabase = {}
@@ -331,10 +332,21 @@ function Macro.Init(Shared, UI)
                                 if actionDesc == "UnitPlace" then
                                     recordPlacementCount = recordPlacementCount + 1
                                     actionEntry.placementOrder = recordPlacementCount
+                                    actionEntry.recordedUnitId = packedArgs[3]
                                     recordedPlacementCFrames[recordPlacementCount] = packedArgs[4]
+
+                                    -- Keep a direct mapping from the game's recorded
+                                    -- unit ID to the order in which that unit was placed.
+                                    -- This is more reliable than resolving a Replica
+                                    -- immediately when the later upgrade is captured.
+                                    if packedArgs[3] ~= nil then
+                                        recordedUnitToPlacementOrder[tostring(packedArgs[3])] = recordPlacementCount
+                                    end
         
                                 elseif actionDesc == "UnitUpgrade" then
-                                    actionEntry.linkedPlacementOrder = resolveRecordedPlacementOrder(packedArgs[3])
+                                    actionEntry.linkedPlacementOrder =
+                                        recordedUnitToPlacementOrder[tostring(packedArgs[3])]
+                                        or resolveRecordedPlacementOrder(packedArgs[3])
         
                                     pcall(function()
                                         local yenAfter = getCurrentYen()
@@ -361,7 +373,9 @@ function Macro.Init(Shared, UI)
                                     end)
         
                                 elseif actionDesc == "UnitAutoUpgrade" then
-                                    actionEntry.linkedPlacementOrder = resolveRecordedPlacementOrder(packedArgs[3])
+                                    actionEntry.linkedPlacementOrder =
+                                        recordedUnitToPlacementOrder[tostring(packedArgs[3])]
+                                        or resolveRecordedPlacementOrder(packedArgs[3])
                                 end
                             end
                         end)
@@ -613,7 +627,7 @@ function Macro.Init(Shared, UI)
     Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 7)
 
     local macroOptionsSec = Instance.new("Frame")
-    macroOptionsSec.Size = UDim2.new(1, 0, 0, 126)
+    macroOptionsSec.Size = UDim2.new(1, 0, 0, 132)
     macroOptionsSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     macroOptionsSec.Parent = macroTab
     Instance.new("UICorner", macroOptionsSec).CornerRadius = UDim.new(0, 6)
@@ -640,35 +654,113 @@ function Macro.Init(Shared, UI)
 
     makeOptionToggle("Ignore Timing", 6, "MacroIgnoreTiming")
 
+    -- Retry slider: 0 = retry disabled, 1-10 = additional retries.
     local retryLabel = Instance.new("TextLabel")
-    retryLabel.Size = UDim2.new(0.45, -8, 0, 24)
-    retryLabel.Position = UDim2.fromOffset(8, 90)
+    retryLabel.Size = UDim2.new(1, -16, 0, 18)
+    retryLabel.Position = UDim2.fromOffset(8, 88)
     retryLabel.BackgroundTransparency = 1
-    retryLabel.Text = "Retry:"
+    retryLabel.Text = "Retry: 0"
     retryLabel.Font = Enum.Font.GothamBold
     retryLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
     retryLabel.TextSize = 10
     retryLabel.TextXAlignment = Enum.TextXAlignment.Left
     retryLabel.Parent = macroOptionsSec
 
-    local retryBox = Instance.new("TextBox")
-    retryBox.Size = UDim2.new(0.55, -8, 0, 24)
-    retryBox.Position = UDim2.new(0.45, 0, 0, 90)
-    retryBox.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-    retryBox.TextColor3 = Color3.fromRGB(220, 220, 220)
-    retryBox.Text = tostring(Config.MacroRetry)
-    retryBox.PlaceholderText = "1-10"
-    retryBox.ClearTextOnFocus = false
-    retryBox.Font = Enum.Font.Gotham
-    retryBox.TextSize = 10
-    retryBox.Parent = macroOptionsSec
-    Instance.new("UICorner", retryBox).CornerRadius = UDim.new(0, 6)
+    local retryBar = Instance.new("Frame")
+    retryBar.Size = UDim2.new(1, -16, 0, 12)
+    retryBar.Position = UDim2.fromOffset(8, 110)
+    retryBar.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    retryBar.BorderSizePixel = 0
+    retryBar.Active = true
+    retryBar.Parent = macroOptionsSec
+    Instance.new("UICorner", retryBar).CornerRadius = UDim.new(0, 6)
 
-    retryBox.FocusLost:Connect(function()
-        local value = math.clamp(math.floor(tonumber(retryBox.Text) or Config.MacroRetry or 2), 1, 10)
-        Config.MacroRetry = value
-        retryBox.Text = tostring(value)
+    local retryFill = Instance.new("Frame")
+    retryFill.Size = UDim2.new(0, 0, 1, 0)
+    retryFill.Position = UDim2.fromOffset(0, 0)
+    retryFill.BackgroundColor3 = Color3.fromRGB(220, 140, 40)
+    retryFill.BorderSizePixel = 0
+    retryFill.Parent = retryBar
+    Instance.new("UICorner", retryFill).CornerRadius = UDim.new(0, 6)
+
+    local retryKnob = Instance.new("Frame")
+    retryKnob.Size = UDim2.fromOffset(18, 18)
+    retryKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+    retryKnob.Position = UDim2.new(0, 0, 0.5, 0)
+    retryKnob.BackgroundColor3 = Color3.fromRGB(245, 245, 245)
+    retryKnob.BorderSizePixel = 0
+    retryKnob.Active = true
+    retryKnob.Parent = retryBar
+    Instance.new("UICorner", retryKnob).CornerRadius = UDim.new(1, 0)
+
+    local retryDragging = false
+
+    local function setRetryFromX(x)
+        local width = retryBar.AbsoluteSize.X
+        if width <= 0 then return end
+
+        local alpha = math.clamp(
+            (x - retryBar.AbsolutePosition.X) / width,
+            0,
+            1
+        )
+
+        local value = math.floor(alpha * 10 + 0.5)
+        Config.MacroRetry = math.clamp(value, 0, 10)
+
+        local normalized = Config.MacroRetry / 10
+        retryFill.Size = UDim2.new(normalized, 0, 1, 0)
+        retryKnob.Position = UDim2.new(normalized, 0, 0.5, 0)
+        retryLabel.Text = ("Retry: %d"):format(Config.MacroRetry)
+    end
+
+    local function setRetryValue(value)
+        Config.MacroRetry = math.clamp(math.floor(tonumber(value) or 0), 0, 10)
+        local normalized = Config.MacroRetry / 10
+        retryFill.Size = UDim2.new(normalized, 0, 1, 0)
+        retryKnob.Position = UDim2.new(normalized, 0, 0.5, 0)
+        retryLabel.Text = ("Retry: %d"):format(Config.MacroRetry)
+    end
+
+    retryBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            retryDragging = true
+            setRetryFromX(input.Position.X)
+        end
     end)
+
+    retryKnob.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            retryDragging = true
+        end
+    end)
+
+    retryBar.InputChanged:Connect(function(input)
+        if retryDragging
+            and (input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch) then
+            setRetryFromX(input.Position.X)
+        end
+    end)
+
+    game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if retryDragging
+            and (input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch) then
+            setRetryFromX(input.Position.X)
+        end
+    end)
+
+    game:GetService("UserInputService").InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            retryDragging = false
+        end
+    end)
+
+    setRetryValue(Config.MacroRetry or 0)
 
     local isPlayingMacro = false
     local macroGameSession = 0
@@ -786,7 +878,7 @@ function Macro.Init(Shared, UI)
         local playbackUnitReplicaIds = {}
         local totalActions = #macroData.actions
         local ignoreTiming = Config.MacroIgnoreTiming == true
-        local retryCount = math.clamp(tonumber(Config.MacroRetry) or 2, 1, 10)
+        local retryCount = math.clamp(tonumber(Config.MacroRetry) or 0, 0, 10)
 
         for actionIndex, action in ipairs(macroData.actions) do
             if not isPlayingMacro then break end
@@ -859,7 +951,7 @@ function Macro.Init(Shared, UI)
 
             local success = false
             local lastError = "unknown"
-            local attemptTotal = retryCount
+            local attemptTotal = 1 + retryCount
 
             for attempt = 1, attemptTotal do
                 if not isPlayingMacro then break end
@@ -882,7 +974,43 @@ function Macro.Init(Shared, UI)
                         end
                     elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
+
+                        -- Resolve the recorded placement immediately, then
+                        -- give the newly placed unit a short grace period in
+                        -- case its replica arrives a little later.
                         local targetReplicaId = targetOrder and playbackUnitReplicaIds[targetOrder]
+
+                        if not targetReplicaId and targetOrder then
+                            local placementCFrame = recordedPlacementCFrames[targetOrder]
+                            local deadline = os.clock() + 2
+                            while not targetReplicaId and os.clock() < deadline and isPlayingMacro do
+                                local candidates = getOwnedGameUnitReplicas()
+                                local bestId = nil
+                                local bestDistance = math.huge
+
+                                for id, replica in pairs(candidates) do
+                                    if replica and replica.Data then
+                                        local cframe = replica.Data.CFrame
+                                        if typeof(placementCFrame) == "CFrame" and typeof(cframe) == "CFrame" then
+                                            local distance = (cframe.Position - placementCFrame.Position).Magnitude
+                                            if distance < bestDistance then
+                                                bestDistance = distance
+                                                bestId = id
+                                            end
+                                        end
+                                    end
+                                end
+
+                                if bestId and bestDistance <= 8 then
+                                    targetReplicaId = bestId
+                                    playbackUnitReplicaIds[targetOrder] = bestId
+                                    break
+                                end
+
+                                task.wait(0.08)
+                            end
+                        end
+
                         if targetReplicaId and action.unitIdArgIndex then
                             args[action.unitIdArgIndex] = tostring(targetReplicaId)
                             action._playbackReplicaId = targetReplicaId
@@ -901,11 +1029,13 @@ function Macro.Init(Shared, UI)
                         local fired, err = fireAction(remoteObj, tempAction)
                         if fired then
                             if action.actionType == "UnitPlace" then
-                                local newReplicaId = findNewUnitReplicaId(beforeIds, args[4], 3)
+                                local newReplicaId = findNewUnitReplicaId(beforeIds, args[4], 4)
                                 if newReplicaId then
                                     playbackUnitReplicaIds[action._playbackPlacementOrder] = newReplicaId
                                 else
-                                    lastError = "Placement could not be mapped"
+                                    -- Placement remote succeeded. Keep going and
+                                    -- let a later Upgrade resolve the replica by CFrame.
+                                    lastError = "Placement confirmed; replica mapping delayed"
                                 end
                             end
 
@@ -983,6 +1113,7 @@ function Macro.Init(Shared, UI)
             recordStartTime = os.clock()
             recordPlacementCount = 0
             recordUnitIdMap = {}
+            recordedUnitToPlacementOrder = {}
             recordedPlacementCFrames = {}
             pendingRecordWorkers = 0
             recordBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
