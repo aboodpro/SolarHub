@@ -10,6 +10,7 @@ function Macro.Init(Shared, UI)
     local captureVisiblePlacementCost = Shared.captureVisiblePlacementCost
     local getCurrentYen = Shared.getCurrentYen
     local waitForNewModel = Shared.waitForNewModel
+    local clearPendingModels = Shared.clearPendingModels
 
     local tabs = UI.tabs
     local macroTab = tabs["Macro"]
@@ -183,6 +184,12 @@ function Macro.Init(Shared, UI)
 
                             pcall(function()
                                 local yenAfter = getCurrentYen()
+                                local deadline = os.clock() + 1
+                                while yenBefore and yenAfter == yenBefore and os.clock() < deadline do
+                                    task.wait(0.05)
+                                    yenAfter = getCurrentYen()
+                                end
+
                                 actionEntry.yenAfter = yenAfter
 
                                 if yenBefore and yenAfter then
@@ -497,6 +504,7 @@ function Macro.Init(Shared, UI)
 
                     if action.actionType == "UnitPlace" then
                         playPlacementCount = playPlacementCount + 1
+                        pcall(clearPendingModels)
 
                         -- Watch for the server-spawned unit so later actions can use its
                         -- new session-specific Id instead of the recorded Id.
