@@ -171,24 +171,22 @@ function Macro.Init(Shared, UI)
                     end
 
                     local actionDesc = nil
-                    
+                    local isAutoUpgradeRemote = remoteNameLower:find("autoupgrade")
+                        or (remoteNameLower:find("auto") and remoteNameLower:find("upgrade"))
+
+                    -- Auto Upgrade is a UI/toggle action. Do not also record its Remote
+                    -- as a normal UnitUpgrade, otherwise one click becomes 2 actions.
+                    if isAutoUpgradeRemote then
+                        return
+                    end
+
                     if remoteNameLower:find("upgrade") or remoteNameLower:find("lvl") or remoteNameLower:find("level") or remoteNameLower:find("evolve") or remoteNameLower:find("rank") then
                         actionDesc = "UnitUpgrade"
-                    elseif remoteNameLower:find("place") or remoteNameLower:find("spawn") or remoteNameLower:find("deploy") or remoteNameLower:find("buy") then
+                    elseif remoteNameLower:find("place") or remoteNameLower:find("spawn") or remoteNameLower:find("deploy") then
                         actionDesc = "UnitPlace"
-                    else
-                        for _, arg in ipairs(packedArgs) do
-                            if typeof(arg) == "string" then
-                                local lowerArg = arg:lower()
-                                if lowerArg:find("upgrade") or lowerArg:find("lvl") then
-                                    actionDesc = "UnitUpgrade"
-                                    break
-                                elseif lowerArg:find("place") or lowerArg:find("spawn") or lowerArg:find("deploy") then
-                                    actionDesc = "UnitPlace"
-                                    break
-                                end
-                            end
-                        end
+                    elseif remoteNameLower:find("buy") and remoteNameLower:find("unit") then
+                        -- Only treat a BuyUnit-style remote as placement.
+                        actionDesc = "UnitPlace"
                     end
 
                     if actionDesc then
@@ -201,6 +199,8 @@ function Macro.Init(Shared, UI)
                             args = packedArgs
                         }
                         table.insert(recordedActions, actionEntry)
+                        logLine(("[Macro Record] #%d %s -> %s"):format(
+                            #recordedActions, actionDesc, selfRef.Name))
 
                         if actionDesc == "UnitPlace" then
                             local slotNum = nil
@@ -214,17 +214,28 @@ function Macro.Init(Shared, UI)
                             end)
                             
                             pcall(function()
-                                actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
-                            end)
-
-                            pcall(function()
                                 recordPlacementCount = recordPlacementCount + 1
                                 actionEntry.placementOrder = recordPlacementCount
                                 recordUnitIdMap[recordPlacementCount] = recordPlacementCount
                             end)
                         elseif actionDesc == "UnitUpgrade" then
+                            actionEntry.linkedPlacementOrder = recordPlacementCount
+
+                            -- Capture the actual upgrade cost here. This is metadata on the
+                            -- UnitUpgrade action, not a separate Macro action.
                             pcall(function()
-                                actionEntry.linkedPlacementOrder = recordPlacementCount
+                                local cost = Shared.captureVisibleUpgradeCost()
+                                local currentYen = getCurrentYen()
+                                actionEntry.yenCost = cost
+                                actionEntry.yenAtRecord = currentYen
+                                if cost and currentYen then
+                                    actionEntry.missingYen = math.max(0, cost - currentYen)
+                                end
+                                logLine(("[Macro Record] Upgrade #%d cost=%s currentYen=%s missing=%s"):format(
+                                    recordPlacementCount,
+                                    tostring(cost),
+                                    tostring(currentYen),
+                                    tostring(actionEntry.missingYen)))
                             end)
                         end
                     end
@@ -489,10 +500,12 @@ function Macro.Init(Shared, UI)
             local gap = action.time - lastTime
             local actionLabel = action.actionType or "Action"
 
-            if action.yenCost then
-                macroStatusLabel.Text = ("[%d/%d] Waiting for Yen (Cost: %d)..."):format(actionIndex, totalActions, action.yenCost)
+            if action.actionType == "UnitUpgrade" and action.yenCost then
                 while isPlayingMacro do
                     local yen = getCurrentYen()
+                    local missing = yen and math.max(0, action.yenCost - yen) or action.yenCost
+                    macroStatusLabel.Text = ("[%d/%d] Upgrade waiting | Yen %s/%s | %s missing"):format(
+                        actionIndex, totalActions, tostring(yen or "?"), tostring(action.yenCost), tostring(missing))
                     if yen and yen >= action.yenCost then
                         break
                     end
@@ -514,44 +527,59 @@ function Macro.Init(Shared, UI)
             end)
 
             pcall(function()
+                -- UI action: do not look for a Remote or args first.
+                if action.actionType == "UIAutoUpgrade" then
+                    local targetOrder = action.linkedPlacementOrder
+                    local targetModel = targetOrder and playbackUnitsByOrder[targetOrder]
+
+                    if targetModel and isUnitModelValid(targetModel) then
+                        local buttonName = action.uiClickButtonName or "AutoUpgradeButton"
+                        local currentYen = getCurrentYen()
+                        local missing = action.yenCost and currentYen and math.max(0, action.yenCost - currentYen) or 0
+                        macroStatusLabel.Text = ("Auto Upgrade -> Unit #%d | Yen %s/%s | %s missing"):format(
+                            targetOrder,
+                            tostring(currentYen),
+                            tostring(action.yenCost or "?"),
+                            tostring(missing))
+                        performUnitUIUpgrade(targetModel, buttonName)
+                        task.wait(0.3)
+                    else
+                        warn(("[Macro] Auto Upgrade target not found for placement #%s"):format(tostring(targetOrder)))
+                    end
+                    return
+                end
+
                 local remoteObj = findRemote(action.remoteName, action.remoteClass)
-                if remoteObj then
-                    local args = { table.unpack(action.args, 1, action.args.n) }
+                if not remoteObj then
+                    warn("[Macro] Remote not found: " .. tostring(action.remoteName))
+                    return
+                end
 
-                    if action.actionType == "UnitPlace" then
-                        playPlacementCount = playPlacementCount + 1
-                        clearPendingModels()
+                local args = { table.unpack(action.args or {}, 1, (action.args and action.args.n) or 0) }
 
-                        if action.method == "InvokeServer" then
-                            remoteObj:InvokeServer(table.unpack(args))
-                        else
-                            remoteObj:FireServer(table.unpack(args))
-                        end
+                if action.actionType == "UnitPlace" then
+                    playPlacementCount = playPlacementCount + 1
+                    clearPendingModels()
 
-                        -- Wait for the actual newly spawned unit so later upgrades/Auto Upgrade
-                        -- can target the new unit instead of the stale recorded instance/ID.
-                        local newUnit = waitForNewModel(3)
-                        if newUnit and isUnitModelValid(newUnit) then
-                            playbackUnitsByOrder[playPlacementCount] = newUnit
-                            print(("[Macro] Placement #%d mapped to %s"):format(
-                                playPlacementCount, newUnit:GetFullName()))
-                        else
-                            warn(("[Macro] Could not map placement #%d to a spawned unit."):format(playPlacementCount))
-                        end
-                        task.wait(0.2)
+                    if action.method == "InvokeServer" then
+                        remoteObj:InvokeServer(table.unpack(args))
+                    else
+                        remoteObj:FireServer(table.unpack(args))
+                    end
 
-                    elseif action.actionType == "UIAutoUpgrade" then
-                        local targetOrder = action.linkedPlacementOrder
-                        local targetModel = targetOrder and playbackUnitsByOrder[targetOrder]
-                        if targetModel and isUnitModelValid(targetModel) then
-                            local buttonName = action.uiClickButtonName or "AutoUpgradeButton"
-                            performUnitUIUpgrade(targetModel, buttonName)
-                            task.wait(0.3)
-                        else
-                            warn(("[Macro] Auto Upgrade target not found for placement #%s"):format(tostring(targetOrder)))
-                        end
+                    -- Wait for the actual newly spawned unit so later upgrades/Auto Upgrade
+                    -- can target the new unit instead of the stale recorded instance/ID.
+                    local newUnit = waitForNewModel(3)
+                    if newUnit and isUnitModelValid(newUnit) then
+                        playbackUnitsByOrder[playPlacementCount] = newUnit
+                        print(("[Macro] Placement #%d mapped to %s"):format(
+                            playPlacementCount, newUnit:GetFullName()))
+                    else
+                        warn(("[Macro] Could not map placement #%d to a spawned unit."):format(playPlacementCount))
+                    end
+                    task.wait(0.2)
 
-                    elseif action.actionType == "UnitUpgrade" then
+                elseif action.actionType == "UnitUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
                         local targetModel = targetOrder and playbackUnitsByOrder[targetOrder]
 
@@ -653,6 +681,7 @@ function Macro.Init(Shared, UI)
             recordStartTime = os.clock()
             recordPlacementCount = 0
             recordUnitIdMap = {}
+            pcall(clearPendingModels)
             recordBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
             recordBtn.Text = "🔴 Recording..."
             showTopNotification("Recording started...", 3)
