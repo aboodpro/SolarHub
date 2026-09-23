@@ -23,7 +23,7 @@ function UI.Init(Shared)
     toggleBtn.Parent = screenGui
     Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 8)
 
-    local mainFrame = Instance.new("Frame")
+    -- Responsive scale: the same UI/layout works on desktop and mobile.\n    -- All buttons use Activated so mouse and touch input share the same handlers.\n    local mainFrame = Instance.new("Frame")
     mainFrame.Size = UDim2.fromOffset(586, 304)
     mainFrame.Position = UDim2.new(0.5, -293, 0.5, -152)
     mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
@@ -179,7 +179,7 @@ function UI.Init(Shared)
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
         tabButtons[name] = btn
 
-        btn.MouseButton1Click:Connect(function()
+        btn.Activated:Connect(function()
             for tName, container in pairs(tabs) do
                 container.Visible = (tName == name)
                 tabButtons[tName].BackgroundColor3 = Color3.fromRGB(24, 24, 30)
@@ -251,7 +251,7 @@ function UI.Init(Shared)
         indicator.Parent = toggleBtnItem
         Instance.new("UICorner", indicator).CornerRadius = UDim.new(0, 4)
 
-        toggleBtnItem.MouseButton1Click:Connect(function()
+        toggleBtnItem.Activated:Connect(function()
             Config[configKey] = not Config[configKey]
             indicator.BackgroundColor3 = Config[configKey] and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(50, 50, 60)
         end)
@@ -336,14 +336,14 @@ function UI.Init(Shared)
             optBtn.TextXAlignment = Enum.TextXAlignment.Left
             optBtn.Parent = listFrame
 
-            optBtn.MouseButton1Click:Connect(function()
+            optBtn.Activated:Connect(function()
                 Config[configKey] = opt
                 valueLbl.Text = tostring(opt)
                 listFrame.Visible = false
             end)
         end
 
-        mainBtn.MouseButton1Click:Connect(function()
+        mainBtn.Activated:Connect(function()
             listFrame.Visible = not listFrame.Visible
         end)
     end
