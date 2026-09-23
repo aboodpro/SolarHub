@@ -464,14 +464,28 @@ function Joiner.Init(Shared, UI)
 
                                 if button and button.Visible and button.Active then
                                     local ok = pcall(function()
+                                        -- Try the normal Roblox activation first.
                                         button:Activate()
                                     end)
 
-                                    if ok then
-                                        Shared.logLine("[Joiner] Story Select Stage -> Start button activated")
-                                        activated = true
-                                        break
+                                    -- Some Fusion controls don't react to Activate()
+                                    -- when their input connection is wrapped. Executor
+                                    -- environments commonly expose firesignal(), which
+                                    -- directly invokes the button's connected signal.
+                                    if not ok or not activated then
+                                        pcall(function()
+                                            if typeof(firesignal) == "function" then
+                                                if button:IsA("TextButton") or button:IsA("ImageButton") then
+                                                    firesignal(button.Activated)
+                                                    firesignal(button.MouseButton1Click)
+                                                end
+                                            end
+                                        end)
                                     end
+
+                                    Shared.logLine("[Joiner] Story Select Stage -> Start control triggered")
+                                    activated = true
+                                    break
                                 end
                             end
                         end
