@@ -23,20 +23,12 @@ function UI.Init(Shared)
     toggleBtn.Parent = screenGui
     Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 8)
 
-    -- Desktop + mobile safe layout.\n    local mainFrame = Instance.new("Frame")
+    local mainFrame = Instance.new("Frame")
     mainFrame.Size = UDim2.fromOffset(586, 304)
-    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-    mainFrame.Visible = true
-    mainFrame.Active = true
-    mainFrame.ZIndex = 20
+    mainFrame.Position = UDim2.new(0.5, -293, 0.5, -152)
     mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
-
-    -- Do not scale the root panel. A UIScale on the root can make the whole
-    -- window effectively disappear on some executor/mobile GUI implementations.
-    toggleBtn.ZIndex = 100
 
     local mainCorner = Instance.new("UICorner")
     mainCorner.CornerRadius = UDim.new(0, 10)
@@ -101,10 +93,14 @@ function UI.Init(Shared)
         end
     end)
 
-    toggleBtn.Activated:Connect(function()
-        mainFrame.Visible = not mainFrame.Visible
-        if mainFrame.Visible then
-            mainFrame.ZIndex = 20
+    local clickPos
+    toggleBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then clickPos = input.Position end
+    end)
+    toggleBtn.InputEnded:Connect(function(input)
+        if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and clickPos then
+            if (input.Position - clickPos).Magnitude < 5 then mainFrame.Visible = not mainFrame.Visible end
+            clickPos = nil
         end
     end)
 
