@@ -1311,22 +1311,59 @@ function Macro.Init(Shared, UI)
             macroStatusLabel.Text = "Waiting for stage..."
 
             task.spawn(function()
-                local function getReplicaSignal()
-                    local folder = ReplicatedStorage:FindFirstChild("RemoteEvents")
-                    local remote = folder and folder:FindFirstChild("ReplicaSignal")
-                    if remote and remote:IsA("RemoteEvent") then
-                        return remote
-                    end
-                    return findRemote("ReplicaSignal", "RemoteEvent")
+                local function getReplicaSignal(waitSeconds)
+                    local deadline = os.clock() + (waitSeconds or 0)
+
+                    repeat
+                        local folder = ReplicatedStorage:FindFirstChild("RemoteEvents")
+                        local remote = folder and folder:FindFirstChild("ReplicaSignal")
+
+                        if remote and remote:IsA("RemoteEvent") then
+                            return remote
+                        end
+
+                        -- Avoid a broad workspace scan unless the exact game folder
+                        -- has not appeared yet.
+                        if not folder then
+                            local fallback = findRemote("ReplicaSignal", "RemoteEvent")
+                            if fallback then
+                                return fallback
+                            end
+                        end
+
+                        if (waitSeconds or 0) <= 0 then
+                            break
+                        end
+
+                        task.wait(0.1)
+                    until os.clock() >= deadline
+
+                    return nil
                 end
 
                 local function fireSignal(...)
                     local args = table.pack(...)
-                    local remote = getReplicaSignal()
-                    if not remote then return false end
-                    return pcall(function()
+                    -- Play Macro may be pressed while the game is still finishing
+                    -- its loading/replication phase. Wait for ReplicaSignal instead
+                    -- of losing the first Start request.
+                    local remote = getReplicaSignal(8)
+                    if not remote then
+                        return false
+                    end
+
+                    local ok = pcall(function()
                         remote:FireServer(table.unpack(args, 1, args.n))
                     end)
+
+                    if ok then
+                        Shared.logLine(
+                            "[Macro] ReplicaSignal -> " .. tostring(args[1])
+                                .. " " .. tostring(args[2])
+                                .. " " .. tostring(args[3])
+                        )
+                    end
+
+                    return ok
                 end
 
                 local lastState = getCurrentGameState()
@@ -1340,6 +1377,7 @@ function Macro.Init(Shared, UI)
                 -- First action of Play Macro: press the in-game Start/Vote button.
                 -- The macro actions themselves are blocked until the game actually
                 -- enters InProgress, so the Start request always happens first.
+                macroStatusLabel.Text = "Sending Start..."
                 local startOk = fireSignal(87, "Response", true)
                 startRequestedOnce = startOk
                 lastStartAttempt = os.clock()
