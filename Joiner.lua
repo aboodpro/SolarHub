@@ -261,6 +261,13 @@ function Joiner.Init(Shared, UI)
         return true
     end
 
+    Shared.logLine(("[Joiner] Defaults: %s / %s / %s | Matchmaking=%s"):format(
+        tostring(Config.SelectedMap),
+        tostring(Config.SelectedAct),
+        tostring(Config.SelectedDifficulty),
+        tostring(Config.StoryMatchMaking)
+    ))
+
     local function getCurrentGameState(): string?
         local _, _, state = Shared.getWaveInfo()
         return type(state) == "string" and state or nil
@@ -467,11 +474,16 @@ function Joiner.Init(Shared, UI)
                     runRemoteGameAutomation()
                 elseif not Config.DisableAutoJoiners then
                     if Config.AutoJoinStory and not joinRequested.Story then
+                        -- Story has two distinct flows in the game's UI:
+                        -- Matchmaking -> REQUEST_ENTER_MATCHMAKING
+                        -- Select Stage -> create/use the local queue, then StartGame.
                         if Config.StoryMatchMaking then
                             if enterMatchmakingRemotely("Story", "AutoJoinStory") then
                                 joinRequested.Story = true
                             end
                         else
+                            -- Select Stage cannot be started by guessing a Replica ID.
+                            -- Keep retrying until the game's queue replica exists.
                             if startSelectedModeRemotely("Story", "AutoJoinStory") then
                                 joinRequested.Story = true
                             end
