@@ -114,14 +114,21 @@ local function serializeMacros(sourceTable)
             table.insert(actions, {
                 time = action.time,
                 actionType = action.actionType,
-                remotePath = action.remote and action.remote:GetFullName() or nil,
+                remotePath = action.remote and action.remote:GetFullName() or action.remotePath,
+                remoteName = action.remoteName,
+                remoteClass = action.remoteClass,
                 method = action.method,
                 args = argsCopy,
                 argsN = action.args.n or #action.args,
                 isUIReplay = action.isUIReplay,
                 uiClickButtonName = action.uiClickButtonName,
                 linkedPlacementOrder = action.linkedPlacementOrder,
+                recordedUnitId = action.recordedUnitId,
+                unitIdArgIndex = action.unitIdArgIndex,
                 yenCost = action.yenCost,
+                yenBefore = action.yenBefore,
+                yenAfter = action.yenAfter,
+                missingYenAtRecord = action.missingYenAtRecord,
             })
         end
         out[name] = { actions = actions }
@@ -152,12 +159,20 @@ local function deserializeMacroActions(actions)
             time = a.time,
             actionType = a.actionType,
             remote = resolveInstanceByPath(a.remotePath),
+            remotePath = a.remotePath,
+            remoteName = a.remoteName,
+            remoteClass = a.remoteClass,
             method = a.method,
             args = argsCopy,
             isUIReplay = a.isUIReplay,
             uiClickButtonName = a.uiClickButtonName,
             linkedPlacementOrder = a.linkedPlacementOrder,
+            recordedUnitId = a.recordedUnitId,
+            unitIdArgIndex = a.unitIdArgIndex,
             yenCost = a.yenCost,
+            yenBefore = a.yenBefore,
+            yenAfter = a.yenAfter,
+            missingYenAtRecord = a.missingYenAtRecord,
         })
     end
     return out
