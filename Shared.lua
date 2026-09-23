@@ -119,22 +119,16 @@ local function serializeMacros(sourceTable)
             table.insert(actions, {
                 time = action.time,
                 actionType = action.actionType,
-
-                -- Keep both the old path format and the fields used by the player.
                 remotePath = action.remote and action.remote:GetFullName() or action.remotePath,
                 remoteName = action.remoteName,
                 remoteClass = action.remoteClass,
                 method = action.method,
-
                 args = argsCopy,
                 argsN = argCount,
-
                 isUIReplay = action.isUIReplay,
                 uiClickButtonName = action.uiClickButtonName,
                 linkedPlacementOrder = action.linkedPlacementOrder,
-
-                -- Yen belongs to the action that actually spends it (Upgrade),
-                -- not to the Placement action.
+                linkedUnitId = action.linkedUnitId,
                 yenCost = action.yenCost,
                 yenAtRecord = action.yenAtRecord,
                 missingYen = action.missingYen,
@@ -180,6 +174,7 @@ local function deserializeMacroActions(actions)
             isUIReplay = a.isUIReplay,
             uiClickButtonName = a.uiClickButtonName,
             linkedPlacementOrder = a.linkedPlacementOrder,
+            linkedUnitId = a.linkedUnitId,
             yenCost = a.yenCost,
             yenAtRecord = a.yenAtRecord,
             missingYen = a.missingYen,
@@ -492,7 +487,15 @@ local function captureVisibleUpgradeCost()
     local fallback = {}
 
     local function readCostInside(button)
-        local firstText = ""
+        local selfText = button:IsA("TextButton") and (button.Text or "") or ""
+        if selfText ~= "" then
+            local numStr = selfText:match("¥%s*([%d,]+)")
+            if numStr then
+                return tonumber((numStr:gsub(",", ""))), selfText
+            end
+        end
+
+        local firstText = selfText
         for _, d in ipairs(button:GetDescendants()) do
             if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
                 if firstText == "" then firstText = d.Text end
@@ -508,7 +511,7 @@ local function captureVisibleUpgradeCost()
     for _, descendant in ipairs(playerGui:GetDescendants()) do
         if descendant:IsA("TextButton") and descendant.Visible then
             local selfText = descendant.Text or ""
-            local nestedText = getNestedText and getNestedText(descendant) or ""
+            local nestedText = findNestedText(descendant)
             local combined = (selfText .. " " .. nestedText):lower()
             local nameLower = descendant.Name:lower()
 
@@ -519,7 +522,6 @@ local function captureVisibleUpgradeCost()
                 local cost, innerText = readCostInside(descendant)
 
                 if not cost and descendant.Parent then
-                    -- Narrow fallback: inspect the immediate UI container, not the whole PlayerGui.
                     for _, sibling in ipairs(descendant.Parent:GetDescendants()) do
                         if sibling:IsA("TextLabel") or sibling:IsA("TextButton") then
                             local numStr = (sibling.Text or ""):match("¥%s*([%d,]+)")
