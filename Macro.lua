@@ -1022,10 +1022,11 @@ function Macro.Init(Shared, UI)
                 end
 
                 local function fireSignal(...)
+                    local args = table.pack(...)
                     local remote = getReplicaSignal()
                     if not remote then return false end
                     return pcall(function()
-                        remote:FireServer(...)
+                        remote:FireServer(table.unpack(args, 1, args.n))
                     end)
                 end
 
