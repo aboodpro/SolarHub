@@ -422,20 +422,9 @@ function Joiner.Init(Shared, UI)
             if ok then
                 Shared.logLine("[Joiner] Story Select Stage -> PARTY_CREATE sent")
 
-                -- PARTY_CREATE opens Select Stage. The game's Start action is
-                -- handled by the menu's local/Fusion button, not ReplicaSignal.
-                -- Find the real interactive button by its visible text and
-                -- activate it once the party UI has finished mounting.
-                task.spawn(function()
-                    local playerGui = Shared.playerGui
-                    local deadline = os.clock() + 8
-
-                    while os.clock() < deadline do
-                        local activated = false
-
-                        -- Select Stage creates a party replica. StartGame is sent to
-                -- that replica; the old implementation searched only low replica
-                -- IDs, while live party replicas can use IDs such as 23313.
+                -- The party replica is created by PARTY_CREATE. Listen for its
+                -- server-assigned ReplicaSet/ReplicaCreate ID before sending
+                -- StartGame, so no game UI is required.
                 task.spawn(function()
                     local candidateIds = {}
                     local seen = {}
@@ -447,37 +436,34 @@ function Joiner.Init(Shared, UI)
                         end
                     end
 
-                    local function scanValue(value, depth)
-                        if depth > 3 or type(value) ~= "table" then
-                            return
-                        end
-                        for key, child in pairs(value) do
-                            if type(key) == "string" then
-                                local lower = key:lower()
-                                if lower == "id" or lower == "replicaid" or lower == "queueid" or lower == "replica_id" then
-                                    addCandidate(child)
-                                end
-                            end
-                            if type(child) == "table" then
-                                scanValue(child, depth + 1)
-                            end
-                        end
-                    end
-
-                    local replicaCreate = Shared.ReplicatedStorage.RemoteEvents:FindFirstChild("ReplicaCreate")
-                    local replicaSet = Shared.ReplicatedStorage.RemoteEvents:FindFirstChild("ReplicaSet")
+                    local replicaEvents = Shared.ReplicatedStorage:FindFirstChild("RemoteEvents")
+                    local replicaCreate = replicaEvents and replicaEvents:FindFirstChild("ReplicaCreate")
+                    local replicaSet = replicaEvents and replicaEvents:FindFirstChild("ReplicaSet")
 
                     local connections = {}
-
-                    if replicaCreate then
-                        connections.create = replicaCreate.OnClientEvent:Connect(function(data)
-                            scanValue(data, 0)
-                        end)
-                    end
 
                     if replicaSet then
                         connections.set = replicaSet.OnClientEvent:Connect(function(replicaId)
                             addCandidate(replicaId)
+                        end)
+                    end
+
+                    if replicaCreate then
+                        connections.create = replicaCreate.OnClientEvent:Connect(function(...)
+                            for _, value in ipairs({...}) do
+                                if type(value) == "number" then
+                                    addCandidate(value)
+                                elseif type(value) == "table" then
+                                    for key, child in pairs(value) do
+                                        if type(key) == "string" then
+                                            local lower = key:lower()
+                                            if lower == "id" or lower == "replicaid" or lower == "replica_id" or lower == "queueid" then
+                                                addCandidate(child)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
                         end)
                     end
 
@@ -486,11 +472,11 @@ function Joiner.Init(Shared, UI)
 
                     while os.clock() < deadline and not started do
                         for _, replicaId in ipairs(candidateIds) do
-                            local ok = pcall(function()
+                            local okStart = pcall(function()
                                 ReplicaSignal:FireServer(replicaId, "StartGame")
                             end)
 
-                            if ok then
+                            if okStart then
                                 Shared.logLine("[Joiner] Story Select Stage -> StartGame sent to replica " .. tostring(replicaId))
                                 started = true
                                 break
