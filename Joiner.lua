@@ -489,6 +489,7 @@ function Joiner.Init(Shared, UI)
             local partyCreateAccepted = false
             local pendingReplicaId = nil
             local startGameSent = false
+            local startGameConfirmed = false
 
             local function getBestCandidate()
                 local bestId = nil
@@ -504,7 +505,10 @@ function Joiner.Init(Shared, UI)
             end
 
             local function tryStartGame(id)
-                if not partyCreateSent or not partyCreateAccepted or startGameSent then
+                -- FireServer returning successfully only means the client
+                -- accepted the call. The real success signal is the game's
+                -- subsequent navigation/state transition.
+                if not partyCreateSent or startGameConfirmed then
                     return
                 end
 
@@ -513,25 +517,47 @@ function Joiner.Init(Shared, UI)
                     id = bestId
                     Shared.logLine("[Joiner] Story selected party replica " .. tostring(id) .. " (match score " .. tostring(bestScore) .. ")")
                 end
-                if type(id) ~= "number" or id <= 0 or id > 1000000 then
+
+                id = tonumber(id)
+                if not id or id <= 0 or id > 1000000 then
                     return
                 end
 
                 task.spawn(function()
-                    local delays = {0, 0.12, 0.30, 0.60, 1.00}
+                    local delays = {0, 0.15, 0.35, 0.70, 1.20, 2.00, 3.00, 4.50}
                     for attempt, delay in ipairs(delays) do
-                        if startGameSent then
+                        if startGameConfirmed then
                             return
                         end
-                        if delay > 0 then task.wait(delay) end
-                        local ok = pcall(function()
+
+                        if delay > 0 then
+                            task.wait(delay)
+                        end
+
+                        if startGameConfirmed then
+                            return
+                        end
+
+                        startGameSent = true
+
+                        local ok, err = pcall(function()
                             ReplicaSignal:FireServer(id, "StartGame")
                         end)
+
                         if ok then
                             Shared.logLine("[Joiner] Story StartGame attempt " .. tostring(attempt) .. " -> replica " .. tostring(id))
+                        else
+                            Shared.logLine("[Joiner] Story StartGame attempt " .. tostring(attempt) .. " failed: " .. tostring(err))
                         end
                     end
-                    startGameSent = true
+
+                    -- Do not permanently mark this as successful. If the
+                    -- transition was never observed, the watcher below can
+                    -- allow another candidate/attempt.
+                    if not startGameConfirmed then
+                        startGameSent = false
+                        Shared.logLine("[Joiner] Story StartGame was not confirmed by game transition")
+                    end
                 end)
             end
 
@@ -564,13 +590,12 @@ function Joiner.Init(Shared, UI)
                 -- PARTY_CREATE_RequestNODE -> ReplicaSet(newReplicaId) ->
                 -- ReplicaSignal:FireServer(newReplicaId, "StartGame")
                 if partyCreateSent then
-                    if partyCreateAccepted then
-                        task.delay(0.05, function()
-                            tryStartGame(id)
-                        end)
-                    else
-                        pendingReplicaId = id
-                    end
+                    -- The ReplicaSet itself is enough to attempt StartGame.
+                    -- The ReturnNODE ack is useful for logging, but must not
+                    -- block the actual StartGame request.
+                    task.delay(0.03, function()
+                        tryStartGame(id)
+                    end)
                 end
             end
 
@@ -607,15 +632,33 @@ function Joiner.Init(Shared, UI)
             -- The real client receives a PARTY_CREATE_ReturnNODE
             -- acknowledgement before/around the new ReplicaSet.
             connections.node = UpdateNode.OnClientEvent:Connect(function(action, requestId, sequenceId, success)
-                if partyCreateSent and action == "PARTY_CREATE_ReturnNODE" and success == true then
+                if not partyCreateSent then
+                    return
+                end
+
+                if action == "PARTY_CREATE_ReturnNODE" and success == true then
                     partyCreateAccepted = true
                     Shared.logLine("[Joiner] Story PARTY_CREATE accepted")
+
                     if pendingReplicaId then
                         local id = pendingReplicaId
                         pendingReplicaId = nil
-                        task.delay(0.05, function()
+                        task.delay(0.03, function()
                             tryStartGame(id)
                         end)
+                    end
+                end
+
+                -- This is the game's own confirmation that StartGame was
+                -- accepted and the player is leaving Select Stage.
+                if action == "END_UI_NAVIGATION" then
+                    local destination = tostring(requestId or "")
+                    local extra = tostring(sequenceId or "")
+
+                    if destination == "EnterGamemode" or extra == "EnterGamemode" then
+                        startGameConfirmed = true
+                        startGameSent = true
+                        Shared.logLine("[Joiner] Story StartGame CONFIRMED -> EnterGamemode")
                     end
                 end
             end)
@@ -683,7 +726,7 @@ function Joiner.Init(Shared, UI)
                 -- Wait only for the replica created by this PARTY_CREATE.
                 -- rememberCandidate() sends StartGame immediately when it sees it,
                 -- matching the game's single Start button sequence.
-                while os.clock() < deadline and not startGameSent do
+                while os.clock() < deadline and not startGameConfirmed do
                     task.wait(0.05)
                 end
 
@@ -691,9 +734,11 @@ function Joiner.Init(Shared, UI)
                     pcall(function() connection:Disconnect() end)
                 end
 
-                if not startGameSent then
-                    Shared.logLine("[Joiner] Story Select Stage -> no new party replica was observed within 10s")
+                if not startGameConfirmed then
+                    Shared.logLine("[Joiner] Story Select Stage -> StartGame was not confirmed within 10s")
                     joinRequested[modeName] = false
+                else
+                    Shared.logLine("[Joiner] Story Select Stage -> StartGame confirmed successfully")
                 end
             end)
 
