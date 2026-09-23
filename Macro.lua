@@ -11,6 +11,15 @@ function Macro.Init(Shared, UI)
 
     local tabs = UI.tabs
     local macroTab = tabs["Macro"]
+    if not macroTab then
+        warn("[Macro] Macro tab container is missing.")
+        return
+    end
+
+    -- Reset the tab whenever Macro initializes so a previous UI state cannot
+    -- leave the content scrolled outside the visible area.
+    macroTab.CanvasPosition = Vector2.zero
+    macroTab.Visible = true
 
     local recordedActions = {}
     local recordStartTime = 0
@@ -224,127 +233,133 @@ function Macro.Init(Shared, UI)
         return foundCount
     end
 
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        local packedArgs = table.pack(...)
-        local isRemoteCall = (not checkcaller()) and (method == "FireServer" or method == "InvokeServer")
-        local selfRef = self
-
-        local yenBefore = nil
-        local replicaActionBefore = nil
-
-        if isRemoteCall and Config.RecordMacro then
-            pcall(function()
-                if selfRef.Name == "ReplicaSignal" then
-                    replicaActionBefore = getReplicaSignalAction(packedArgs)
-                    if replicaActionBefore == "UnitUpgrade" then
-                        yenBefore = getCurrentYen()
-                    end
+    -- Recording hook is optional. A missing/unsupported hook must NEVER
+    -- prevent the Macro UI from being created.
+    if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" and type(checkcaller) == "function" then
+            local oldNamecall
+            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                local packedArgs = table.pack(...)
+                local isRemoteCall = (not checkcaller()) and (method == "FireServer" or method == "InvokeServer")
+                local selfRef = self
+        
+                local yenBefore = nil
+                local replicaActionBefore = nil
+        
+                if isRemoteCall and Config.RecordMacro then
+                    pcall(function()
+                        if selfRef.Name == "ReplicaSignal" then
+                            replicaActionBefore = getReplicaSignalAction(packedArgs)
+                            if replicaActionBefore == "UnitUpgrade" then
+                                yenBefore = getCurrentYen()
+                            end
+                        end
+                    end)
                 end
-            end)
-        end
-
-        local result = table.pack(oldNamecall(self, ...))
-
-        if isRemoteCall and Config.RecordMacro then
-            pendingRecordWorkers = pendingRecordWorkers + 1
-            task.spawn(function()
-                pcall(function()
-                    local remoteNameLower = selfRef.Name:lower()
-                    
-                    if remoteNameLower:find("chat") or remoteNameLower:find("ping") or remoteNameLower:find("analytics") or remoteNameLower:find("mouse") or remoteNameLower:find("camera") then
-                        return
-                    end
-
-                    local actionDesc = nil
-                    local isReplicaSignal = (selfRef.Name == "ReplicaSignal")
-
-                    if isReplicaSignal then
-                        -- ReplicaSignal exposes the real gameplay operation in args[2].
-                        -- Only these are meaningful Macro actions.
-                        actionDesc = getReplicaSignalAction(packedArgs)
-                    elseif remoteNameLower == "_updatenode" or remoteNameLower:find("networkevents") then
-                        -- Visual/node traffic such as PlacementVFX is not a Macro action.
-                        actionDesc = nil
-                    else
-                        -- Keep the generic fallback for other gameplay remotes, but do not
-                        -- infer an action from arbitrary argument strings like "PlacementVFX".
-                        if remoteNameLower:find("upgrade")
-                            or remoteNameLower:find("lvl")
-                            or remoteNameLower:find("level")
-                            or remoteNameLower:find("evolve")
-                            or remoteNameLower:find("rank") then
-                            actionDesc = "UnitUpgrade"
-                        elseif remoteNameLower:find("place")
-                            or remoteNameLower:find("spawn")
-                            or remoteNameLower:find("deploy") then
-                            actionDesc = "UnitPlace"
-                        end
-                    end
-
-                    if actionDesc then
-                        local actionEntry = {
-                            time = os.clock() - recordStartTime,
-                            actionType = actionDesc,
-                            remoteName = selfRef.Name,
-                            remoteClass = selfRef.ClassName,
-                            method = method,
-                            args = packedArgs,
-                            yenBefore = yenBefore,
-                        }
-
-                        if isReplicaSignal and (actionDesc == "UnitUpgrade" or actionDesc == "UnitAutoUpgrade") then
-                            actionEntry.recordedUnitId = packedArgs[3]
-                            actionEntry.unitIdArgIndex = 3
-                        end
-
-                        table.insert(recordedActions, actionEntry)
-                        print(("[Macro Record] #%d %s"):format(#recordedActions, actionDesc))
-
-                        if actionDesc == "UnitPlace" then
-                            recordPlacementCount = recordPlacementCount + 1
-                            actionEntry.placementOrder = recordPlacementCount
-                            recordedPlacementCFrames[recordPlacementCount] = packedArgs[4]
-
-                        elseif actionDesc == "UnitUpgrade" then
-                            actionEntry.linkedPlacementOrder = resolveRecordedPlacementOrder(packedArgs[3])
-
-                            pcall(function()
-                                local yenAfter = getCurrentYen()
-                                local deadline = os.clock() + 1
-                                while yenBefore and yenAfter == yenBefore and os.clock() < deadline do
-                                    task.wait(0.05)
-                                    yenAfter = getCurrentYen()
+        
+                local result = table.pack(oldNamecall(self, ...))
+        
+                if isRemoteCall and Config.RecordMacro then
+                    pendingRecordWorkers = pendingRecordWorkers + 1
+                    task.spawn(function()
+                        pcall(function()
+                            local remoteNameLower = selfRef.Name:lower()
+                            
+                            if remoteNameLower:find("chat") or remoteNameLower:find("ping") or remoteNameLower:find("analytics") or remoteNameLower:find("mouse") or remoteNameLower:find("camera") then
+                                return
+                            end
+        
+                            local actionDesc = nil
+                            local isReplicaSignal = (selfRef.Name == "ReplicaSignal")
+        
+                            if isReplicaSignal then
+                                -- ReplicaSignal exposes the real gameplay operation in args[2].
+                                -- Only these are meaningful Macro actions.
+                                actionDesc = getReplicaSignalAction(packedArgs)
+                            elseif remoteNameLower == "_updatenode" or remoteNameLower:find("networkevents") then
+                                -- Visual/node traffic such as PlacementVFX is not a Macro action.
+                                actionDesc = nil
+                            else
+                                -- Keep the generic fallback for other gameplay remotes, but do not
+                                -- infer an action from arbitrary argument strings like "PlacementVFX".
+                                if remoteNameLower:find("upgrade")
+                                    or remoteNameLower:find("lvl")
+                                    or remoteNameLower:find("level")
+                                    or remoteNameLower:find("evolve")
+                                    or remoteNameLower:find("rank") then
+                                    actionDesc = "UnitUpgrade"
+                                elseif remoteNameLower:find("place")
+                                    or remoteNameLower:find("spawn")
+                                    or remoteNameLower:find("deploy") then
+                                    actionDesc = "UnitPlace"
                                 end
-
-                                actionEntry.yenAfter = yenAfter
-
-                                if yenBefore and yenAfter then
-                                    local delta = yenBefore - yenAfter
-                                    if delta > 0 then
-                                        actionEntry.yenCost = delta
-                                        actionEntry.missingYenAtRecord = 0
-                                    end
+                            end
+        
+                            if actionDesc then
+                                local actionEntry = {
+                                    time = os.clock() - recordStartTime,
+                                    actionType = actionDesc,
+                                    remoteName = selfRef.Name,
+                                    remoteClass = selfRef.ClassName,
+                                    method = method,
+                                    args = packedArgs,
+                                    yenBefore = yenBefore,
+                                }
+        
+                                if isReplicaSignal and (actionDesc == "UnitUpgrade" or actionDesc == "UnitAutoUpgrade") then
+                                    actionEntry.recordedUnitId = packedArgs[3]
+                                    actionEntry.unitIdArgIndex = 3
                                 end
-
-                                print(("[Macro Record] Upgrade cost=%s | Yen %s -> %s"):format(
-                                    tostring(actionEntry.yenCost),
-                                    tostring(yenBefore),
-                                    tostring(yenAfter)))
-                            end)
-
-                        elseif actionDesc == "UnitAutoUpgrade" then
-                            actionEntry.linkedPlacementOrder = resolveRecordedPlacementOrder(packedArgs[3])
-                        end
-                    end
-                end)
-                pendingRecordWorkers = math.max(0, pendingRecordWorkers - 1)
+        
+                                table.insert(recordedActions, actionEntry)
+                                print(("[Macro Record] #%d %s"):format(#recordedActions, actionDesc))
+        
+                                if actionDesc == "UnitPlace" then
+                                    recordPlacementCount = recordPlacementCount + 1
+                                    actionEntry.placementOrder = recordPlacementCount
+                                    recordedPlacementCFrames[recordPlacementCount] = packedArgs[4]
+        
+                                elseif actionDesc == "UnitUpgrade" then
+                                    actionEntry.linkedPlacementOrder = resolveRecordedPlacementOrder(packedArgs[3])
+        
+                                    pcall(function()
+                                        local yenAfter = getCurrentYen()
+                                        local deadline = os.clock() + 1
+                                        while yenBefore and yenAfter == yenBefore and os.clock() < deadline do
+                                            task.wait(0.05)
+                                            yenAfter = getCurrentYen()
+                                        end
+        
+                                        actionEntry.yenAfter = yenAfter
+        
+                                        if yenBefore and yenAfter then
+                                            local delta = yenBefore - yenAfter
+                                            if delta > 0 then
+                                                actionEntry.yenCost = delta
+                                                actionEntry.missingYenAtRecord = 0
+                                            end
+                                        end
+        
+                                        print(("[Macro Record] Upgrade cost=%s | Yen %s -> %s"):format(
+                                            tostring(actionEntry.yenCost),
+                                            tostring(yenBefore),
+                                            tostring(yenAfter)))
+                                    end)
+        
+                                elseif actionDesc == "UnitAutoUpgrade" then
+                                    actionEntry.linkedPlacementOrder = resolveRecordedPlacementOrder(packedArgs[3])
+                                end
+                            end
+                        end)
+                        pendingRecordWorkers = math.max(0, pendingRecordWorkers - 1)
+                    end)
+                end
+        
+                return table.unpack(result, 1, result.n)
             end)
-        end
-
-        return table.unpack(result, 1, result.n)
-    end)
+    else
+        warn("[Macro] Recording hook unavailable; playback UI will still load.")
+    end
 
     local createSec = Instance.new("Frame")
     createSec.Size = UDim2.new(1, 0, 0, 100)
