@@ -383,20 +383,20 @@ function Macro.Init(Shared, UI)
     createBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     createBtn.TextSize = 10
     createBtn.Parent = createSec
-    Instance.new("UICorner", createBtn).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", createBtn).CornerRadius = UDim.new(0, 7)
 
     local hisMacrosSec = Instance.new("Frame")
     hisMacrosSec.Size = UDim2.new(1, 0, 0, 236)
     hisMacrosSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     hisMacrosSec.Parent = macroTab
-    Instance.new("UICorner", hisMacrosSec).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", hisMacrosSec).CornerRadius = UDim.new(0, 9)
 
     local hisHeader = Instance.new("TextButton")
     hisHeader.Size = UDim2.new(1, -16, 0, 26)
     hisHeader.Position = UDim2.fromOffset(8, 4)
     hisHeader.BackgroundTransparency = 1
     hisHeader.Font = Enum.Font.GothamBold
-    hisHeader.Text = "▼ His Macros (Toggle)"
+    hisHeader.Text = "▼  Your macros"
     hisHeader.TextColor3 = Color3.fromRGB(200, 200, 210)
     hisHeader.TextSize = 11
     hisHeader.TextXAlignment = Enum.TextXAlignment.Left
@@ -408,17 +408,17 @@ function Macro.Init(Shared, UI)
     macrosListContainer.BackgroundTransparency = 1
     macrosListContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
     macrosListContainer.ScrollBarThickness = 2
-    macrosListContainer.Visible = false
+    macrosListContainer.Visible = true
     macrosListContainer.Parent = hisMacrosSec
     local listLayout = Instance.new("UIListLayout")
     listLayout.Padding = UDim.new(0, 4)
     listLayout.Parent = macrosListContainer
 
-    local dropdownOpen = false
+    local dropdownOpen = true
     hisHeader.MouseButton1Click:Connect(function()
         dropdownOpen = not dropdownOpen
         macrosListContainer.Visible = dropdownOpen
-        hisHeader.Text = dropdownOpen and "▲ His Macros (Toggle)" or "▼ His Macros (Toggle)"
+        hisHeader.Text = dropdownOpen and "▼  Your macros" or "▶  Your macros"
     end)
 
     local deleteMacroBtn = Instance.new("TextButton")
@@ -430,7 +430,7 @@ function Macro.Init(Shared, UI)
     deleteMacroBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     deleteMacroBtn.TextSize = 10
     deleteMacroBtn.Parent = hisMacrosSec
-    Instance.new("UICorner", deleteMacroBtn).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", deleteMacroBtn).CornerRadius = UDim.new(0, 7)
 
     local exportMacroBtn = Instance.new("TextButton")
     exportMacroBtn.Size = UDim2.new(1, -16, 0, 26)
@@ -441,7 +441,7 @@ function Macro.Init(Shared, UI)
     exportMacroBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     exportMacroBtn.TextSize = 10
     exportMacroBtn.Parent = hisMacrosSec
-    Instance.new("UICorner", exportMacroBtn).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", exportMacroBtn).CornerRadius = UDim.new(0, 7)
 
     local importMacroBox = Instance.new("TextBox")
     importMacroBox.Size = UDim2.new(1, -16, 0, 26)
@@ -453,7 +453,7 @@ function Macro.Init(Shared, UI)
     importMacroBox.ClearTextOnFocus = false
     importMacroBox.TextSize = 9
     importMacroBox.Parent = hisMacrosSec
-    Instance.new("UICorner", importMacroBox).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", importMacroBox).CornerRadius = UDim.new(0, 7)
 
     local function refreshMacroList()
         for _, child in ipairs(macrosListContainer:GetChildren()) do
@@ -472,7 +472,7 @@ function Macro.Init(Shared, UI)
             btn.TextSize = 10
             btn.TextXAlignment = Enum.TextXAlignment.Left
             btn.Parent = macrosListContainer
-            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
 
             btn.MouseButton1Click:Connect(function()
                 Config.CurrentMacroName = macroName
@@ -557,7 +557,7 @@ function Macro.Init(Shared, UI)
     recordBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     recordBtn.TextSize = 10
     recordBtn.Parent = recordSec
-    Instance.new("UICorner", recordBtn).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", recordBtn).CornerRadius = UDim.new(0, 7)
 
     local playBtn = Instance.new("TextButton")
     playBtn.Size = UDim2.new(1, -16, 0, 32)
@@ -568,7 +568,7 @@ function Macro.Init(Shared, UI)
     playBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     playBtn.TextSize = 10
     playBtn.Parent = recordSec
-    Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 7)
 
     local macroStatusLabel = Instance.new("TextLabel")
     macroStatusLabel.Size = UDim2.new(1, -16, 0, 32)
@@ -581,7 +581,7 @@ function Macro.Init(Shared, UI)
     macroStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
     macroStatusLabel.TextWrapped = true
     macroStatusLabel.Parent = recordSec
-    Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 7)
 
     local isPlayingMacro = false
     local macroGameSession = 0
