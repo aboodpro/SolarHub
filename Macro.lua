@@ -1387,7 +1387,26 @@ function Macro.Init(Shared, UI)
 
                 local function fireSignal(...)
                     local args = table.pack(...)
-                    local remote = getReplicaSignal(3)
+
+                    -- For Start/Vote, use the exact ReplicaSignal instance
+                    -- that Joiner already uses successfully. This avoids
+                    -- resolving another/misplaced ReplicaSignal.
+                    if args[1] == 87 and args[2] == "Response" and args[3] == true
+                        and type(Shared.sendGameStart) == "function" then
+
+                        local ok, err = Shared.sendGameStart()
+
+                        if ok then
+                            Shared.logLine("[Macro] Game Start -> 87 Response true (Joiner ReplicaSignal)")
+                        else
+                            Shared.logLine("[Macro] Game Start ERROR -> " .. tostring(err))
+                        end
+
+                        return ok
+                    end
+
+                    local remote = Shared.ReplicaSignal
+                        or getReplicaSignal(3)
 
                     if not remote then
                         Shared.logLine("[Macro] ReplicaSignal NOT FOUND")
