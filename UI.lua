@@ -24,21 +24,15 @@ function UI.Init(Shared)
     Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 8)
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.fromOffset(640, 360)
-    mainFrame.Position = UDim2.new(0.5, -320, 0.5, -180)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(17, 17, 21)
+    mainFrame.Size = UDim2.fromOffset(586, 304)
+    mainFrame.Position = UDim2.new(0.5, -293, 0.5, -152)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
     local mainCorner = Instance.new("UICorner")
-    mainCorner.CornerRadius = UDim.new(0, 14)
+    mainCorner.CornerRadius = UDim.new(0, 10)
     mainCorner.Parent = mainFrame
-
-    local mainStroke = Instance.new("UIStroke")
-    mainStroke.Color = Color3.fromRGB(48, 48, 58)
-    mainStroke.Thickness = 1
-    mainStroke.Transparency = 0.15
-    mainStroke.Parent = mainFrame
 
     local function makeDraggable(frame, handle)
         handle = handle or frame
@@ -115,7 +109,7 @@ function UI.Init(Shared)
     topBar.BorderSizePixel = 0
     topBar.Parent = mainFrame
     local topCorner = Instance.new("UICorner")
-    topCorner.CornerRadius = UDim.new(0, 14)
+    topCorner.CornerRadius = UDim.new(0, 10)
     topCorner.Parent = topBar
 
     local brandLabel = Instance.new("TextLabel")
@@ -191,19 +185,12 @@ function UI.Init(Shared)
     local function createSection(tab, titleText, height: number?)
         local section = Instance.new("Frame")
         section.Size = UDim2.new(1, 0, 0, height or 90)
-        section.BackgroundColor3 = Color3.fromRGB(23, 23, 29)
+        section.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
         section.BorderSizePixel = 0
         section.Parent = tab
-
         local sectionCorner = Instance.new("UICorner")
-        sectionCorner.CornerRadius = UDim.new(0, 10)
+        sectionCorner.CornerRadius = UDim.new(0, 9)
         sectionCorner.Parent = section
-
-        local sectionStroke = Instance.new("UIStroke")
-        sectionStroke.Color = Color3.fromRGB(45, 45, 55)
-        sectionStroke.Thickness = 1
-        sectionStroke.Transparency = 0.35
-        sectionStroke.Parent = section
 
         local header = Instance.new("TextLabel")
         header.Size = UDim2.new(1, -16, 0, 26)
@@ -228,12 +215,6 @@ function UI.Init(Shared)
         local toggleCorner = Instance.new("UICorner")
         toggleCorner.CornerRadius = UDim.new(0, 8)
         toggleCorner.Parent = toggleBtnItem
-
-        local toggleStroke = Instance.new("UIStroke")
-        toggleStroke.Color = Color3.fromRGB(48, 48, 60)
-        toggleStroke.Thickness = 1
-        toggleStroke.Transparency = 0.45
-        toggleStroke.Parent = toggleBtnItem
 
         local titleLbl = Instance.new("TextLabel")
         titleLbl.Size = UDim2.new(1, -45, 0, 16)
@@ -298,12 +279,6 @@ function UI.Init(Shared)
         mainBtnCorner.CornerRadius = UDim.new(0, 8)
         mainBtnCorner.Parent = mainBtn
 
-        local mainBtnStroke = Instance.new("UIStroke")
-        mainBtnStroke.Color = Color3.fromRGB(48, 48, 60)
-        mainBtnStroke.Thickness = 1
-        mainBtnStroke.Transparency = 0.45
-        mainBtnStroke.Parent = mainBtn
-
         local valueLbl = Instance.new("TextLabel")
         valueLbl.Size = UDim2.new(1, -26, 1, 0)
         valueLbl.Position = UDim2.fromOffset(6, 0)
@@ -338,12 +313,6 @@ function UI.Init(Shared)
         local listCorner = Instance.new("UICorner")
         listCorner.CornerRadius = UDim.new(0, 8)
         listCorner.Parent = listFrame
-
-        local listStroke = Instance.new("UIStroke")
-        listStroke.Color = Color3.fromRGB(48, 48, 60)
-        listStroke.Thickness = 1
-        listStroke.Transparency = 0.25
-        listStroke.Parent = listFrame
 
         local listLayout = Instance.new("UIListLayout")
         listLayout.Parent = listFrame
@@ -408,12 +377,6 @@ function UI.Init(Shared)
         local inputCorner = Instance.new("UICorner")
         inputCorner.CornerRadius = UDim.new(0, 8)
         inputCorner.Parent = textBox
-
-        local inputStroke = Instance.new("UIStroke")
-        inputStroke.Color = Color3.fromRGB(48, 48, 60)
-        inputStroke.Thickness = 1
-        inputStroke.Transparency = 0.45
-        inputStroke.Parent = textBox
 
         textBox.FocusLost:Connect(function()
             Config[configKey] = textBox.Text
