@@ -642,15 +642,46 @@ function Macro.Init(Shared, UI)
             end
 
             if action.actionType == "UnitUpgrade" and effectiveYenCost then
+                local waitStartedAt = os.clock()
+                local lastSampleYen = getCurrentYen()
+                local lastSampleAt = os.clock()
+                local estimatedRate = nil
+
                 while isPlayingMacro do
                     local yen = getCurrentYen()
                     local missing = yen and math.max(0, effectiveYenCost - yen) or effectiveYenCost
-                    macroStatusLabel.Text = ("[%d/%d] Upgrade | Yen %s/%s | %s missing"):format(
-                        actionIndex, totalActions, tostring(yen or "?"), tostring(effectiveYenCost), tostring(missing))
+                    local now = os.clock()
+
+                    if yen and lastSampleYen and now - lastSampleAt >= 0.3 then
+                        local gained = yen - lastSampleYen
+                        local elapsed = now - lastSampleAt
+                        if gained > 0 and elapsed > 0 then
+                            estimatedRate = gained / elapsed
+                        end
+                        lastSampleYen = yen
+                        lastSampleAt = now
+                    end
+
+                    local etaText = "--"
+                    if missing <= 0 then
+                        etaText = "0.0s"
+                    elseif estimatedRate and estimatedRate > 0 then
+                        etaText = ("%.1fs"):format(missing / estimatedRate)
+                    end
+
+                    macroStatusLabel.Text = ("[%d/%d] Upgrade | Missing: %s Yen | Timer: %.1fs | ETA: %s"):format(
+                        actionIndex,
+                        totalActions,
+                        tostring(missing),
+                        now - waitStartedAt,
+                        etaText
+                    )
+
                     if yen and yen >= effectiveYenCost then
                         break
                     end
-                    task.wait(0.3)
+
+                    task.wait(0.25)
                 end
             elseif gap > 0 then
                 local remaining = gap
@@ -816,13 +847,19 @@ function Macro.Init(Shared, UI)
             playBtn.Text = "⏸ Playing..."
 
             task.spawn(function()
-                -- A macro is allowed to run once per game session.
-                -- The same macro can run again automatically when the game
-                -- leaves InProgress and later enters a new InProgress session.
+                -- Start the stage through the confirmed 1062 StartGame remote.
+                -- No in-game Start/Ready UI click is needed.
+                local lastStartAttempt = 0
+
                 while Config.PlayMacro do
                     local state = updateMacroGameSession()
 
-                    if state == "InProgress" and not isPlayingMacro then
+                    if state ~= "InProgress" and not isPlayingMacro then
+                        if os.clock() - lastStartAttempt >= 5 then
+                            lastStartAttempt = os.clock()
+                            Shared.startGameRemotely()
+                        end
+                    elseif state == "InProgress" and not isPlayingMacro then
                         local macroName = Config.CurrentMacroName
 
                         if macroName ~= "" and macroLastStartedSession[macroName] ~= macroGameSession then
