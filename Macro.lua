@@ -217,6 +217,42 @@ function Macro.Init(Shared, UI)
         return bestId
     end
 
+    local function waitForNewPlacementReplica(beforeIds, placementCFrame, timeoutSeconds)
+        local deadline = os.clock() + (timeoutSeconds or 12)
+
+        while os.clock() < deadline and isPlayingMacro == true do
+            local candidates = getOwnedGameUnitReplicas()
+            local bestId = nil
+            local bestDistance = math.huge
+
+            for id, replica in pairs(candidates) do
+                if not beforeIds[id] and replica and replica.Data then
+                    local cframe = replica.Data.CFrame
+                    local distance = math.huge
+
+                    if typeof(placementCFrame) == "CFrame"
+                        and typeof(cframe) == "CFrame" then
+                        distance = (cframe.Position - placementCFrame.Position).Magnitude
+                    end
+
+                    if distance < bestDistance then
+                        bestDistance = distance
+                        bestId = id
+                    end
+                end
+            end
+
+            if bestId and (typeof(placementCFrame) ~= "CFrame"
+                or bestDistance <= 12) then
+                return bestId
+            end
+
+            task.wait(0.1)
+        end
+
+        return nil
+    end
+
     -- Unit database scanning is intentionally deferred to playback/recording paths.
     -- Never run a large ReplicatedStorage scan while loading Macro.lua.
 
@@ -1125,7 +1161,14 @@ function Macro.Init(Shared, UI)
                         now - waitStartedAt, etaText
                     )
 
-                    if yen and yen >= effectiveYenCost then break end
+                    if yen == nil then
+                        -- If the Yen replica is temporarily unavailable, do not
+                        -- freeze the whole macro. The server remains the source
+                        -- of truth for whether the Upgrade is affordable.
+                        break
+                    end
+
+                    if yen >= effectiveYenCost then break end
                     task.wait(0.2)
                 end
             end
@@ -1159,43 +1202,76 @@ function Macro.Init(Shared, UI)
                         local targetOrder = action.linkedPlacementOrder
                         local targetReplicaId = targetOrder and playbackUnitReplicaIds[targetOrder]
 
-                        -- Recover the placement from the original recorded unit id
-                        -- for older macros that did not save linkedPlacementOrder.
+                        -- Older macros may not have linkedPlacementOrder. Recover
+                        -- the correct placement from recordedUnitId first.
                         local placementAction = targetOrder and placementActionsByOrder[targetOrder]
+
                         if not placementAction and action.recordedUnitId ~= nil then
                             placementAction = placementActionsByRecordedUnitId[
                                 tostring(action.recordedUnitId)
                             ]
+
+                            if placementAction then
+                                targetOrder = tonumber(placementAction.placementOrder)
+                            end
                         end
 
                         local placementCFrame = placementAction
                             and placementAction.args
                             and placementAction.args[4]
+
                         local targetCFrame = typeof(action.targetCFrame) == "CFrame"
                             and action.targetCFrame
                             or placementCFrame
-                        local targetUnitID = action.targetUnitID and tostring(action.targetUnitID) or nil
 
-                        targetReplicaId = resolvePlaybackUnitReplicaId(
-                            targetCFrame,
-                            targetUnitID,
-                            15,
-                            targetReplicaId
-                        )
+                        local targetUnitID = action.targetUnitID
+                            and tostring(action.targetUnitID)
+                            or nil
 
-                        if targetReplicaId and targetOrder then
-                            playbackUnitReplicaIds[targetOrder] = targetReplicaId
+                        -- If targetOrder is still missing, use the closest recorded
+                        -- placement to the saved target CFrame.
+                        if not targetOrder and typeof(targetCFrame) == "CFrame" then
+                            local bestOrder = nil
+                            local bestDistance = math.huge
+
+                            for order, savedPlace in pairs(placementActionsByOrder) do
+                                local cf = savedPlace.args and savedPlace.args[4]
+                                if typeof(cf) == "CFrame" then
+                                    local distance =
+                                        (cf.Position - targetCFrame.Position).Magnitude
+
+                                    if distance < bestDistance then
+                                        bestDistance = distance
+                                        bestOrder = order
+                                    end
+                                end
+                            end
+
+                            if bestOrder and bestDistance <= 12 then
+                                targetOrder = bestOrder
+                                placementAction = placementActionsByOrder[bestOrder]
+                                placementCFrame = placementAction.args[4]
+                                targetReplicaId = playbackUnitReplicaIds[bestOrder]
+                            end
+                        end
+
+                        if not targetReplicaId then
+                            targetReplicaId = resolvePlaybackUnitReplicaId(
+                                targetCFrame,
+                                targetUnitID,
+                                15,
+                                nil
+                            )
+
+                            if targetReplicaId and targetOrder then
+                                playbackUnitReplicaIds[targetOrder] = targetReplicaId
+                            end
                         end
 
                         if targetReplicaId and action.unitIdArgIndex then
-                            -- Preserve the type used by the original UpgradeGameUnit call.
-                            -- Some game revisions expect a numeric replica id, while others
-                            -- expose the recorded id as a string.
-                            if type(action.recordedUnitId) == "number" then
-                                args[action.unitIdArgIndex] = tonumber(targetReplicaId)
-                            else
-                                args[action.unitIdArgIndex] = tostring(targetReplicaId)
-                            end
+                            -- UpgradeGameUnit expects the live replica identifier
+                            -- in the same string form used by the game's calls.
+                            args[action.unitIdArgIndex] = tostring(targetReplicaId)
                             action._playbackReplicaId = targetReplicaId
                         else
                             lastError = ("Target unit not ready for placement #%s"):format(tostring(targetOrder))
@@ -1213,29 +1289,25 @@ function Macro.Init(Shared, UI)
                         if fired then
                             if action.actionType == "UnitPlace" then
                                 local placementOrder = action._playbackPlacementOrder
-                                local newReplicaId = findNewUnitReplicaId(beforeIds, args[4], 4)
+                                local newReplicaId = waitForNewPlacementReplica(
+                                    beforeIds,
+                                    args[4],
+                                    12
+                                )
 
                                 if newReplicaId then
                                     playbackUnitReplicaIds[placementOrder] = newReplicaId
+                                    Shared.logLine(
+                                        "[Macro] Place mapped -> order "
+                                            .. tostring(placementOrder)
+                                            .. " replica "
+                                            .. tostring(newReplicaId)
+                                    )
+                                    success = true
                                 else
-                                    -- The placement succeeded; ReplicaClient may simply
-                                    -- be a little late. Resolve in the background so a
-                                    -- following Upgrade can use the real replica ID.
-                                    task.spawn(function()
-                                        local resolvedId = resolvePlaybackUnitReplicaId(
-                                            typeof(args[4]) == "CFrame" and args[4] or nil,
-                                            nil,
-                                            15,
-                                            nil
-                                        )
-
-                                        if resolvedId and isPlayingMacro then
-                                            playbackUnitReplicaIds[placementOrder] = resolvedId
-                                        end
-                                    end)
+                                    lastError = "Placed unit replica was not detected yet"
+                                    success = false
                                 end
-
-                                success = true
                             else
                                 local verified = verifyAction(action, nil, beforeIds)
                                 if verified then
