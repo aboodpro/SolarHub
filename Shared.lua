@@ -355,7 +355,14 @@ local function findQueueReplica(queueData)
             }
 
             for _, candidate in ipairs(candidates) do
-                if queueDataMatches(candidate, queueData) then
+                if queueData and queueDataMatches(candidate, queueData) then
+                    return id
+                end
+
+                -- Play Macro may call StartGame without queue data. In that case
+                -- use the active lobby queue replica rather than a hard-coded ID.
+                if not queueData and type(candidate) == "table"
+                    and (candidate.Gamemode ~= nil or candidate.MapName ~= nil or candidate.ActName ~= nil) then
                     return id
                 end
             end
