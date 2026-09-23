@@ -133,8 +133,7 @@ function Macro.Init(Shared, UI)
                 local data = replica.Data
                 if tostring(data.GamePlayerID or "") == playerId
                     and data.CFrame ~= nil
-                    and data.UnitID ~= nil
-                    and data.MaxUpgrade ~= nil then
+                    and data.UnitID ~= nil then
                     out[tostring(id)] = replica
                 end
             end
