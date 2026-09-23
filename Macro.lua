@@ -9,12 +9,26 @@ function Macro.Init(Shared, UI)
     local HttpService = Shared.HttpService
     local getCurrentYen = Shared.getCurrentYen
 
-    local tabs = UI.tabs
+    local tabs = UI.tabs or {}
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local macroTab = tabs["Macro"]
+
+    -- Some executors/VMs can expose the returned UI table differently even
+    -- though the actual MacroTab ScrollingFrame exists. Resolve it directly
+    -- as a fallback so Macro.Init does not silently return nil.
+    if not macroTab and UI.screenGui then
+        pcall(function()
+            for _, descendant in ipairs(UI.screenGui:GetDescendants()) do
+                if descendant:IsA("ScrollingFrame") and descendant.Name == "MacroTab" then
+                    macroTab = descendant
+                    break
+                end
+            end
+        end)
+    end
+
     if not macroTab then
-        warn("[Macro] Macro tab container is missing.")
-        return
+        error("[Macro] Macro tab container is missing (UI.tabs[Macro] and MacroTab fallback both failed).")
     end
 
     -- Reset the tab whenever Macro initializes so a previous UI state cannot
