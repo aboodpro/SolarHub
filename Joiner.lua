@@ -461,6 +461,8 @@ function Joiner.Init(Shared, UI)
                 end
             end
 
+            local startGameSent = false
+
             local function rememberCandidate(id)
                 if type(id) == "number"
                     and id > 0
@@ -469,6 +471,32 @@ function Joiner.Init(Shared, UI)
                     and not seenCandidates[id] then
                     seenCandidates[id] = true
                     table.insert(candidateIds, id)
+
+                    -- The real Select Stage Start button performs PARTY_CREATE
+                    -- and then immediately starts the newly-created party.
+                    -- As soon as the server announces that new replica, mirror
+                    -- the second half of that same Start click.
+                    if partyCreateSent and not startGameSent then
+                        startGameSent = true
+                        task.spawn(function()
+                            local ok = pcall(function()
+                                ReplicaSignal:FireServer(id, "StartGame")
+                            end)
+
+                            if ok then
+                                Shared.logLine(
+                                    "[Joiner] Story Select Stage -> StartGame sent to new party replica "
+                                        .. tostring(id)
+                                )
+                            else
+                                Shared.logLine(
+                                    "[Joiner] Story Select Stage -> StartGame failed for replica "
+                                        .. tostring(id)
+                                )
+                                startGameSent = false
+                            end
+                        end)
+                    end
                 end
             end
 
@@ -552,42 +580,20 @@ function Joiner.Init(Shared, UI)
 
             task.spawn(function()
                 local deadline = os.clock() + 10
-                local startSent = false
 
-                while os.clock() < deadline and not startSent do
-                    -- The live Select Stage capture shows that PARTY_CREATE already
-                    -- creates the party with the requested queueData. The game's final
-                    -- client action is ONLY:
-                    --     ReplicaSignal:FireServer(<new replica id>, "StartGame")
-                    -- Do not send SetQueueData here; that is an extra request which the
-                    -- real UI does not send and can interfere with the freshly-created
-                    -- party state.
-                    for _, replicaId in ipairs(candidateIds) do
-                        local startOk = pcall(function()
-                            ReplicaSignal:FireServer(replicaId, "StartGame")
-                        end)
-
-                        if startOk then
-                            Shared.logLine(
-                                "[Joiner] Story Select Stage -> StartGame sent to new party replica "
-                                    .. tostring(replicaId)
-                            )
-                            startSent = true
-                            break
-                        end
-                    end
-
-                    if not startSent then
-                        task.wait(0.1)
-                    end
+                -- Wait only for the replica created by this PARTY_CREATE.
+                -- rememberCandidate() sends StartGame immediately when it sees it,
+                -- matching the game's single Start button sequence.
+                while os.clock() < deadline and not startGameSent do
+                    task.wait(0.05)
                 end
 
                 for _, connection in pairs(connections) do
                     pcall(function() connection:Disconnect() end)
                 end
 
-                if not startSent then
-                    Shared.logLine("[Joiner] Story Select Stage -> no NEW party replica was observed within 10s")
+                if not startGameSent then
+                    Shared.logLine("[Joiner] Story Select Stage -> no new party replica was observed within 10s")
                     joinRequested[modeName] = false
                 end
             end)
