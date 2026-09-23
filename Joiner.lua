@@ -461,8 +461,6 @@ function Joiner.Init(Shared, UI)
                 end
             end
 
-            local startGameSent = false
-
             local function rememberCandidate(id)
                 if type(id) ~= "number" or id <= 0 or id > 1000000 then
                     return
