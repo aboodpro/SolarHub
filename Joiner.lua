@@ -628,12 +628,26 @@ function Joiner.Init(Shared, UI)
                 -- PARTY_CREATE_RequestNODE -> ReplicaSet(newReplicaId) ->
                 -- ReplicaSignal:FireServer(newReplicaId, "StartGame")
                 if partyCreateSent then
-                    -- The ReplicaSet itself is enough to attempt StartGame.
-                    -- The ReturnNODE ack is useful for logging, but must not
-                    -- block the actual StartGame request.
-                    task.delay(0.03, function()
-                        tryStartGame(id)
-                    end)
+                    -- The game's real sequence is:
+                    -- PARTY_CREATE_RequestNODE
+                    -- -> PARTY_CREATE_ReturnNODE (accepted)
+                    -- -> ReplicaSignal:FireServer(replicaId, "StartGame")
+                    --
+                    -- Do not fire StartGame before the ReturnNODE acknowledgement.
+                    -- That race was the reason Select Stage could sometimes leave
+                    -- us sitting in the stage selector without starting.
+                    if partyCreateAccepted then
+                        task.delay(0.03, function()
+                            tryStartGame(id)
+                        end)
+                    else
+                        pendingReplicaId = id
+                        Shared.logLine(
+                            "[Joiner] Story replica "
+                                .. tostring(id)
+                                .. " received; waiting for PARTY_CREATE acceptance"
+                        )
+                    end
                 end
             end
 
@@ -684,6 +698,15 @@ function Joiner.Init(Shared, UI)
                         task.delay(0.03, function()
                             tryStartGame(id)
                         end)
+                    else
+                        -- The ReturnNODE can race ahead of ReplicaSet. If the
+                        -- candidate was already observed, try it now.
+                        local bestId = getBestCandidate()
+                        if bestId then
+                            task.delay(0.03, function()
+                                tryStartGame(bestId)
+                            end)
+                        end
                     end
                 end
 
