@@ -421,6 +421,23 @@ function Joiner.Init(Shared, UI)
 
             if ok then
                 Shared.logLine("[Joiner] Story Select Stage -> PARTY_CREATE sent")
+
+                -- PARTY_CREATE only opens/creates the Select Stage party.
+                -- The actual Start button is a second request against the
+                -- newly-created queue replica. Give ReplicaClient a moment
+                -- to receive it, then send StartGame.
+                task.spawn(function()
+                    local deadline = os.clock() + 3
+                    while os.clock() < deadline do
+                        if Shared.startGameRemotely(queueData) then
+                            Shared.logLine("[Joiner] Story Select Stage -> StartGame sent")
+                            return
+                        end
+                        task.wait(0.2)
+                    end
+                    Shared.logLine("[Joiner] Story Select Stage -> queue created, but StartGame replica was not found")
+                end)
+
                 return true
             end
 
