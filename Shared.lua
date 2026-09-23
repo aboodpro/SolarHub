@@ -344,7 +344,7 @@ local function findQueueReplica(queueData)
 
     -- Queue replica IDs are server-assigned and can change between sessions.
     -- Never hard-code the old 1062 ID.
-    for id = 1, 300 do
+    for id = 1, 2000 do
         local ok, replica = pcall(replicaClientModule.FromId, id)
         if ok and replica and replica.Data then
             local data = replica.Data
