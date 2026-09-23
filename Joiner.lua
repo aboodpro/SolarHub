@@ -400,6 +400,34 @@ function Joiner.Init(Shared, UI)
             return false
         end
 
+        -- Select Stage does NOT use the matchmaking request.
+        -- The game's actual Start button creates the party/queue first.
+        -- Captured from the live game:
+        -- PARTY_CREATE_RequestNODE, <requestId>, <queueData>
+        if modeName == "Story" then
+            local ok, err = pcall(function()
+                pcall(function()
+                    RequestLeaveMatchmaking:Request()
+                end)
+
+                matchmakingRequestId += 1
+                UpdateNode:FireServer(
+                    {Type = "Post"},
+                    "PARTY_CREATE_RequestNODE",
+                    matchmakingRequestId,
+                    queueData
+                )
+            end)
+
+            if ok then
+                Shared.logLine("[Joiner] Story Select Stage -> PARTY_CREATE sent")
+                return true
+            end
+
+            Shared.logLine("[Joiner] Story PARTY_CREATE failed: " .. tostring(err))
+            return false
+        end
+
         return Shared.startGameRemotely(queueData)
     end
 
