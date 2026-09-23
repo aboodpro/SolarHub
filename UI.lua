@@ -34,25 +34,9 @@ function UI.Init(Shared)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
-    local uiScale = Instance.new("UIScale")
-    uiScale.Scale = 1
-    uiScale.Parent = mainFrame
-
+    -- Do not scale the root panel. A UIScale on the root can make the whole
+    -- window effectively disappear on some executor/mobile GUI implementations.
     toggleBtn.ZIndex = 100
-
-    local function updateResponsiveScale()
-        local camera = workspace.CurrentCamera
-        if not camera then return end
-        local viewport = camera.ViewportSize
-        local scaleX = math.max(0.55, (viewport.X - 24) / 586)
-        local scaleY = math.max(0.55, (viewport.Y - 24) / 304)
-        uiScale.Scale = math.min(1, scaleX, scaleY)
-    end
-
-    updateResponsiveScale()
-    if workspace.CurrentCamera then
-        workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateResponsiveScale)
-    end
 
     local mainCorner = Instance.new("UICorner")
     mainCorner.CornerRadius = UDim.new(0, 10)
