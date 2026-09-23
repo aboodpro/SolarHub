@@ -9,6 +9,7 @@ function Macro.Init(Shared, UI)
     local HttpService = Shared.HttpService
     local captureVisiblePlacementCost = Shared.captureVisiblePlacementCost
     local getCurrentYen = Shared.getCurrentYen
+    local waitForNewModel = Shared.waitForNewModel
 
     local tabs = UI.tabs
     local macroTab = tabs["Macro"]
