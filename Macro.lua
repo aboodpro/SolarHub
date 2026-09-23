@@ -1370,8 +1370,6 @@ function Macro.Init(Shared, UI)
                             return remote
                         end
 
-                        -- Some revisions expose ReplicaSignal outside RemoteEvents.
-                        -- Always use the broad fallback before giving up.
                         local fallback = findRemote("ReplicaSignal", "RemoteEvent")
                         if fallback then
                             return fallback
@@ -1389,101 +1387,86 @@ function Macro.Init(Shared, UI)
 
                 local function fireSignal(...)
                     local args = table.pack(...)
-                    -- Play Macro may be pressed while the game is still finishing
-                    -- its loading/replication phase. Wait for ReplicaSignal instead
-                    -- of losing the first Start request.
-                    local remote = getReplicaSignal(8)
+                    local remote = getReplicaSignal(3)
+
                     if not remote then
+                        Shared.logLine("[Macro] ReplicaSignal NOT FOUND")
                         return false
                     end
 
-                    local ok = pcall(function()
+                    local ok, err = pcall(function()
                         remote:FireServer(table.unpack(args, 1, args.n))
                     end)
 
                     if ok then
                         Shared.logLine(
-                            "[Macro] ReplicaSignal -> " .. tostring(args[1])
-                                .. " " .. tostring(args[2])
-                                .. " " .. tostring(args[3])
+                            "[Macro] ReplicaSignal -> "
+                                .. tostring(args[1]) .. " "
+                                .. tostring(args[2]) .. " "
+                                .. tostring(args[3])
                         )
+                    else
+                        Shared.logLine("[Macro] ReplicaSignal ERROR -> " .. tostring(err))
                     end
 
                     return ok
                 end
 
-                local lastState = getCurrentGameState()
                 local cycleStarted = false
                 local transitionSent = false
-                local lastStartAttempt = 0
-                local startRequestedOnce = false
+                local startCooldown = 0
 
-                -- Play Macro must press the in-game Start/Vote immediately,
-                -- before waiting for InProgress and before running any action.
-                -- First action of Play Macro: press the in-game Start/Vote button.
-                -- The macro actions themselves are blocked until the game actually
-                -- enters InProgress, so the Start request always happens first.
+                -- Send Start BEFORE doing any expensive replica/state scan.
+                -- This guarantees Play Macro's first action is the in-game Start/Vote.
                 macroStatusLabel.Text = "Sending Start..."
-                local startOk = fireSignal(87, "Response", true)
-                startRequestedOnce = startOk == true
-                lastStartAttempt = os.clock()
-                if startOk then
-                    macroStatusLabel.Text = "Start requested..."
-                else
-                    macroStatusLabel.Text = "Start request failed; retrying..."
-                end
+                fireSignal(87, "Response", true)
 
                 while Config.PlayMacro do
-                    local state = updateMacroGameSession()
+                    local state = getCurrentGameState()
 
                     if state == "InProgress" and not cycleStarted then
                         cycleStarted = true
                         transitionSent = false
                         macroStatusLabel.Text = "Starting macro..."
+
                         task.spawn(function()
                             runMacroOnce(macroData)
                         end)
                     end
 
-                    if lastState == "InProgress" and state ~= "InProgress" then
+                    if state == "InProgress" then
+                        startCooldown = os.clock()
+                    elseif not transitionSent and os.clock() - startCooldown >= 0.75 then
+                        -- Keep pressing Start until the game accepts it. A successful
+                        -- FireServer call does not necessarily mean the game accepted
+                        -- the vote, so the state is the actual confirmation.
+                        startCooldown = os.clock()
+                        macroStatusLabel.Text = "Starting game..."
+                        fireSignal(87, "Response", true)
+                    end
+
+                    if cycleStarted and state ~= "InProgress" and not transitionSent then
+                        transitionSent = true
+
+                        if Config.AutoReplay then
+                            macroStatusLabel.Text = "Replay requested..."
+                            fireSignal(77, "Restart")
+                        elseif Config.AutoNext then
+                            macroStatusLabel.Text = "Next requested..."
+                            fireSignal(77, "Next")
+                        else
+                            Config.PlayMacro = false
+                            playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+                            playBtn.Text = "▶ Play Macro"
+                            macroStatusLabel.Text = "Finished"
+                            break
+                        end
+
                         cycleStarted = false
-
-                        if not transitionSent then
-                            transitionSent = true
-                            if Config.AutoReplay then
-                                if fireSignal(77, "Restart") then
-                                    macroStatusLabel.Text = "Replay requested..."
-                                else
-                                    macroStatusLabel.Text = "Replay request failed..."
-                                end
-                            elseif Config.AutoNext then
-                                if fireSignal(77, "Next") then
-                                    macroStatusLabel.Text = "Next requested..."
-                                else
-                                    macroStatusLabel.Text = "Next request failed..."
-                                end
-                            else
-                                Config.PlayMacro = false
-                                playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-                                playBtn.Text = "▶ Play Macro"
-                                macroStatusLabel.Text = "Finished"
-                                break
-                            end
-                        end
+                        startCooldown = os.clock()
                     end
 
-                    if state ~= "InProgress" and not transitionSent then
-                        if os.clock() - lastStartAttempt >= 1.5 then
-                            lastStartAttempt = os.clock()
-                            if fireSignal(87, "Response", true) then
-                                startRequestedOnce = true
-                                macroStatusLabel.Text = "Start requested..."
-                            end
-                        end
-                    end
-
-                    lastState = state
-                    task.wait(0.5)
+                    task.wait(0.3)
                 end
 
                 isPlayingMacro = false
