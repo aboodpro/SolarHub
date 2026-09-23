@@ -132,12 +132,17 @@ runModule("Joiner.Init", function() return JoinerModule.Init(Shared, UI) end)
 
 print("[Loader] Fetching Macro.lua...")
 local MacroModule = fetch("Macro.lua")
-do
+
+-- Macro initialization is deliberately delayed so the Joiner can finish its
+-- lobby/Select Stage -> StartGame flow first. Macro itself does not need to
+-- initialize before the player opens the Macro tab.
+task.delay(5, function()
     local ok, result = xpcall(function()
         return MacroModule.Init(Shared, UI)
     end, function(err)
         return debug.traceback(tostring(err), 2)
     end)
+
     if not ok then
         warn("[Loader] Macro.Init ERROR:\n" .. tostring(result))
         if UI.setTabError then
@@ -146,7 +151,7 @@ do
     elseif UI.clearTabError then
         UI.clearTabError("Macro")
     end
-end
+end)
 
 print("[Loader] Fetching Webhook.lua...")
 local WebhookModule = fetch("Webhook.lua")
