@@ -24,10 +24,22 @@ function Joiner.Init(Shared, UI)
     -- Official game Network Nodes used by the game's own actions.
     -- Story matchmaking: REQUEST_ENTER_MATCHMAKING
     -- Return lobby: REQUEST_AFK_LEAVE
-    local Nodes = require(Shared.ReplicatedStorage:WaitForChild("Nodes"))
-    local RequestEnterMatchmaking = Nodes.REQUEST_ENTER_MATCHMAKING
-    local RequestLeaveMatchmaking = Nodes.REQUEST_LEAVE_MATCHMAKING
-    local RequestAFKLeave = Nodes.REQUEST_AFK_LEAVE
+    -- Resolve optional Node actions safely. A failure here must NEVER prevent
+    -- Joiner from creating its UI sections (which used to make every non-Macro
+    -- tab appear empty).
+    local RequestEnterMatchmaking = nil
+    local RequestLeaveMatchmaking = nil
+    local RequestAFKLeave = nil
+
+    pcall(function()
+        local nodesObject = Shared.ReplicatedStorage:FindFirstChild("Nodes")
+        if nodesObject and nodesObject:IsA("ModuleScript") then
+            local Nodes = require(nodesObject)
+            RequestEnterMatchmaking = Nodes.REQUEST_ENTER_MATCHMAKING
+            RequestLeaveMatchmaking = Nodes.REQUEST_LEAVE_MATCHMAKING
+            RequestAFKLeave = Nodes.REQUEST_AFK_LEAVE
+        end
+    end)
 
     -- Direct NetworkEvent used by the game's matchmaking request.
     -- This avoids depending on the Map/Matchmaking UI components.
