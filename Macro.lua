@@ -60,6 +60,22 @@ function Macro.Init(Shared, UI)
         return nil
     end
 
+    local function getReplicaSignalAction(args)
+        local actionName = tostring(args[2] or "")
+
+        if actionName == "SelectSlot" then
+            return nil
+        elseif actionName == "PlaceGameUnit" then
+            return "UnitPlace"
+        elseif actionName == "UpgradeGameUnit" then
+            return "UnitUpgrade"
+        elseif actionName == "ChangeGameUnitAutoUpgradePriority" then
+            return "UnitAutoUpgrade"
+        end
+
+        return nil
+    end
+
     local function scanAndBuildUnitDatabase()
         scannedUnitsDatabase = {}
         local foundCount = 0
@@ -87,6 +103,20 @@ function Macro.Init(Shared, UI)
         local isRemoteCall = (not checkcaller()) and (method == "FireServer" or method == "InvokeServer")
         local selfRef = self
 
+        local yenBefore = nil
+        local replicaActionBefore = nil
+
+        if isRemoteCall and Config.RecordMacro then
+            pcall(function()
+                if selfRef.Name == "ReplicaSignal" then
+                    replicaActionBefore = getReplicaSignalAction(packedArgs)
+                    if replicaActionBefore == "UnitUpgrade" then
+                        yenBefore = getCurrentYen()
+                    end
+                end
+            end)
+        end
+
         local result = table.pack(oldNamecall(self, ...))
 
         if isRemoteCall and Config.RecordMacro then
@@ -99,23 +129,28 @@ function Macro.Init(Shared, UI)
                     end
 
                     local actionDesc = nil
-                    
-                    if remoteNameLower:find("upgrade") or remoteNameLower:find("lvl") or remoteNameLower:find("level") or remoteNameLower:find("evolve") or remoteNameLower:find("rank") then
-                        actionDesc = "UnitUpgrade"
-                    elseif remoteNameLower:find("place") or remoteNameLower:find("spawn") or remoteNameLower:find("deploy") or remoteNameLower:find("buy") then
-                        actionDesc = "UnitPlace"
+                    local isReplicaSignal = (selfRef.Name == "ReplicaSignal")
+
+                    if isReplicaSignal then
+                        -- ReplicaSignal exposes the real gameplay operation in args[2].
+                        -- Only these are meaningful Macro actions.
+                        actionDesc = getReplicaSignalAction(packedArgs)
+                    elseif remoteNameLower == "_updatenode" or remoteNameLower:find("networkevents") then
+                        -- Visual/node traffic such as PlacementVFX is not a Macro action.
+                        actionDesc = nil
                     else
-                        for _, arg in ipairs(packedArgs) do
-                            if typeof(arg) == "string" then
-                                local lowerArg = arg:lower()
-                                if lowerArg:find("upgrade") or lowerArg:find("lvl") then
-                                    actionDesc = "UnitUpgrade"
-                                    break
-                                elseif lowerArg:find("place") or lowerArg:find("spawn") or lowerArg:find("deploy") then
-                                    actionDesc = "UnitPlace"
-                                    break
-                                end
-                            end
+                        -- Keep the generic fallback for other gameplay remotes, but do not
+                        -- infer an action from arbitrary argument strings like "PlacementVFX".
+                        if remoteNameLower:find("upgrade")
+                            or remoteNameLower:find("lvl")
+                            or remoteNameLower:find("level")
+                            or remoteNameLower:find("evolve")
+                            or remoteNameLower:find("rank") then
+                            actionDesc = "UnitUpgrade"
+                        elseif remoteNameLower:find("place")
+                            or remoteNameLower:find("spawn")
+                            or remoteNameLower:find("deploy") then
+                            actionDesc = "UnitPlace"
                         end
                     end
 
@@ -126,34 +161,45 @@ function Macro.Init(Shared, UI)
                             remoteName = selfRef.Name,
                             remoteClass = selfRef.ClassName,
                             method = method,
-                            args = packedArgs
+                            args = packedArgs,
+                            yenBefore = yenBefore,
                         }
+
+                        if isReplicaSignal and (actionDesc == "UnitUpgrade" or actionDesc == "UnitAutoUpgrade") then
+                            actionEntry.recordedUnitId = packedArgs[3]
+                            actionEntry.unitIdArgIndex = 3
+                        end
+
                         table.insert(recordedActions, actionEntry)
+                        print(("[Macro Record] #%d %s"):format(#recordedActions, actionDesc))
 
                         if actionDesc == "UnitPlace" then
-                            local slotNum = nil
-                            pcall(function()
-                                for _, arg in ipairs(packedArgs) do
-                                    if typeof(arg) == "number" and arg < 10 then
-                                        slotNum = arg
-                                        break
-                                    end
-                                end
-                            end)
-                            
-                            pcall(function()
-                                actionEntry.yenCost = captureVisiblePlacementCost(slotNum)
-                            end)
+                            recordPlacementCount = recordPlacementCount + 1
+                            actionEntry.placementOrder = recordPlacementCount
+
+                        elseif actionDesc == "UnitUpgrade" then
+                            actionEntry.linkedPlacementOrder = recordPlacementCount
 
                             pcall(function()
-                                recordPlacementCount = recordPlacementCount + 1
-                                actionEntry.placementOrder = recordPlacementCount
-                                recordUnitIdMap[recordPlacementCount] = recordPlacementCount
+                                local yenAfter = getCurrentYen()
+                                actionEntry.yenAfter = yenAfter
+
+                                if yenBefore and yenAfter then
+                                    local delta = yenBefore - yenAfter
+                                    if delta > 0 then
+                                        actionEntry.yenCost = delta
+                                        actionEntry.missingYenAtRecord = 0
+                                    end
+                                end
+
+                                print(("[Macro Record] Upgrade cost=%s | Yen %s -> %s"):format(
+                                    tostring(actionEntry.yenCost),
+                                    tostring(yenBefore),
+                                    tostring(yenAfter)))
                             end)
-                        elseif actionDesc == "UnitUpgrade" then
-                            pcall(function()
-                                actionEntry.linkedPlacementOrder = recordPlacementCount
-                            end)
+
+                        elseif actionDesc == "UnitAutoUpgrade" then
+                            actionEntry.linkedPlacementOrder = recordPlacementCount
                         end
                     end
                 end)
@@ -409,6 +455,7 @@ function Macro.Init(Shared, UI)
 
         local lastTime = 0
         local playPlacementCount = 0
+        local playbackUnitsByOrder = {}
         local totalActions = #macroData.actions
 
         for actionIndex, action in ipairs(macroData.actions) do
@@ -416,10 +463,12 @@ function Macro.Init(Shared, UI)
             local gap = action.time - lastTime
             local actionLabel = action.actionType or "Action"
 
-            if action.yenCost then
-                macroStatusLabel.Text = ("[%d/%d] Waiting for Yen (Cost: %d)..."):format(actionIndex, totalActions, action.yenCost)
+            if action.actionType == "UnitUpgrade" and action.yenCost then
                 while isPlayingMacro do
                     local yen = getCurrentYen()
+                    local missing = yen and math.max(0, action.yenCost - yen) or action.yenCost
+                    macroStatusLabel.Text = ("[%d/%d] Upgrade | Yen %s/%s | %s missing"):format(
+                        actionIndex, totalActions, tostring(yen or "?"), tostring(action.yenCost), tostring(missing))
                     if yen and yen >= action.yenCost then
                         break
                     end
@@ -448,25 +497,45 @@ function Macro.Init(Shared, UI)
                     if action.actionType == "UnitPlace" then
                         playPlacementCount = playPlacementCount + 1
 
+                        -- Watch for the server-spawned unit so later actions can use its
+                        -- new session-specific Id instead of the recorded Id.
                         if action.method == "InvokeServer" then
                             remoteObj:InvokeServer(table.unpack(args))
                         else
                             remoteObj:FireServer(table.unpack(args))
                         end
-                        task.wait(0.4)
 
-                    elseif action.actionType == "UnitUpgrade" then
+                        local newUnit = waitForNewModel and waitForNewModel(3) or nil
+                        if newUnit and newUnit.Parent then
+                            playbackUnitsByOrder[playPlacementCount] = newUnit
+                            print(("[Macro] Placement #%d mapped to %s Id=%s"):format(
+                                playPlacementCount,
+                                newUnit:GetFullName(),
+                                tostring(newUnit:GetAttribute("Id") or newUnit:GetAttribute("UnitId") or newUnit.Name)))
+                        else
+                            warn(("[Macro] Placement #%d could not be mapped to a spawned unit"):format(playPlacementCount))
+                        end
+                        task.wait(0.2)
+
+                    elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
-                        scanAndBuildUnitDatabase()
-                        
-                        if targetOrder and scannedUnitsDatabase[targetOrder] then
-                            local scannedTarget = scannedUnitsDatabase[targetOrder]
-                            for i, arg in ipairs(args) do
-                                if type(arg) == "number" or type(arg) == "string" then
-                                    args[i] = scannedTarget.uniqueId
-                                    break
-                                end
-                            end
+                        local targetModel = targetOrder and playbackUnitsByOrder[targetOrder]
+
+                        if targetModel and action.unitIdArgIndex then
+                            local newId = targetModel:GetAttribute("Id")
+                                or targetModel:GetAttribute("UnitId")
+                                or targetModel.Name
+
+                            args[action.unitIdArgIndex] = newId
+
+                            print(("[Macro] %s targeting placement #%d -> Id=%s"):format(
+                                action.actionType,
+                                targetOrder,
+                                tostring(newId)))
+                        else
+                            warn(("[Macro] %s target mapping missing for placement #%s"):format(
+                                action.actionType,
+                                tostring(targetOrder)))
                         end
 
                         if action.method == "InvokeServer" then
