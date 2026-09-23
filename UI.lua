@@ -6,25 +6,13 @@ function UI.Init(Shared)
     local Config = Shared.Config
     local UserInputService = Shared.UserInputService
 
-    -- Prefer the executor's persistent UI container so the hub is not removed
-    -- when the game's PlayerGui is rebuilt during a lobby -> match transition.
-    local uiParent = playerGui
-    pcall(function()
-        if gethui then
-            uiParent = gethui()
-        end
-    end)
-
-    local existingHub = uiParent:FindFirstChild("SolarHub")
-    if existingHub then
-        existingHub:Destroy()
-    end
+    if playerGui:FindFirstChild("SolarHub") then playerGui.SolarHub:Destroy() end
 
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "SolarHub"
     screenGui.ResetOnSpawn = false
     screenGui.DisplayOrder = 999999
-    screenGui.Parent = uiParent
+    screenGui.Parent = playerGui
 
     local toggleBtn = Instance.new("TextButton")
     toggleBtn.Size = UDim2.fromOffset(40, 40)
