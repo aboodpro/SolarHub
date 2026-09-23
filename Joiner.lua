@@ -408,18 +408,114 @@ function Joiner.Init(Shared, UI)
             return false
         end
 
+        -- Do not create a second party while the first request is still being
+        -- processed. The lobby state can remain nil for several seconds after
+        -- PARTY_CREATE, so relying only on getCurrentGameState() can spam
+        -- PARTY_CREATE requests.
+        if joinRequested[modeName] then
+            return false
+        end
+
         if not remoteCooldown(configKey, 4) then
             return false
         end
 
-        -- Select Stage does NOT use the matchmaking request.
-        -- The game's actual Start button creates the party/queue first.
-        -- Captured from the live game:
-        -- PARTY_CREATE_RequestNODE, <requestId>, <queueData>
+        -- Select Stage is a two-phase server flow:
+        --   1) PARTY_CREATE_RequestNODE creates the local party.
+        --   2) The server creates a ReplicaSignal replica with a dynamic ID.
+        --   3) StartGame is sent to THAT replica.
+        --
+        -- The important detail is that the ReplicaSet event can arrive
+        -- immediately after PARTY_CREATE. Therefore the listeners MUST be
+        -- installed BEFORE PARTY_CREATE is fired. The previous implementation
+        -- installed them afterwards and could miss replica 23313 entirely.
+
         if modeName == "Story" then
-            local ok, err = pcall(function()
+            joinRequested[modeName] = true
+
+            local replicaEvents = Shared.ReplicatedStorage:FindFirstChild("RemoteEvents")
+            local replicaSet = replicaEvents and replicaEvents:FindFirstChild("ReplicaSet")
+            local replicaCreate = replicaEvents and replicaEvents:FindFirstChild("ReplicaCreate")
+
+            if not replicaSet then
+                joinRequested[modeName] = false
+                Shared.logLine("[Joiner] Story Select Stage -> ReplicaSet remote is missing")
+                return false
+            end
+
+            local baselineIds = {}
+            local candidateIds = {}
+            local seenCandidates = {}
+            local connections = {}
+
+            local function rememberBaseline(id)
+                if type(id) == "number" then
+                    baselineIds[id] = true
+                end
+            end
+
+            local function rememberCandidate(id)
+                if type(id) == "number"
+                    and id > 0
+                    and id <= 1000000
+                    and not baselineIds[id]
+                    and not seenCandidates[id] then
+                    seenCandidates[id] = true
+                    table.insert(candidateIds, id)
+                end
+            end
+
+            local function inspectValue(value, isBaseline)
+                if type(value) == "number" then
+                    if isBaseline then
+                        rememberBaseline(value)
+                    else
+                        rememberCandidate(value)
+                    end
+                elseif type(value) == "table" then
+                    for key, child in pairs(value) do
+                        if type(key) == "string" then
+                            local lower = key:lower()
+                            if lower == "id"
+                                or lower == "replicaid"
+                                or lower == "replica_id"
+                                or lower == "queueid" then
+                                if isBaseline then
+                                    rememberBaseline(child)
+                                else
+                                    rememberCandidate(child)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- Build a short baseline before creating the party. This prevents
+            -- us from treating an unrelated existing replica as the new party.
+            connections.set = replicaSet.OnClientEvent:Connect(function(...)
+                for _, value in ipairs({...}) do
+                    inspectValue(value, true)
+                end
+            end)
+
+            if replicaCreate then
+                connections.create = replicaCreate.OnClientEvent:Connect(function(...)
+                    for _, value in ipairs({...}) do
+                        inspectValue(value, true)
+                    end
+                end)
+            end
+
+            task.wait(0.15)
+
+            -- From the live game capture:
+            -- {Type="Post"}, "PARTY_CREATE_RequestNODE", requestId, queueData
+            local createOk, createErr = pcall(function()
                 pcall(function()
-                    RequestLeaveMatchmaking:Request()
+                    if RequestLeaveMatchmaking then
+                        RequestLeaveMatchmaking:Request()
+                    end
                 end)
 
                 matchmakingRequestId += 1
@@ -431,94 +527,79 @@ function Joiner.Init(Shared, UI)
                 )
             end)
 
-            if ok then
-                Shared.logLine("[Joiner] Story Select Stage -> PARTY_CREATE sent")
+            if not createOk then
+                for _, connection in pairs(connections) do
+                    pcall(function() connection:Disconnect() end)
+                end
+                joinRequested[modeName] = false
+                Shared.logLine("[Joiner] Story PARTY_CREATE failed: " .. tostring(createErr))
+                return false
+            end
 
-                -- The party replica is created by PARTY_CREATE. Listen for its
-                -- server-assigned ReplicaSet/ReplicaCreate ID before sending
-                -- StartGame, so no game UI is required.
-                task.spawn(function()
-                    local candidateIds = {}
-                    local seen = {}
+            Shared.logLine("[Joiner] Story Select Stage -> PARTY_CREATE sent; waiting for new replica")
 
-                    local function addCandidate(value)
-                        if type(value) == "number" and value > 0 and value <= 1000000 and not seen[value] then
-                            seen[value] = true
-                            table.insert(candidateIds, value)
-                        end
-                    end
+            task.spawn(function()
+                local deadline = os.clock() + 10
+                local startSent = false
 
-                    local replicaEvents = Shared.ReplicatedStorage:FindFirstChild("RemoteEvents")
-                    local replicaCreate = replicaEvents and replicaEvents:FindFirstChild("ReplicaCreate")
-                    local replicaSet = replicaEvents and replicaEvents:FindFirstChild("ReplicaSet")
-
-                    local connections = {}
-
-                    if replicaSet then
-                        connections.set = replicaSet.OnClientEvent:Connect(function(replicaId)
-                            addCandidate(replicaId)
+                while os.clock() < deadline and not startSent do
+                    -- A new ReplicaSet is the strongest signal we have from the
+                    -- live capture. Do not treat pcall(FireServer) itself as
+                    -- success: FireServer returns void, so pcall only proves the
+                    -- client call did not throw, not that the server accepted it.
+                    for _, replicaId in ipairs(candidateIds) do
+                        local setOk = pcall(function()
+                            ReplicaSignal:FireServer(replicaId, "SetQueueData", queueData)
                         end)
-                    end
 
-                    if replicaCreate then
-                        connections.create = replicaCreate.OnClientEvent:Connect(function(...)
-                            for _, value in ipairs({...}) do
-                                if type(value) == "number" then
-                                    addCandidate(value)
-                                elseif type(value) == "table" then
-                                    for key, child in pairs(value) do
-                                        if type(key) == "string" then
-                                            local lower = key:lower()
-                                            if lower == "id" or lower == "replicaid" or lower == "replica_id" or lower == "queueid" then
-                                                addCandidate(child)
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end)
-                    end
+                        if setOk then
+                            task.wait(0.15)
 
-                    local deadline = os.clock() + 8
-                    local started = false
-
-                    while os.clock() < deadline and not started do
-                        for _, replicaId in ipairs(candidateIds) do
-                            local okStart = pcall(function()
+                            local startOk = pcall(function()
                                 ReplicaSignal:FireServer(replicaId, "StartGame")
                             end)
 
-                            if okStart then
-                                Shared.logLine("[Joiner] Story Select Stage -> StartGame sent to replica " .. tostring(replicaId))
-                                started = true
+                            if startOk then
+                                Shared.logLine(
+                                    "[Joiner] Story Select Stage -> SetQueueData + StartGame sent to new replica "
+                                        .. tostring(replicaId)
+                                )
+                                startSent = true
                                 break
                             end
                         end
-
-                        if not started then
-                            task.wait(0.1)
-                        end
                     end
 
-                    for _, connection in pairs(connections) do
-                        pcall(function()
-                            connection:Disconnect()
-                        end)
+                    if not startSent then
+                        task.wait(0.1)
                     end
+                end
 
-                    if not started then
-                        Shared.logLine("[Joiner] Story Select Stage -> StartGame replica not found")
-                    end
-                end)
+                for _, connection in pairs(connections) do
+                    pcall(function() connection:Disconnect() end)
+                end
 
-                return true
-            end
+                if not startSent then
+                    Shared.logLine("[Joiner] Story Select Stage -> no NEW party replica was observed within 10s")
+                    joinRequested[modeName] = false
+                end
+            end)
 
-            Shared.logLine("[Joiner] Story PARTY_CREATE failed: " .. tostring(err))
+            return true
+        end
+
+        -- Other modes still use the shared implementation until their exact
+        -- game-side request sequence is captured independently.
+        local ok, result = pcall(function()
+            return Shared.startGameRemotely(queueData)
+        end)
+
+        if not ok then
+            Shared.logLine("[Joiner] " .. modeName .. " start failed: " .. tostring(result))
             return false
         end
 
-        return Shared.startGameRemotely(queueData)
+        return result ~= false
     end
 
     local function runRemoteGameAutomation()
