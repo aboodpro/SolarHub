@@ -36,6 +36,7 @@ function Joiner.Init(Shared, UI)
         :WaitForChild("Network")
         :WaitForChild("NetworkEvents")
     local UpdateNode = NetworkEvents:WaitForChild("_updateNode")
+    local matchmakingRequestId = 0
 
     local StoryMaps = {}
     local StoryMapDisplayToId = {}
@@ -341,11 +342,18 @@ function Joiner.Init(Shared, UI)
 
         local ok, result = pcall(function()
             if modeName == "Story" then
-                -- Exact request observed from the game's own Story flow.
+                -- Reproduce the game's actual Story matchmaking request.
+                -- The third argument is a client-side request sequence; using
+                -- a fixed 1 can fail after the first request in a session.
+                pcall(function()
+                    RequestLeaveMatchmaking:Request()
+                end)
+
+                matchmakingRequestId += 1
                 UpdateNode:FireServer(
                     {Type = "Post"},
                     "REQUEST_ENTER_MATCHMAKING_RequestNODE",
-                    1,
+                    matchmakingRequestId,
                     queueData
                 )
                 return true
