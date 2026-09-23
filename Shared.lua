@@ -219,6 +219,104 @@ local function copySessionLogToClipboard()
 end
 Shared.copySessionLogToClipboard = copySessionLogToClipboard
 
+local function showSessionLogWindow()
+    local player = Players.LocalPlayer
+    local playerGui = player:WaitForChild("PlayerGui")
+
+    local existing = playerGui:FindFirstChild("SolarHubSessionLog")
+    if existing then
+        existing:Destroy()
+    end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "SolarHubSessionLog"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 2147483647
+    gui.Parent = playerGui
+
+    local frame = Instance.new("Frame")
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+    frame.Position = UDim2.fromScale(0.5, 0.5)
+    frame.Size = UDim2.fromOffset(760, 500)
+    frame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 190, 65)
+    stroke.Transparency = 0.55
+    stroke.Parent = frame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -60, 0, 38)
+    title.Position = UDim2.fromOffset(14, 8)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.GothamBold
+    title.Text = "☀ SolarHub Session Log"
+    title.TextColor3 = Color3.fromRGB(245, 245, 245)
+    title.TextSize = 16
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = frame
+
+    local close = Instance.new("TextButton")
+    close.AnchorPoint = Vector2.new(1, 0)
+    close.Position = UDim2.new(1, -12, 0, 10)
+    close.Size = UDim2.fromOffset(32, 28)
+    close.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
+    close.BorderSizePixel = 0
+    close.Text = "×"
+    close.TextColor3 = Color3.fromRGB(230, 230, 230)
+    close.Font = Enum.Font.GothamBold
+    close.TextSize = 18
+    close.Parent = frame
+    Instance.new("UICorner", close).CornerRadius = UDim.new(0, 7)
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -28, 1, -86)
+    box.Position = UDim2.fromOffset(14, 50)
+    box.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+    box.BorderSizePixel = 0
+    box.TextColor3 = Color3.fromRGB(235, 235, 235)
+    box.Font = Enum.Font.Code
+    box.TextSize = 13
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    box.TextYAlignment = Enum.TextYAlignment.Top
+    box.TextWrapped = false
+    box.MultiLine = true
+    box.ClearTextOnFocus = false
+    box.TextEditable = true
+    box.Text = table.concat(sessionLog, "\n")
+    box.Parent = frame
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+
+    local hint = Instance.new("TextLabel")
+    hint.Size = UDim2.new(1, -28, 0, 24)
+    hint.Position = UDim2.new(0, 14, 1, -30)
+    hint.BackgroundTransparency = 1
+    hint.Font = Enum.Font.Gotham
+    hint.Text = "Ctrl+A ثم Ctrl+C لنسخ اللوق"
+    hint.TextColor3 = Color3.fromRGB(145, 150, 165)
+    hint.TextSize = 11
+    hint.TextXAlignment = Enum.TextXAlignment.Left
+    hint.Parent = frame
+
+    close.Activated:Connect(function()
+        gui:Destroy()
+    end)
+
+    task.defer(function()
+        box:CaptureFocus()
+        box.CursorPosition = #box.Text + 1
+        box.SelectionStart = 1
+    end)
+
+    return gui
+end
+
+Shared.showSessionLogWindow = showSessionLogWindow
+
 local function showTopNotification(message, duration)
     duration = duration or 3
     logLine("[Notification] " .. message)
@@ -454,5 +552,13 @@ Shared.isRemoteValid = isRemoteValid
 
 Shared.isPlayingMacro = false
 Shared.runMacroOnce = nil
+
+-- Expose the live Shared table to an executor-side command so diagnostics can
+-- be opened without reinitializing SolarHub.
+pcall(function()
+    local env = (getgenv and getgenv()) or _G
+    env.SolarHub = env.SolarHub or {}
+    env.SolarHub.Shared = Shared
+end)
 
 return Shared
