@@ -448,6 +448,13 @@ function Joiner.Init(Shared, UI)
             local seenCandidates = {}
             local connections = {}
 
+            -- Events received before PARTY_CREATE are baseline state. Events
+            -- received after PARTY_CREATE are candidates for the new party.
+            -- This distinction is critical: the previous version marked every
+            -- ReplicaSet/ReplicaCreate event as baseline, so candidateIds could
+            -- NEVER be populated.
+            local partyCreateSent = false
+
             local function rememberBaseline(id)
                 if type(id) == "number" then
                     baselineIds[id] = true
@@ -465,13 +472,21 @@ function Joiner.Init(Shared, UI)
                 end
             end
 
-            local function inspectValue(value, isBaseline)
-                if type(value) == "number" then
-                    if isBaseline then
-                        rememberBaseline(value)
-                    else
-                        rememberCandidate(value)
+            local function inspectValue(value)
+                local function inspectNumber(id)
+                    if type(id) ~= "number" then
+                        return
                     end
+
+                    if partyCreateSent then
+                        rememberCandidate(id)
+                    else
+                        rememberBaseline(id)
+                    end
+                end
+
+                if type(value) == "number" then
+                    inspectNumber(value)
                 elseif type(value) == "table" then
                     for key, child in pairs(value) do
                         if type(key) == "string" then
@@ -480,29 +495,25 @@ function Joiner.Init(Shared, UI)
                                 or lower == "replicaid"
                                 or lower == "replica_id"
                                 or lower == "queueid" then
-                                if isBaseline then
-                                    rememberBaseline(child)
-                                else
-                                    rememberCandidate(child)
-                                end
+                                inspectNumber(child)
                             end
                         end
                     end
                 end
             end
 
-            -- Build a short baseline before creating the party. This prevents
-            -- us from treating an unrelated existing replica as the new party.
+            -- Install listeners BEFORE PARTY_CREATE so a same-frame ReplicaSet
+            -- cannot be missed.
             connections.set = replicaSet.OnClientEvent:Connect(function(...)
                 for _, value in ipairs({...}) do
-                    inspectValue(value, true)
+                    inspectValue(value)
                 end
             end)
 
             if replicaCreate then
                 connections.create = replicaCreate.OnClientEvent:Connect(function(...)
                     for _, value in ipairs({...}) do
-                        inspectValue(value, true)
+                        inspectValue(value)
                     end
                 end)
             end
@@ -519,6 +530,7 @@ function Joiner.Init(Shared, UI)
                 end)
 
                 matchmakingRequestId += 1
+                partyCreateSent = true
                 UpdateNode:FireServer(
                     {Type = "Post"},
                     "PARTY_CREATE_RequestNODE",
