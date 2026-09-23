@@ -58,7 +58,6 @@ function UI.Init(Shared)
         end)
     end
 
-    makeDraggable(mainFrame)
     makeDraggable(toggleBtn)
 
     local resizeHandle = Instance.new("TextButton")
@@ -68,6 +67,8 @@ function UI.Init(Shared)
     resizeHandle.Text = "◢"
     resizeHandle.TextColor3 = Color3.fromRGB(180, 180, 180)
     resizeHandle.TextSize = 10
+    resizeHandle.ZIndex = 100
+    resizeHandle.Active = true
     resizeHandle.Parent = mainFrame
     Instance.new("UICorner", resizeHandle).CornerRadius = UDim.new(0, 4)
 
@@ -104,6 +105,8 @@ function UI.Init(Shared)
     end)
 
     local topBar = Instance.new("Frame")
+    topBar.Active = true
+    topBar.ZIndex = 10
     topBar.Size = UDim2.new(1, 0, 0, 34)
     topBar.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     topBar.BorderSizePixel = 0
@@ -111,6 +114,7 @@ function UI.Init(Shared)
     local topCorner = Instance.new("UICorner")
     topCorner.CornerRadius = UDim.new(0, 10)
     topCorner.Parent = topBar
+    makeDraggable(mainFrame, topBar)
 
     local brandLabel = Instance.new("TextLabel")
     brandLabel.Size = UDim2.fromOffset(400, 34)
@@ -129,6 +133,7 @@ function UI.Init(Shared)
     sidebar.BackgroundTransparency = 1
     sidebar.CanvasSize = UDim2.new(0, 0, 0, 300)
     sidebar.ScrollBarThickness = 2
+    sidebar.ZIndex = 1
     sidebar.Parent = mainFrame
     Instance.new("UIListLayout", sidebar).Padding = UDim.new(0, 4)
 
@@ -136,6 +141,7 @@ function UI.Init(Shared)
     contentArea.Size = UDim2.new(1, -124, 1, -38)
     contentArea.Position = UDim2.new(0, 122, 0, 36)
     contentArea.BackgroundTransparency = 1
+    contentArea.ZIndex = 1
     contentArea.Parent = mainFrame
 
     local tabs, tabButtons = {}, {}
