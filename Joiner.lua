@@ -25,6 +25,14 @@ function Joiner.Init(Shared, UI)
         :WaitForChild("RemoteEvents")
         :WaitForChild("ReplicaSignal")
 
+    -- Official game Network Nodes used by the game's own actions.
+    -- Story matchmaking: REQUEST_ENTER_MATCHMAKING
+    -- Return lobby: REQUEST_AFK_LEAVE
+    local Nodes = require(Shared.ReplicatedStorage:WaitForChild("Nodes"))
+    local RequestEnterMatchmaking = Nodes.REQUEST_ENTER_MATCHMAKING
+    local RequestLeaveMatchmaking = Nodes.REQUEST_LEAVE_MATCHMAKING
+    local RequestAFKLeave = Nodes.REQUEST_AFK_LEAVE
+
     local StoryMaps = {}
     local StoryMapDisplayToId = {}
     local StoryActs = {"Act 1", "Act 2", "Act 3", "Act 4", "Act 5"}
@@ -76,14 +84,14 @@ function Joiner.Init(Shared, UI)
     createToggle(joinerSec, "Matchmaking Queue", "Enables public match queues.", "MatchMaking", 32)
 
     local sjSec = createSection(tabs["Joiner"], "Story Joiner Configuration", 195)
-    createToggle(sjSec, "Auto Join Story", "Queues into Story Mode using ReplicaSignal.", "AutoJoinStory", 32)
+    createToggle(sjSec, "Auto Join Story", "Queues into Story Mode using the game's official Matchmaking Node.", "AutoJoinStory", 32)
     createDropdown(sjSec, "Select Map", "Story map", StoryMaps, "SelectedMap", 8, 74, 210)
     createDropdown(sjSec, "Select Act", "Act selector", StoryActs, "SelectedAct", 226, 74, 110)
     createDropdown(sjSec, "Select Difficulty", "Normal or Hard", StoryDifficulties, "SelectedDifficulty", 8, 134, 328)
 
     local rSec = createSection(tabs["Joiner"], "Raid Joiner Configuration", 135)
     createToggle(rSec, "Auto Join Raid", "Queues into Raid Mode.", "AutoJoinRaid", 32)
-    createDropdown(rSec, "Select Raid Map", "Raid map", {"Spirit City", "Wasteland Ruins"}, "SelectedRaidMap", 8, 74, 210)
+    createDropdown(rSec, "Select Raid Map", "Raid map", {"Spirit City", "Hill Of Swords"}, "SelectedRaidMap", 8, 74, 210)
     createDropdown(rSec, "Select Raid Act", "Raid Act", {"Act 1", "Act 2", "Act 3"}, "SelectedRaidAct", 226, 74, 110)
 
     -------------------------------------------------
@@ -184,7 +192,7 @@ function Joiner.Init(Shared, UI)
 
         if Config.AutoReturnLobby then
             if remoteCooldown("AutoReturnLobby", 10) then
-                Shared.logLine("[GameRemote] Auto Return Lobby pending: remote not discovered yet")
+                returnToLobbyRemotely()
             end
         end
     end
@@ -209,27 +217,53 @@ function Joiner.Init(Shared, UI)
             return false
         end
 
-        local ok = pcall(function()
-            ReplicaSignal:FireServer(1062, "SetQueueData", {
-                Difficulty = selectedDifficulty,
-                MapName = selectedMapId,
-                Gamemode = "Story",
-                ActName = selectedAct,
-            })
-            task.wait(0.15)
-            ReplicaSignal:FireServer(1062, "StartGame")
+        local queueData = {
+            Difficulty = selectedDifficulty,
+            MapName = selectedMapId,
+            Gamemode = "Story",
+            ActName = selectedAct,
+        }
+
+        -- This is the same Matchmaking Node path used by the game's
+        -- StartMatchmaking action. RemoteSpy confirmed that the Node
+        -- ultimately posts to:
+        -- ReplicatedStorage.Nodes.Network.NetworkEvents._updateNode
+        local ok, requestNode = pcall(function()
+            return RequestEnterMatchmaking:Request(queueData)
         end)
 
         if ok then
-            Shared.logLine(("[StoryJoiner] Queued Story: %s | %s | %s"):format(
+            Shared.logLine(("[StoryJoiner] Matchmaking request sent: %s | %s | %s"):format(
                 selectedMapId,
                 selectedAct,
                 selectedDifficulty
             ))
+            if requestNode ~= nil then
+                Shared.logLine("[StoryJoiner] REQUEST_ENTER_MATCHMAKING request node created")
+            end
             toggleTimestamps.AutoJoinStory = tick() + 3
             return true
         end
 
+        Shared.logLine("[StoryJoiner] Matchmaking request failed: " .. tostring(requestNode))
+        return false
+    end
+
+    local function returnToLobbyRemotely()
+        if not RequestAFKLeave then
+            return false
+        end
+
+        local ok, err = pcall(function()
+            RequestAFKLeave:Fire()
+        end)
+
+        if ok then
+            Shared.logLine("[GameRemote] Auto Return Lobby -> REQUEST_AFK_LEAVE")
+            return true
+        end
+
+        Shared.logLine("[GameRemote] Auto Return Lobby failed: " .. tostring(err))
         return false
     end
 
