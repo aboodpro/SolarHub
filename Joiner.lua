@@ -555,30 +555,25 @@ function Joiner.Init(Shared, UI)
                 local startSent = false
 
                 while os.clock() < deadline and not startSent do
-                    -- A new ReplicaSet is the strongest signal we have from the
-                    -- live capture. Do not treat pcall(FireServer) itself as
-                    -- success: FireServer returns void, so pcall only proves the
-                    -- client call did not throw, not that the server accepted it.
+                    -- The live Select Stage capture shows that PARTY_CREATE already
+                    -- creates the party with the requested queueData. The game's final
+                    -- client action is ONLY:
+                    --     ReplicaSignal:FireServer(<new replica id>, "StartGame")
+                    -- Do not send SetQueueData here; that is an extra request which the
+                    -- real UI does not send and can interfere with the freshly-created
+                    -- party state.
                     for _, replicaId in ipairs(candidateIds) do
-                        local setOk = pcall(function()
-                            ReplicaSignal:FireServer(replicaId, "SetQueueData", queueData)
+                        local startOk = pcall(function()
+                            ReplicaSignal:FireServer(replicaId, "StartGame")
                         end)
 
-                        if setOk then
-                            task.wait(0.15)
-
-                            local startOk = pcall(function()
-                                ReplicaSignal:FireServer(replicaId, "StartGame")
-                            end)
-
-                            if startOk then
-                                Shared.logLine(
-                                    "[Joiner] Story Select Stage -> SetQueueData + StartGame sent to new replica "
-                                        .. tostring(replicaId)
-                                )
-                                startSent = true
-                                break
-                            end
+                        if startOk then
+                            Shared.logLine(
+                                "[Joiner] Story Select Stage -> StartGame sent to new party replica "
+                                    .. tostring(replicaId)
+                            )
+                            startSent = true
+                            break
                         end
                     end
 
