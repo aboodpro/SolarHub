@@ -3,7 +3,9 @@
 -- Only approved games/places are allowed to load SolarHub modules.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local CACHE_BUST = tostring(os.clock())
+-- Unique query per loader execution so GitHub/raw CDN and executor HTTP caches
+-- cannot reuse an older SolarHub module after a GitHub update.
+local CACHE_BUST = tostring(DateTime.now().UnixTimestampMillis) .. "_" .. tostring(math.random(100000, 999999))
 
 -------------------------------------------------
 -- ALLOWED GAMES
@@ -88,7 +90,8 @@ print("[Loader] PlaceId: " .. tostring(game.PlaceId))
 
 local function fetch(fileName)
     local ok, result = pcall(function()
-        return loadstring(game:HttpGet(BASE_URL .. fileName .. "?v=" .. CACHE_BUST))()
+        local url = BASE_URL .. fileName .. "?solarhub_version=" .. CACHE_BUST
+        return loadstring(game:HttpGet(url))()
     end)
 
     if not ok then
