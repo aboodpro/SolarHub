@@ -29,6 +29,14 @@ function Joiner.Init(Shared, UI)
     local RequestLeaveMatchmaking = Nodes.REQUEST_LEAVE_MATCHMAKING
     local RequestAFKLeave = Nodes.REQUEST_AFK_LEAVE
 
+    -- Direct NetworkEvent used by the game's matchmaking request.
+    -- This avoids depending on the Map/Matchmaking UI components.
+    local NetworkEvents = Shared.ReplicatedStorage
+        :WaitForChild("Nodes")
+        :WaitForChild("Network")
+        :WaitForChild("NetworkEvents")
+    local UpdateNode = NetworkEvents:WaitForChild("_updateNode")
+
     local StoryMaps = {}
     local StoryMapDisplayToId = {}
     local StoryActs = {}
@@ -332,13 +340,24 @@ function Joiner.Init(Shared, UI)
         end
 
         local ok, result = pcall(function()
+            if modeName == "Story" then
+                -- Exact request observed from the game's own Story flow.
+                UpdateNode:FireServer(
+                    {Type = "Post"},
+                    "REQUEST_ENTER_MATCHMAKING_RequestNODE",
+                    1,
+                    queueData
+                )
+                return true
+            end
+
             return RequestEnterMatchmaking:Request(queueData)
         end)
 
         if ok then
-            Shared.logLine("[Matchmaking] " .. modeName .. " requested through REQUEST_ENTER_MATCHMAKING")
+            Shared.logLine("[Matchmaking] " .. modeName .. " requested through NetworkEvent")
             if result ~= nil then
-                Shared.logLine("[Matchmaking] Request node created")
+                Shared.logLine("[Matchmaking] Request sent")
             end
             return true
         end
