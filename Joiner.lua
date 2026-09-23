@@ -433,71 +433,84 @@ function Joiner.Init(Shared, UI)
                     while os.clock() < deadline do
                         local activated = false
 
-                        -- Fusion's Select Stage Start control is not guaranteed to be
-                        -- a TextButton/ImageButton itself. On mobile especially, the visible
-                        -- "Start" text can live inside a GuiButton or a wrapper.
-                        -- Find the visible Start label first, then walk up to the actual button.
-                        for _, obj in ipairs(playerGui:GetDescendants()) do
-                            local visible = false
-                            pcall(function() visible = obj.Visible end)
+                        -- Select Stage creates a party replica. StartGame is sent to
+                -- that replica; the old implementation searched only low replica
+                -- IDs, while live party replicas can use IDs such as 23313.
+                task.spawn(function()
+                    local candidateIds = {}
+                    local seen = {}
 
-                            local text = ""
-                            if obj:IsA("TextButton") or obj:IsA("TextLabel") then
-                                text = tostring(obj.Text or "")
-                            elseif obj:IsA("ImageButton") then
-                                local label = obj:FindFirstChildWhichIsA("TextLabel", true)
-                                text = label and tostring(label.Text or "") or ""
-                            end
-
-                            if visible and text:lower():match("^%s*start%s*$") then
-                                local button = nil
-                                local current = obj
-
-                                for _ = 1, 8 do
-                                    if not current then break end
-                                    if current:IsA("GuiButton") then
-                                        button = current
-                                        break
-                                    end
-                                    current = current.Parent
-                                end
-
-                                if button and button.Visible and button.Active then
-                                    local ok = pcall(function()
-                                        -- Try the normal Roblox activation first.
-                                        button:Activate()
-                                    end)
-
-                                    -- Some Fusion controls don't react to Activate()
-                                    -- when their input connection is wrapped. Executor
-                                    -- environments commonly expose firesignal(), which
-                                    -- directly invokes the button's connected signal.
-                                    if not ok or not activated then
-                                        pcall(function()
-                                            if typeof(firesignal) == "function" then
-                                                if button:IsA("TextButton") or button:IsA("ImageButton") then
-                                                    firesignal(button.Activated)
-                                                    firesignal(button.MouseButton1Click)
-                                                end
-                                            end
-                                        end)
-                                    end
-
-                                    Shared.logLine("[Joiner] Story Select Stage -> Start control triggered")
-                                    activated = true
-                                    break
-                                end
-                            end
+                    local function addCandidate(value)
+                        if type(value) == "number" and value > 0 and value <= 1000000 and not seen[value] then
+                            seen[value] = true
+                            table.insert(candidateIds, value)
                         end
-
-                        if activated then
-                            return
-                        end
-
-                        task.wait(0.2)
                     end
 
-                    Shared.logLine("[Joiner] Story Select Stage -> Start button not found")
+                    local function scanValue(value, depth)
+                        if depth > 3 or type(value) ~= "table" then
+                            return
+                        end
+                        for key, child in pairs(value) do
+                            if type(key) == "string" then
+                                local lower = key:lower()
+                                if lower == "id" or lower == "replicaid" or lower == "queueid" or lower == "replica_id" then
+                                    addCandidate(child)
+                                end
+                            end
+                            if type(child) == "table" then
+                                scanValue(child, depth + 1)
+                            end
+                        end
+                    end
+
+                    local replicaCreate = Shared.ReplicatedStorage.RemoteEvents:FindFirstChild("ReplicaCreate")
+                    local replicaSet = Shared.ReplicatedStorage.RemoteEvents:FindFirstChild("ReplicaSet")
+
+                    local connections = {}
+
+                    if replicaCreate then
+                        connections.create = replicaCreate.OnClientEvent:Connect(function(data)
+                            scanValue(data, 0)
+                        end)
+                    end
+
+                    if replicaSet then
+                        connections.set = replicaSet.OnClientEvent:Connect(function(replicaId)
+                            addCandidate(replicaId)
+                        end)
+                    end
+
+                    local deadline = os.clock() + 8
+                    local started = false
+
+                    while os.clock() < deadline and not started do
+                        for _, replicaId in ipairs(candidateIds) do
+                            local ok = pcall(function()
+                                ReplicaSignal:FireServer(replicaId, "StartGame")
+                            end)
+
+                            if ok then
+                                Shared.logLine("[Joiner] Story Select Stage -> StartGame sent to replica " .. tostring(replicaId))
+                                started = true
+                                break
+                            end
+                        end
+
+                        if not started then
+                            task.wait(0.1)
+                        end
+                    end
+
+                    for _, connection in pairs(connections) do
+                        pcall(function()
+                            connection:Disconnect()
+                        end)
+                    end
+
+                    if not started then
+                        Shared.logLine("[Joiner] Story Select Stage -> StartGame replica not found")
+                    end
                 end)
 
                 return true
