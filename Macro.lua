@@ -7,10 +7,7 @@ function Macro.Init(Shared, UI)
     local saveMacrosToFile = Shared.saveMacrosToFile
     local showTopNotification = Shared.showTopNotification
     local HttpService = Shared.HttpService
-    local captureVisiblePlacementCost = Shared.captureVisiblePlacementCost
     local getCurrentYen = Shared.getCurrentYen
-    local waitForNewModel = Shared.waitForNewModel
-    local clearPendingModels = Shared.clearPendingModels
 
     local tabs = UI.tabs
     local macroTab = tabs["Macro"]
@@ -19,7 +16,135 @@ function Macro.Init(Shared, UI)
     local recordStartTime = 0
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
+    local recordedPlacementCFrames = {}
     local scannedUnitsDatabase = {}
+
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local replicaClientModule = nil
+    pcall(function()
+        replicaClientModule = require(ReplicatedStorage.Shared.ReplicaClient)
+    end)
+
+    local function getPlayerReplica()
+        if not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+            return nil
+        end
+
+        for id = 1, 300 do
+            local ok, replica = pcall(replicaClientModule.FromId, id)
+            if ok and replica and replica.Data and replica.Data.TotalUnitsPlaced ~= nil then
+                return replica
+            end
+        end
+
+        return nil
+    end
+
+    local function getOwnedGameUnitReplicas()
+        local out = {}
+        local playerReplica = getPlayerReplica()
+        if not playerReplica or not playerReplica.Data then
+            return out
+        end
+
+        local playerId = tostring(playerReplica.Data.ID or "")
+        if playerId == "" then
+            return out
+        end
+
+        if not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+            return out
+        end
+
+        for id = 1, 2000 do
+            local ok, replica = pcall(replicaClientModule.FromId, id)
+            if ok and replica and replica.Data then
+                local data = replica.Data
+                if tostring(data.GamePlayerID or "") == playerId
+                    and data.CFrame ~= nil
+                    and data.UnitID ~= nil
+                    and data.MaxUpgrade ~= nil then
+                    out[tostring(id)] = replica
+                end
+            end
+        end
+
+        return out
+    end
+
+    local function snapshotOwnedGameUnits()
+        local snapshot = {}
+        for id in pairs(getOwnedGameUnitReplicas()) do
+            snapshot[id] = true
+        end
+        return snapshot
+    end
+
+    local function resolveRecordedPlacementOrder(recordedUnitId)
+        local replicaId = tonumber(recordedUnitId)
+        if not replicaId or not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+            return nil
+        end
+
+        local ok, replica = pcall(replicaClientModule.FromId, replicaId)
+        if not ok or not replica or not replica.Data or typeof(replica.Data.CFrame) ~= "CFrame" then
+            return nil
+        end
+
+        local targetPosition = replica.Data.CFrame.Position
+        local bestOrder = nil
+        local bestDistance = math.huge
+
+        for order, placementCFrame in pairs(recordedPlacementCFrames) do
+            if typeof(placementCFrame) == "CFrame" then
+                local distance = (placementCFrame.Position - targetPosition).Magnitude
+                if distance < bestDistance then
+                    bestDistance = distance
+                    bestOrder = order
+                end
+            end
+        end
+
+        if bestOrder and bestDistance <= 8 then
+            return bestOrder
+        end
+
+        return nil
+    end
+
+    local function findNewUnitReplicaId(beforeIds, placementCFrame, timeoutSeconds)
+        local deadline = os.clock() + (timeoutSeconds or 3)
+        local bestId = nil
+        local bestDistance = math.huge
+
+        while os.clock() < deadline do
+            local candidates = getOwnedGameUnitReplicas()
+
+            for id, replica in pairs(candidates) do
+                if not beforeIds[id] and replica and replica.Data then
+                    local cframe = replica.Data.CFrame
+                    local distance = 0
+
+                    if typeof(placementCFrame) == "CFrame" and typeof(cframe) == "CFrame" then
+                        distance = (cframe.Position - placementCFrame.Position).Magnitude
+                    end
+
+                    if distance < bestDistance then
+                        bestDistance = distance
+                        bestId = id
+                    end
+                end
+            end
+
+            if bestId and (typeof(placementCFrame) ~= "CFrame" or bestDistance <= 10) then
+                return bestId
+            end
+
+            task.wait(0.05)
+        end
+
+        return bestId
+    end
 
     -- نظام فحص آمن لقاعدة بيانات الوحدات (99 وحدة)
     task.spawn(function()
@@ -178,9 +303,10 @@ function Macro.Init(Shared, UI)
                         if actionDesc == "UnitPlace" then
                             recordPlacementCount = recordPlacementCount + 1
                             actionEntry.placementOrder = recordPlacementCount
+                            recordedPlacementCFrames[recordPlacementCount] = packedArgs[4]
 
                         elseif actionDesc == "UnitUpgrade" then
-                            actionEntry.linkedPlacementOrder = recordPlacementCount
+                            actionEntry.linkedPlacementOrder = resolveRecordedPlacementOrder(packedArgs[3])
 
                             pcall(function()
                                 local yenAfter = getCurrentYen()
@@ -207,7 +333,7 @@ function Macro.Init(Shared, UI)
                             end)
 
                         elseif actionDesc == "UnitAutoUpgrade" then
-                            actionEntry.linkedPlacementOrder = recordPlacementCount
+                            actionEntry.linkedPlacementOrder = resolveRecordedPlacementOrder(packedArgs[3])
                         end
                     end
                 end)
@@ -463,7 +589,7 @@ function Macro.Init(Shared, UI)
 
         local lastTime = 0
         local playPlacementCount = 0
-        local playbackUnitsByOrder = {}
+        local playbackUnitReplicaIds = {}
         local totalActions = #macroData.actions
 
         for actionIndex, action in ipairs(macroData.actions) do
@@ -471,13 +597,21 @@ function Macro.Init(Shared, UI)
             local gap = action.time - lastTime
             local actionLabel = action.actionType or "Action"
 
-            if action.actionType == "UnitUpgrade" and action.yenCost then
+            local effectiveYenCost = action.yenCost
+            if not effectiveYenCost and action.yenBefore and action.yenAfter then
+                local delta = action.yenBefore - action.yenAfter
+                if delta > 0 then
+                    effectiveYenCost = delta
+                end
+            end
+
+            if action.actionType == "UnitUpgrade" and effectiveYenCost then
                 while isPlayingMacro do
                     local yen = getCurrentYen()
-                    local missing = yen and math.max(0, action.yenCost - yen) or action.yenCost
+                    local missing = yen and math.max(0, effectiveYenCost - yen) or effectiveYenCost
                     macroStatusLabel.Text = ("[%d/%d] Upgrade | Yen %s/%s | %s missing"):format(
-                        actionIndex, totalActions, tostring(yen or "?"), tostring(action.yenCost), tostring(missing))
-                    if yen and yen >= action.yenCost then
+                        actionIndex, totalActions, tostring(yen or "?"), tostring(effectiveYenCost), tostring(missing))
+                    if yen and yen >= effectiveYenCost then
                         break
                     end
                     task.wait(0.3)
@@ -504,47 +638,49 @@ function Macro.Init(Shared, UI)
 
                     if action.actionType == "UnitPlace" then
                         playPlacementCount = playPlacementCount + 1
-                        pcall(clearPendingModels)
 
-                        -- Watch for the server-spawned unit so later actions can use its
-                        -- new session-specific Id instead of the recorded Id.
+                        local beforeIds = snapshotOwnedGameUnits()
+
                         if action.method == "InvokeServer" then
                             remoteObj:InvokeServer(table.unpack(args))
                         else
                             remoteObj:FireServer(table.unpack(args))
                         end
 
-                        local newUnit = waitForNewModel and waitForNewModel(3) or nil
-                        if newUnit and newUnit.Parent then
-                            playbackUnitsByOrder[playPlacementCount] = newUnit
-                            print(("[Macro] Placement #%d mapped to %s Id=%s"):format(
+                        local newReplicaId = findNewUnitReplicaId(
+                            beforeIds,
+                            args[4],
+                            3
+                        )
+
+                        if newReplicaId then
+                            playbackUnitReplicaIds[playPlacementCount] = newReplicaId
+                            print(("[Macro] Placement #%d mapped to Replica ID=%s"):format(
                                 playPlacementCount,
-                                newUnit:GetFullName(),
-                                tostring(newUnit:GetAttribute("Id") or newUnit:GetAttribute("UnitId") or newUnit.Name)))
+                                tostring(newReplicaId)))
                         else
-                            warn(("[Macro] Placement #%d could not be mapped to a spawned unit"):format(playPlacementCount))
+                            warn(("[Macro] Placement #%d could not be mapped to a new game-unit Replica"):format(
+                                playPlacementCount))
                         end
+
                         task.wait(0.2)
 
                     elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
-                        local targetModel = targetOrder and playbackUnitsByOrder[targetOrder]
+                        local targetReplicaId = targetOrder and playbackUnitReplicaIds[targetOrder]
 
-                        if targetModel and action.unitIdArgIndex then
-                            local newId = targetModel:GetAttribute("Id")
-                                or targetModel:GetAttribute("UnitId")
-                                or targetModel.Name
+                        if targetReplicaId and action.unitIdArgIndex then
+                            args[action.unitIdArgIndex] = tostring(targetReplicaId)
 
-                            args[action.unitIdArgIndex] = newId
-
-                            print(("[Macro] %s targeting placement #%d -> Id=%s"):format(
+                            print(("[Macro] %s targeting placement #%d -> Replica ID=%s"):format(
                                 action.actionType,
                                 targetOrder,
-                                tostring(newId)))
+                                tostring(targetReplicaId)))
                         else
-                            warn(("[Macro] %s target mapping missing for placement #%s"):format(
+                            warn(("[Macro] %s target mapping missing for placement #%s (recordedUnitId=%s)"):format(
                                 action.actionType,
-                                tostring(targetOrder)))
+                                tostring(targetOrder),
+                                tostring(action.recordedUnitId)))
                         end
 
                         if action.method == "InvokeServer" then
@@ -601,6 +737,7 @@ function Macro.Init(Shared, UI)
             recordStartTime = os.clock()
             recordPlacementCount = 0
             recordUnitIdMap = {}
+            recordedPlacementCFrames = {}
             recordBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
             recordBtn.Text = "🔴 Recording..."
             showTopNotification("Recording started...", 3)
