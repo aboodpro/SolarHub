@@ -504,7 +504,10 @@ function Joiner.Init(Shared, UI)
             end
 
             local function tryStartGame(id)
-                if not partyCreateSent or not partyCreateAccepted or startGameSent then
+                -- StartGame belongs to the newly created party replica.
+                -- Do NOT wait for PARTY_CREATE_ReturnNODE: in the live game's
+                -- event order, ReplicaSet can arrive before/around that ack.
+                if not partyCreateSent or startGameSent then
                     return
                 end
 
@@ -513,25 +516,39 @@ function Joiner.Init(Shared, UI)
                     id = bestId
                     Shared.logLine("[Joiner] Story selected party replica " .. tostring(id) .. " (match score " .. tostring(bestScore) .. ")")
                 end
-                if type(id) ~= "number" or id <= 0 or id > 1000000 then
+
+                id = tonumber(id)
+                if not id or id <= 0 or id > 1000000 then
                     return
                 end
 
+                startGameSent = true
+
                 task.spawn(function()
-                    local delays = {0, 0.12, 0.30, 0.60, 1.00}
+                    local delays = {0, 0.10, 0.25, 0.50, 0.90}
+                    local successfulCalls = 0
+
                     for attempt, delay in ipairs(delays) do
-                        if startGameSent then
-                            return
+                        if delay > 0 then
+                            task.wait(delay)
                         end
-                        if delay > 0 then task.wait(delay) end
-                        local ok = pcall(function()
+
+                        local ok, err = pcall(function()
                             ReplicaSignal:FireServer(id, "StartGame")
                         end)
+
                         if ok then
+                            successfulCalls += 1
                             Shared.logLine("[Joiner] Story StartGame attempt " .. tostring(attempt) .. " -> replica " .. tostring(id))
+                        else
+                            Shared.logLine("[Joiner] Story StartGame attempt " .. tostring(attempt) .. " failed: " .. tostring(err))
                         end
                     end
-                    startGameSent = true
+
+                    if successfulCalls == 0 then
+                        startGameSent = false
+                        Shared.logLine("[Joiner] Story StartGame: all attempts failed; will wait for another candidate")
+                    end
                 end)
             end
 
@@ -564,13 +581,12 @@ function Joiner.Init(Shared, UI)
                 -- PARTY_CREATE_RequestNODE -> ReplicaSet(newReplicaId) ->
                 -- ReplicaSignal:FireServer(newReplicaId, "StartGame")
                 if partyCreateSent then
-                    if partyCreateAccepted then
-                        task.delay(0.05, function()
-                            tryStartGame(id)
-                        end)
-                    else
-                        pendingReplicaId = id
-                    end
+                    -- The ReplicaSet itself is enough to attempt StartGame.
+                    -- The ReturnNODE ack is useful for logging, but must not
+                    -- block the actual StartGame request.
+                    task.delay(0.03, function()
+                        tryStartGame(id)
+                    end)
                 end
             end
 
@@ -610,10 +626,10 @@ function Joiner.Init(Shared, UI)
                 if partyCreateSent and action == "PARTY_CREATE_ReturnNODE" and success == true then
                     partyCreateAccepted = true
                     Shared.logLine("[Joiner] Story PARTY_CREATE accepted")
-                    if pendingReplicaId then
+                    if pendingReplicaId and not startGameSent then
                         local id = pendingReplicaId
                         pendingReplicaId = nil
-                        task.delay(0.05, function()
+                        task.delay(0.03, function()
                             tryStartGame(id)
                         end)
                     end
