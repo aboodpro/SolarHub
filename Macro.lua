@@ -1016,40 +1016,67 @@ function Macro.Init(Shared, UI)
         return true, result
     end
 
+    local function getUnitLevel(data)
+        if not data then return nil end
+        return data.Level or data.Upgrade or data.UpgradeLevel
+    end
+
     local function verifyAction(action, beforeYen, beforeUnits)
         if action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
             local targetId = action._playbackReplicaId
-            if not targetId or not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+            if not targetId then
+                return false
+            end
+
+            local replicaClient = getReplicaClient()
+            if not replicaClient or type(replicaClient.FromId) ~= "function" then
                 return true
             end
 
-            local deadline = os.clock() + 1
-            while os.clock() < deadline and isPlayingMacro do
-                local ok, replica = pcall(getReplicaClient().FromId, tonumber(targetId))
+            local beforeLevel = nil
+            pcall(function()
+                local replica = replicaClient.FromId(tonumber(targetId))
+                if replica and replica.Data then
+                    beforeLevel = getUnitLevel(replica.Data)
+                end
+            end)
+
+            local deadline = os.clock() + 1.5
+            while os.clock() < deadline and isPlayingMacro == true do
+                local ok, replica = pcall(replicaClient.FromId, tonumber(targetId))
                 if ok and replica and replica.Data then
                     if action.actionType == "UnitAutoUpgrade" then
-                        -- Priority changes are difficult to verify generically.
                         return true
                     end
 
-                    if beforeYen ~= nil and replica.Data.Yen == nil then
+                    local currentLevel = getUnitLevel(replica.Data)
+                    if beforeLevel ~= nil and currentLevel ~= nil
+                        and tostring(currentLevel) ~= tostring(beforeLevel) then
                         return true
                     end
 
-                    local currentLevel = replica.Data.Level or replica.Data.Upgrade or replica.Data.UpgradeLevel
-                    if currentLevel ~= nil then
-                        return true
+                    if beforeYen ~= nil then
+                        local currentYen = getCurrentYen()
+                        if currentYen ~= nil and currentYen < beforeYen then
+                            return true
+                        end
                     end
                 end
-                task.wait(0.08)
+
+                task.wait(0.1)
             end
 
-            -- If the remote executed without an observable level field, don't
-            -- falsely mark it as failed.
-            return true
+            if beforeYen ~= nil then
+                local currentYen = getCurrentYen()
+                if currentYen ~= nil and currentYen < beforeYen then
+                    return true
+                end
+            end
+
+            return beforeLevel == nil
         elseif action.actionType == "UnitPlace" then
             local deadline = os.clock() + 0.8
-            while os.clock() < deadline and isPlayingMacro do
+            while os.clock() < deadline and isPlayingMacro == true do
                 local now = getOwnedGameUnitReplicas()
                 for id in pairs(now) do
                     if not beforeUnits[id] then
@@ -1062,6 +1089,46 @@ function Macro.Init(Shared, UI)
         end
 
         return true
+    end
+    local function runUpgradeUntilAccepted(remoteObj, action, args, timeoutSeconds)
+        local deadline = os.clock() + (timeoutSeconds or 30)
+
+        repeat
+            if not isPlayingMacro then
+                return false, "Macro stopped"
+            end
+
+            local beforeYen = getCurrentYen()
+            local tempAction = {
+                actionType = action.actionType,
+                args = args,
+                method = action.method,
+            }
+
+            local fired, err = fireAction(remoteObj, tempAction)
+            if not fired then
+                if os.clock() >= deadline then
+                    return false, err or "Remote call failed"
+                end
+                task.wait(0.35)
+            else
+                local verified = verifyAction(action, beforeYen, {})
+                if verified then
+                    return true
+                end
+
+                if os.clock() >= deadline then
+                    return false, "Upgrade was not confirmed before timeout"
+                end
+
+                local currentYen = getCurrentYen()
+                macroStatusLabel.Text =
+                    ("Upgrade waiting | Yen: %s"):format(tostring(currentYen or "?"))
+                task.wait(0.35)
+            end
+        until os.clock() >= deadline
+
+        return false, "Upgrade timeout"
     end
 
     local function runMacroOnce(macroData)
@@ -1280,12 +1347,25 @@ function Macro.Init(Shared, UI)
                     end
 
                     if targetReplicaId or action.actionType == "UnitPlace" or (action.actionType ~= "UnitUpgrade" and action.actionType ~= "UnitAutoUpgrade") then
-                        local tempAction = {
-                            actionType = action.actionType,
-                            args = args,
-                            method = action.method,
-                        }
-                        local fired, err = fireAction(remoteObj, tempAction)
+                        local fired, err
+
+                        if action.actionType == "UnitUpgrade"
+                            and ignoreTiming then
+                            fired, err = runUpgradeUntilAccepted(
+                                remoteObj,
+                                action,
+                                args,
+                                30
+                            )
+                        else
+                            local tempAction = {
+                                actionType = action.actionType,
+                                args = args,
+                                method = action.method,
+                            }
+                            fired, err = fireAction(remoteObj, tempAction)
+                        end
+
                         if fired then
                             if action.actionType == "UnitPlace" then
                                 local placementOrder = action._playbackPlacementOrder
@@ -1309,7 +1389,11 @@ function Macro.Init(Shared, UI)
                                     success = false
                                 end
                             else
-                                local verified = verifyAction(action, nil, beforeIds)
+                                local verified = verifyAction(
+                                    action,
+                                    getCurrentYen(),
+                                    beforeIds
+                                )
                                 if verified then
                                     success = true
                                 else
