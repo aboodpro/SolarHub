@@ -113,28 +113,28 @@ function Macro.Init(Shared, UI)
     local function getOwnedGameUnitReplicas()
         local out = {}
         local playerReplica = getPlayerReplica()
-        if not playerReplica or not playerReplica.Data then
-            return out
-        end
-
-        local playerId = tostring(playerReplica.Data.ID or "")
-        if playerId == "" then
-            return out
-        end
+        local playerId = playerReplica and playerReplica.Data
+            and tostring(playerReplica.Data.ID or "")
+            or ""
 
         local replicaClient = getReplicaClient()
         if not replicaClient or type(replicaClient.FromId) ~= "function" then
             return out
         end
 
-        for id = 1, 2000 do
+        for id = 1, 3000 do
             local ok, replica = pcall(replicaClient.FromId, id)
             if ok and replica and replica.Data then
                 local data = replica.Data
-                if tostring(data.GamePlayerID or "") == playerId
-                    and data.CFrame ~= nil
-                    and data.UnitID ~= nil then
-                    out[tostring(id)] = replica
+                if data.CFrame ~= nil and data.UnitID ~= nil then
+                    local ownerId = tostring(data.GamePlayerID or "")
+                    -- Prefer explicit ownership, but keep replicas without an
+                    -- owner field too; some game versions populate ownership
+                    -- slightly after the unit replica itself.
+                    if playerId == "" or ownerId == ""
+                        or ownerId == playerId then
+                        out[tostring(id)] = replica
+                    end
                 end
             end
         end
@@ -1554,6 +1554,7 @@ function Macro.Init(Shared, UI)
                         end
 
                         cycleStarted = false
+                        transitionSent = false
                         startCooldown = os.clock()
                     end
 
