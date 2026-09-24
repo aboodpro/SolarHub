@@ -1021,7 +1021,22 @@ function Macro.Init(Shared, UI)
         return data.Level or data.Upgrade or data.UpgradeLevel
     end
 
-    local function verifyAction(action, beforeYen, beforeUnits)
+    local function getUnitLevelByReplicaId(targetId)
+        local replicaClient = getReplicaClient()
+        if not targetId or not replicaClient or type(replicaClient.FromId) ~= "function" then
+            return nil
+        end
+
+        local ok, replica = pcall(replicaClient.FromId, tonumber(targetId))
+        if ok and replica and replica.Data then
+            return getUnitLevel(replica.Data)
+        end
+
+        return nil
+    end
+
+
+    local function verifyAction(action, beforeYen, beforeUnits, beforeLevel)
         if action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
             local targetId = action._playbackReplicaId
             if not targetId then
@@ -1032,14 +1047,6 @@ function Macro.Init(Shared, UI)
             if not replicaClient or type(replicaClient.FromId) ~= "function" then
                 return true
             end
-
-            local beforeLevel = nil
-            pcall(function()
-                local replica = replicaClient.FromId(tonumber(targetId))
-                if replica and replica.Data then
-                    beforeLevel = getUnitLevel(replica.Data)
-                end
-            end)
 
             local deadline = os.clock() + 1.5
             while os.clock() < deadline and isPlayingMacro == true do
@@ -1073,7 +1080,7 @@ function Macro.Init(Shared, UI)
                 end
             end
 
-            return beforeLevel == nil
+            return false
         elseif action.actionType == "UnitPlace" then
             local deadline = os.clock() + 0.8
             while os.clock() < deadline and isPlayingMacro == true do
@@ -1099,6 +1106,8 @@ function Macro.Init(Shared, UI)
             end
 
             local beforeYen = getCurrentYen()
+            local beforeLevel = getUnitLevelByReplicaId(action._playbackReplicaId)
+
             local tempAction = {
                 actionType = action.actionType,
                 args = args,
@@ -1112,7 +1121,12 @@ function Macro.Init(Shared, UI)
                 end
                 task.wait(0.35)
             else
-                local verified = verifyAction(action, beforeYen, {})
+                local verified = verifyAction(
+                    action,
+                    beforeYen,
+                    {},
+                    beforeLevel
+                )
                 if verified then
                     return true
                 end
