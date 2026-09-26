@@ -1022,6 +1022,32 @@ function Macro.Init(Shared, UI)
         return data.Level or data.Upgrade or data.UpgradeLevel
     end
 
+    local function findExistingPlacementReplica(placementCFrame)
+        if typeof(placementCFrame) ~= "CFrame" then
+            return nil
+        end
+
+        local candidates = getOwnedGameUnitReplicas()
+        local bestId = nil
+        local bestDistance = math.huge
+
+        for id, replica in pairs(candidates) do
+            if replica and replica.Data and typeof(replica.Data.CFrame) == "CFrame" then
+                local distance = (replica.Data.CFrame.Position - placementCFrame.Position).Magnitude
+                if distance < bestDistance then
+                    bestDistance = distance
+                    bestId = id
+                end
+            end
+        end
+
+        if bestId and bestDistance <= 4 then
+            return bestId
+        end
+
+        return nil
+    end
+
     local function getUnitLevelByReplicaId(targetId)
         local replicaClient = getReplicaClient()
         if not targetId or not replicaClient or type(replicaClient.FromId) ~= "function" then
@@ -1365,30 +1391,48 @@ function Macro.Init(Shared, UI)
                         local beforeYenForVerification = nil
                         local beforeLevelForVerification = nil
 
-                        if action.actionType == "UnitUpgrade" then
+                        if action.actionType == "UnitPlace" then
+                            -- Before retrying a placement, check whether the previous
+                            -- attempt actually created the unit. This prevents duplicate
+                            -- placements when replica detection was delayed.
+                            local existingReplicaId = findExistingPlacementReplica(args[4])
+                            if existingReplicaId then
+                                local placementOrder = action._playbackPlacementOrder
+                                playbackUnitReplicaIds[placementOrder] = existingReplicaId
+                                success = true
+                                Shared.logLine(
+                                    "[Macro] Place already exists -> order "
+                                        .. tostring(placementOrder)
+                                        .. " replica "
+                                        .. tostring(existingReplicaId)
+                                )
+                            end
+                        elseif action.actionType == "UnitUpgrade" then
                             beforeYenForVerification = getCurrentYen()
                             beforeLevelForVerification = getUnitLevelByReplicaId(action._playbackReplicaId)
                         end
 
-                        if action.actionType == "UnitUpgrade"
-                            and ignoreTiming then
-                            fired, err = runUpgradeUntilAccepted(
-                                remoteObj,
-                                action,
-                                args,
-                                30,
-                                myRunId
-                            )
-                        else
-                            local tempAction = {
-                                actionType = action.actionType,
-                                args = args,
-                                method = action.method,
-                            }
-                            fired, err = fireAction(remoteObj, tempAction)
+                        if not success then
+                            if action.actionType == "UnitUpgrade"
+                                and ignoreTiming then
+                                fired, err = runUpgradeUntilAccepted(
+                                    remoteObj,
+                                    action,
+                                    args,
+                                    30,
+                                    myRunId
+                                )
+                            else
+                                local tempAction = {
+                                    actionType = action.actionType,
+                                    args = args,
+                                    method = action.method,
+                                }
+                                fired, err = fireAction(remoteObj, tempAction)
+                            end
                         end
 
-                        if fired then
+                        if success or fired then
                             if action.actionType == "UnitPlace" then
                                 local placementOrder = action._playbackPlacementOrder
                                 local newReplicaId = waitForNewPlacementReplica(
