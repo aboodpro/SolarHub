@@ -570,18 +570,22 @@ local function getActiveGameReplicaId()
         return nil
     end
 
-    local bestId = nil
+    -- Match the exact replica returned by findGameReplica(), which is also
+    -- the source used for State/Wave/MaxWave debug and Macro start detection.
+    local activeReplica = findGameReplica()
+    if not activeReplica then
+        return nil
+    end
 
-    for id = 1, 2000 do
+    for id = 1, 300 do
         local ok, replica = pcall(replicaClientModule.FromId, id)
 
-        if ok and replica and type(replica.Data) == "table"
-            and replica.Data.CurrentGameState ~= nil then
-            bestId = id
+        if ok and replica and replica == activeReplica then
+            return id
         end
     end
 
-    return bestId
+    return nil
 end
 
 Shared.getActiveGameReplicaId = getActiveGameReplicaId
