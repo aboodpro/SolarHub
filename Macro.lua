@@ -2140,6 +2140,7 @@ function Macro.Init(Shared, UI)
             macroStatusLabel.Text = "Stopped"
             macroDebugLog("[PLAY STOP] User stopped Play Macro")
         end
+    end)
 
     return true
 end
