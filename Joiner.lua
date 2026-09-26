@@ -959,9 +959,6 @@ function Joiner.Init(Shared, UI)
         if state == "InProgress" then
             gameRoundActive = true
             gameTransitionPending = false
-            if Shared.macroStartRequested == true then
-                Shared.macroStartRequested = false
-            end
 
             if Config.AutoSkipWave and remoteCooldown("AutoSkipWave", 2) then
                 local ok, err = pcall(function()
