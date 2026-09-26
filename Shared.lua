@@ -297,15 +297,74 @@ local function showSessionLogWindow()
     Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
 
     local hint = Instance.new("TextLabel")
-    hint.Size = UDim2.new(1, -28, 0, 24)
-    hint.Position = UDim2.new(0, 14, 1, -30)
+    hint.Size = UDim2.new(1, -132, 0, 24)
+    hint.Position = UDim2.fromOffset(14, 1)
+    hint.AnchorPoint = Vector2.new(0, 1)
+    hint.Position = UDim2.new(0, 14, 1, -6)
     hint.BackgroundTransparency = 1
     hint.Font = Enum.Font.Gotham
-    hint.Text = "Ctrl+A ثم Ctrl+C لنسخ اللوق"
+    hint.Text = "ضغط مطوّل على اللوق = Copy"
     hint.TextColor3 = Color3.fromRGB(145, 150, 165)
     hint.TextSize = 11
     hint.TextXAlignment = Enum.TextXAlignment.Left
     hint.Parent = frame
+
+    local copyBtn = Instance.new("TextButton")
+    copyBtn.AnchorPoint = Vector2.new(1, 1)
+    copyBtn.Position = UDim2.new(1, -14, 1, -6)
+    copyBtn.Size = UDim2.fromOffset(104, 24)
+    copyBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    copyBtn.BorderSizePixel = 0
+    copyBtn.Text = "Copy Log"
+    copyBtn.TextColor3 = Color3.fromRGB(235, 235, 240)
+    copyBtn.Font = Enum.Font.GothamBold
+    copyBtn.TextSize = 10
+    copyBtn.Parent = frame
+    Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 7)
+
+    local function copyAllLog()
+        local copied = copySessionLogToClipboard()
+        copyBtn.Text = copied and "Copied!" or "Copy Failed"
+
+        task.delay(1.2, function()
+            if copyBtn and copyBtn.Parent then
+                copyBtn.Text = "Copy Log"
+            end
+        end)
+    end
+
+    copyBtn.Activated:Connect(copyAllLog)
+
+    -- Long-press copy for mouse/touch.
+    -- A normal click still allows the TextBox to be focused/selected manually.
+    local pressStartedAt = 0
+    local pressActive = false
+
+    box.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            pressStartedAt = os.clock()
+            pressActive = true
+
+            task.spawn(function()
+                task.wait(0.75)
+                if pressActive
+                    and pressStartedAt > 0
+                    and os.clock() - pressStartedAt >= 0.7 then
+                    copyAllLog()
+                    pressActive = false
+                end
+            end)
+        end
+    end)
+
+    box.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            pressActive = false
+            pressStartedAt = 0
+        end
+    end)
 
     close.Activated:Connect(function()
         gui:Destroy()
