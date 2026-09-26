@@ -1673,12 +1673,17 @@ function Macro.Init(Shared, UI)
                             break
                         end
 
-                        if os.clock() - startCooldown >= 0.75 then
+                        -- Only the first round needs Macro to send Start while
+                        -- waiting in the pre-round state. After a completed round,
+                        -- wait for Game -> Auto Replay/Next to create the next InProgress
+                        -- state; do not spam the Start vote during that transition.
+                        if not hasCompletedRound
+                            and os.clock() - startCooldown >= 0.75 then
                             startCooldown = os.clock()
-                            macroStatusLabel.Text = hasCompletedRound
-                                and "Waiting for Replay/Next..."
-                                or "Starting game..."
+                            macroStatusLabel.Text = "Starting game..."
                             fireSignal(87, "Response", true)
+                        elseif hasCompletedRound then
+                            macroStatusLabel.Text = "Waiting for Replay/Next..."
                         end
 
                         cycleStarted = false
