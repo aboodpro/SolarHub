@@ -677,8 +677,9 @@ function Macro.Init(Shared, UI)
                     and not checkcaller()
                     and (method == "FireServer" or method == "InvokeServer") then
 
+                    local packedArgs = table.pack(...)
                     pcall(function()
-                        local args = table.pack(...)
+                        local args = packedArgs
                         local remotePath = self:GetFullName()
                         local valueParts = {}
 
