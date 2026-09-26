@@ -46,18 +46,6 @@ function Macro.Init(Shared, UI)
     local pendingRecordWorkers = 0
     local scannedUnitsDatabase = {}
 
-    local function macroDebugLog(message)
-        if Config.MacroDebug == false then
-            return
-        end
-        local line = "[MacroDBG] " .. tostring(message)
-        if type(Shared.logLine) == "function" then
-            Shared.logLine(line)
-        else
-            print(line)
-        end
-    end
-
     local replicaClientModule = nil
 
     -- Resolve ReplicaClient lazily and defensively. Some game revisions/executors
@@ -412,7 +400,6 @@ function Macro.Init(Shared, UI)
                                     and (actionDesc == "UnitUpgrade"
                                         or actionDesc == "UnitAutoUpgrade") then
                                     actionEntry.recordedUnitId = packedArgs[3]
-                                    actionEntry.recordedTargetReplicaId = packedArgs[3]
                                     actionEntry.unitIdArgIndex = 3
 
                                     -- Save a stable target reference from the recording session.
@@ -434,13 +421,6 @@ function Macro.Init(Shared, UI)
                                     #recordedActions,
                                     actionDesc
                                 ))
-                                macroDebugLog(
-                                    "RECORD type=" .. tostring(actionDesc)
-                                        .. " a1=" .. tostring(packedArgs[1])
-                                        .. " a2=" .. tostring(packedArgs[2])
-                                        .. " a3=" .. tostring(packedArgs[3])
-                                        .. " a4Type=" .. tostring(typeof(packedArgs[4]))
-                                )
 
                                 if actionDesc == "UnitPlace" then
                                     -- Placement identity is finalized after all
@@ -1229,12 +1209,6 @@ function Macro.Init(Shared, UI)
             if not isPlayingMacro or macroRunId ~= myRunId then break end
 
             local actionLabel = action.actionType or "Action"
-            macroDebugLog(
-                "PLAYBACK #" .. tostring(actionIndex)
-                    .. " type=" .. tostring(action.actionType)
-                    .. " linked=" .. tostring(action.linkedPlacementOrder)
-                    .. " target=" .. tostring(action.recordedTargetReplicaId or action.recordedUnitId)
-            )
             local effectiveYenCost = action.yenCost
             if not effectiveYenCost and action.yenBefore and action.yenAfter then
                 local delta = action.yenBefore - action.yenAfter
@@ -1511,18 +1485,7 @@ function Macro.Init(Shared, UI)
                                     args = args,
                                     method = action.method,
                                 }
-                                macroDebugLog(
-                                    "FIRE type=" .. tostring(action.actionType)
-                                        .. " remote=" .. tostring(action.remoteName)
-                                        .. " arg3=" .. tostring(args[3])
-                                        .. " target=" .. tostring(action._playbackReplicaId)
-                                )
                                 fired, err = fireAction(remoteObj, tempAction)
-                                macroDebugLog(
-                                    "FIRE RESULT type=" .. tostring(action.actionType)
-                                        .. " fired=" .. tostring(fired)
-                                        .. " err=" .. tostring(err)
-                                )
                             end
                         end
 
@@ -1548,16 +1511,6 @@ function Macro.Init(Shared, UI)
                                     else
                                         lastError = "Placed unit replica was not detected yet"
                                     end
-                                end
-                            elseif action.actionType == "UnitAutoUpgrade" then
-                                success = fired == true
-                                macroDebugLog(
-                                    "AUTOUPGRADE target=" .. tostring(action._playbackReplicaId)
-                                        .. " arg3=" .. tostring(args[3])
-                                        .. " fired=" .. tostring(fired)
-                                )
-                                if not success then
-                                    lastError = "AutoUpgrade FireServer failed"
                                 end
                             else
                                 local verified = verifyAction(
@@ -1726,11 +1679,6 @@ function Macro.Init(Shared, UI)
                 end
 
                 action.linkedPlacementOrder = linkedOrder
-                macroDebugLog(
-                    "FINALIZE type=" .. tostring(action.actionType)
-                        .. " target=" .. tostring(action.recordedTargetReplicaId or action.recordedUnitId)
-                        .. " linkedOrder=" .. tostring(linkedOrder)
-                )
             end
         end
     end
