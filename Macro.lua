@@ -860,7 +860,9 @@ function Macro.Init(Shared, UI)
     retryLabel.Size = UDim2.new(1, -16, 0, 18)
     retryLabel.Position = UDim2.fromOffset(8, 88)
     retryLabel.BackgroundTransparency = 1
-    retryLabel.Text = "Retry: 0"
+    local initialRetryValue = math.clamp(math.floor(tonumber(Config.MacroRetry) or 0), 0, 10)
+    Config.MacroRetry = initialRetryValue
+    retryLabel.Text = ("Retry: %d"):format(initialRetryValue)
     retryLabel.Font = Enum.Font.GothamBold
     retryLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
     retryLabel.TextSize = 10
@@ -913,6 +915,9 @@ function Macro.Init(Shared, UI)
         retryFill.Size = UDim2.new(normalized, 0, 1, 0)
         retryKnob.Position = UDim2.new(normalized, 0, 0.5, 0)
         retryLabel.Text = ("Retry: %d"):format(Config.MacroRetry)
+        if Config.MacroDebug == true then
+            macroDebugLog(("CONFIG Retry = %d"):format(Config.MacroRetry))
+        end
     end
 
     local function setRetryValue(value)
@@ -921,6 +926,9 @@ function Macro.Init(Shared, UI)
         retryFill.Size = UDim2.new(normalized, 0, 1, 0)
         retryKnob.Position = UDim2.new(normalized, 0, 0.5, 0)
         retryLabel.Text = ("Retry: %d"):format(Config.MacroRetry)
+        if Config.MacroDebug == true then
+            macroDebugLog(("CONFIG Retry = %d"):format(Config.MacroRetry))
+        end
     end
 
     retryBar.InputBegan:Connect(function(input)
@@ -1940,9 +1948,23 @@ function Macro.Init(Shared, UI)
         Config.PlayMacro = not Config.PlayMacro
 
         if Config.PlayMacro then
+            local retryCountAtStart = math.clamp(tonumber(Config.MacroRetry) or 0, 0, 10)
+
             playBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 80)
             playBtn.Text = "⏸ Playing..."
             macroStatusLabel.Text = "Waiting for stage..."
+
+            macroDebugLog(
+                ("PLAY START | macro=%s | actions=%d | Retry=%d | IgnoreTiming=%s | AutoReplay=%s | AutoNext=%s | AutoVoteStart=%s"):format(
+                    tostring(Config.CurrentMacroName),
+                    #macroData.actions,
+                    retryCountAtStart,
+                    tostring(Config.MacroIgnoreTiming == true),
+                    tostring(Config.AutoReplay == true),
+                    tostring(Config.AutoNext == true),
+                    tostring(Config.AutoVoteStart == true)
+                )
+            )
 
             task.spawn(function()
                 local function getReplicaSignal(waitSeconds)
@@ -1974,16 +1996,21 @@ function Macro.Init(Shared, UI)
                 local function fireSignal(...)
                     local args = table.pack(...)
 
-                    -- For Start/Vote, use the exact ReplicaSignal instance
-                    -- that Joiner already uses successfully. This avoids
-                    -- resolving another/misplaced ReplicaSignal.
                     if args[1] == 87 and args[2] == "Response" and args[3] == true
                         and type(Shared.sendGameStart) == "function" then
+
+                        macroDebugLog(
+                            ("START REQUEST | exact args: arg1=%s | arg2=%s | arg3=%s"):format(
+                                tostring(args[1]),
+                                tostring(args[2]),
+                                tostring(args[3])
+                            )
+                        )
 
                         local ok, err = Shared.sendGameStart()
 
                         if ok then
-                            Shared.logLine("[Macro] Game Start -> 87 Response true (Joiner ReplicaSignal)")
+                            Shared.logLine("[Macro] Game Start sent successfully")
                         else
                             Shared.logLine("[Macro] Game Start ERROR -> " .. tostring(err))
                         end
@@ -1999,17 +2026,19 @@ function Macro.Init(Shared, UI)
                         return false
                     end
 
+                    macroDebugLog(
+                        ("START REQUEST | remote=%s | args=%s"):format(
+                            tostring(remote:GetFullName()),
+                            debugArgs(args)
+                        )
+                    )
+
                     local ok, err = pcall(function()
                         remote:FireServer(table.unpack(args, 1, args.n))
                     end)
 
                     if ok then
-                        Shared.logLine(
-                            "[Macro] ReplicaSignal -> "
-                                .. tostring(args[1]) .. " "
-                                .. tostring(args[2]) .. " "
-                                .. tostring(args[3])
-                        )
+                        Shared.logLine("[Macro] ReplicaSignal call succeeded")
                     else
                         Shared.logLine("[Macro] ReplicaSignal ERROR -> " .. tostring(err))
                     end
@@ -2018,22 +2047,37 @@ function Macro.Init(Shared, UI)
                 end
 
                 local cycleStarted = false
-                local hasCompletedRound = false
+                local sawCompletedRound = false
                 local startCooldown = 0
+                local postRoundGraceUntil = 0
+                local lastState = nil
 
-                -- Play Macro owns only the in-game Start/Vote signal.
-                -- Auto Replay/Next stay in the Game tab and are handled by Joiner.
                 macroStatusLabel.Text = "Sending Start..."
                 fireSignal(87, "Response", true)
 
                 while Config.PlayMacro do
                     local state = getCurrentGameState()
+                    local transitionPending = Shared.gameTransitionPending == true
+
+                    if state ~= lastState then
+                        macroDebugLog(
+                            ("ROUND STATE | state=%s | transitionPending=%s | PlayMacro=%s | AutoReplay=%s | AutoNext=%s"):format(
+                                tostring(state),
+                                tostring(transitionPending),
+                                tostring(Config.PlayMacro),
+                                tostring(Config.AutoReplay),
+                                tostring(Config.AutoNext)
+                            )
+                        )
+                        lastState = state
+                    end
 
                     if state == "InProgress" then
                         if not cycleStarted then
                             cycleStarted = true
-                            hasCompletedRound = true
+                            sawCompletedRound = true
                             macroStatusLabel.Text = "Starting macro..."
+                            macroDebugLog("[ROUND START] InProgress detected -> starting recorded actions")
 
                             task.spawn(function()
                                 runMacroOnce(macroData)
@@ -2041,42 +2085,44 @@ function Macro.Init(Shared, UI)
                         end
 
                         startCooldown = os.clock()
+                        postRoundGraceUntil = 0
                     else
-                        -- Invalidate the previous round's Macro worker as soon as the
-                        -- game leaves InProgress. This prevents Retry=0 or replication
-                        -- waits from leaking into the next round.
                         if cycleStarted then
                             cycleStarted = false
                             isPlayingMacro = false
                             macroRunId += 1
                             Shared.isPlayingMacro = false
+                            postRoundGraceUntil = os.clock() + 1.2
+                            macroDebugLog(
+                                ("ROUND END | state=%s | grace=1.2s | AutoReplay=%s | AutoNext=%s"):format(
+                                    tostring(state),
+                                    tostring(Config.AutoReplay),
+                                    tostring(Config.AutoNext)
+                                )
+                            )
                         end
 
-                        -- Initial start is always allowed. After a completed round,
-                        -- keep the macro alive only when Game -> Auto Replay or Auto Next
-                        -- is enabled; Joiner owns those transitions.
-                        if hasCompletedRound and not Config.AutoReplay and not Config.AutoNext then
+                        if sawCompletedRound and not Config.AutoReplay and not Config.AutoNext then
                             Config.PlayMacro = false
                             playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
                             playBtn.Text = "▶ Play Macro"
                             macroStatusLabel.Text = "Finished"
+                            macroDebugLog("[PLAY STOP] Round completed and Replay/Next are both OFF")
                             break
                         end
 
-                        -- Only the first round needs Macro to send Start while
-                        -- waiting in the pre-round state. After a completed round,
-                        -- wait for Game -> Auto Replay/Next to create the next InProgress
-                        -- state; do not spam the Start vote during that transition.
-                        if not hasCompletedRound
+                        if transitionPending then
+                            macroStatusLabel.Text = "Waiting for Game Replay/Next..."
+                        elseif os.clock() >= postRoundGraceUntil
                             and os.clock() - startCooldown >= 0.75 then
+
                             startCooldown = os.clock()
                             macroStatusLabel.Text = "Starting game..."
+                            macroDebugLog("[START LOOP] Sending 87 Response true for next round")
                             fireSignal(87, "Response", true)
-                        elseif hasCompletedRound then
-                            macroStatusLabel.Text = "Waiting for Replay/Next..."
+                        else
+                            macroStatusLabel.Text = "Waiting for next round..."
                         end
-
-                        cycleStarted = false
                     end
 
                     task.wait(0.3)
@@ -2084,6 +2130,7 @@ function Macro.Init(Shared, UI)
 
                 isPlayingMacro = false
                 Shared.isPlayingMacro = false
+                macroDebugLog("[PLAY END] PlayMacro loop exited")
             end)
         else
             isPlayingMacro = false
@@ -2091,8 +2138,8 @@ function Macro.Init(Shared, UI)
             playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
             playBtn.Text = "▶ Play Macro"
             macroStatusLabel.Text = "Stopped"
+            macroDebugLog("[PLAY STOP] User stopped Play Macro")
         end
-    end)
 
     return true
 end
