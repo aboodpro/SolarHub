@@ -590,61 +590,67 @@ function Macro.Init(Shared, UI)
         end
     end)
 
-    -- One-shot remote inspector for diagnosing manual game actions such as
-    -- Start, Skip, Replay, Next, unit placement, upgrades, etc.
-    -- It is intentionally passive: it only observes and then forwards the
-    -- original __namecall unchanged.
+    -- One-shot remote inspector used only when the user explicitly arms it.
+    -- This observes client -> server remotes and never changes their arguments.
     local remoteCaptureArmed = false
     local remoteCaptureInstalled = false
     local remoteCaptureSerial = 0
     local remoteCaptureDeadline = 0
     local remoteCaptureSeen = {}
-    local remoteCaptureRecords = {}
 
-    local function remoteCaptureValue(value, depth)
+    local function formatCapturedValue(value, depth)
         depth = depth or 0
 
-        if depth > 3 then
+        if depth > 2 then
             return "<table>"
         end
 
         local valueType = typeof(value)
 
         if valueType == "Instance" then
-            local fullName = "?"
+            local result = "?"
             pcall(function()
-                fullName = value:GetFullName()
+                result = value:GetFullName()
             end)
-            return fullName
-        elseif valueType == "CFrame" then
+            return result
+        end
+
+        if valueType == "CFrame" then
             local components = {value:GetComponents()}
             return "CFrame.new(" .. table.concat(components, ", ") .. ")"
-        elseif valueType == "Vector3" then
+        end
+
+        if valueType == "Vector3" then
             return ("Vector3.new(%s, %s, %s)"):format(
                 tostring(value.X),
                 tostring(value.Y),
                 tostring(value.Z)
             )
-        elseif valueType == "Color3" then
+        end
+
+        if valueType == "Color3" then
             return ("Color3.fromRGB(%d, %d, %d)"):format(
                 math.floor(value.R * 255 + 0.5),
                 math.floor(value.G * 255 + 0.5),
                 math.floor(value.B * 255 + 0.5)
             )
-        elseif valueType == "table" then
+        end
+
+        if valueType == "table" then
             local parts = {}
             local count = 0
 
             for key, child in pairs(value) do
-                count += 1
-                if count > 30 then
+                count = count + 1
+
+                if count > 25 then
                     table.insert(parts, "...")
                     break
                 end
 
                 table.insert(
                     parts,
-                    "[" .. tostring(key) .. "]=" .. remoteCaptureValue(child, depth + 1)
+                    "[" .. tostring(key) .. "]=" .. formatCapturedValue(child, depth + 1)
                 )
             end
 
@@ -654,7 +660,7 @@ function Macro.Init(Shared, UI)
         return tostring(value)
     end
 
-    local function installRemoteCaptureHook()
+    local function installRemoteCapture()
         if remoteCaptureInstalled then
             return true
         end
@@ -662,13 +668,13 @@ function Macro.Init(Shared, UI)
         if type(hookmetamethod) ~= "function"
             or type(getnamecallmethod) ~= "function"
             or type(checkcaller) ~= "function" then
-
-            macroDebugLog("REMOTE CAPTURE unavailable: executor hook APIs missing.")
+            macroDebugLog("[RemoteDebug] Capture unavailable: executor hook API missing.")
             return false
         end
 
         local ok, err = pcall(function()
             local oldNamecall
+
             oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 local method = getnamecallmethod()
 
@@ -677,48 +683,52 @@ function Macro.Init(Shared, UI)
                     and not checkcaller()
                     and (method == "FireServer" or method == "InvokeServer") then
 
-                    local packedArgs = table.pack(...)
+                    local args = table.pack(...)
+                    local path = tostring(self)
+
                     pcall(function()
-                        local args = packedArgs
-                        local remotePath = self:GetFullName()
-                        local valueParts = {}
-
-                        for index = 1, args.n do
-                            valueParts[index] = remoteCaptureValue(args[index])
-                        end
-
-                        local signature =
-                            remotePath
-                            .. "|" .. tostring(method)
-                            .. "|" .. table.concat(valueParts, " | ")
-
-                        if not remoteCaptureSeen[signature] then
-                            remoteCaptureSeen[signature] = true
-
-                            local recordIndex = #remoteCaptureRecords + 1
-                            table.insert(remoteCaptureRecords, {
-                                index = recordIndex,
-                                remotePath = remotePath,
-                                remoteClass = self.ClassName,
-                                method = method,
-                                args = valueParts,
-                            })
-
-                            Shared.logLine(
-                                ("[RemoteDebug] #%d | %s %s | %s"):format(
-                                    recordIndex,
-                                    tostring(method),
-                                    tostring(remotePath),
-                                    table.concat(valueParts, " | ")
-                                )
-                            )
-
-                            if recordIndex >= 30 then
-                                remoteCaptureArmed = false
-                                Shared.logLine("[RemoteDebug] Auto-stopped after 30 unique remote calls.")
-                            end
-                        end
+                        path = self:GetFullName()
                     end)
+
+                    local values = {}
+
+                    for index = 1, args.n do
+                        values[index] = formatCapturedValue(args[index])
+                    end
+
+                    local signature =
+                        path
+                        .. "|" .. tostring(method)
+                        .. "|" .. table.concat(values, " | ")
+
+                    if not remoteCaptureSeen[signature] then
+                        remoteCaptureSeen[signature] = true
+
+                        Shared.logLine(
+                            ("[RemoteDebug] %s | %s | %s"):format(
+                                tostring(method),
+                                path,
+                                table.concat(values, " | ")
+                            )
+                        )
+
+                        local copiedText =
+                            "-- " .. tostring(method) .. " " .. path .. "\n"
+                            .. "args: " .. table.concat(values, " | ")
+
+                        if setclipboard then
+                            pcall(function()
+                                setclipboard(copiedText)
+                            end)
+                        elseif toclipboard then
+                            pcall(function()
+                                toclipboard(copiedText)
+                            end)
+                        end
+
+                        remoteCaptureArmed = false
+                        Shared.logLine("[RemoteDebug] Captured ONE remote and stopped.")
+                    end
                 elseif remoteCaptureArmed and os.clock() > remoteCaptureDeadline then
                     remoteCaptureArmed = false
                 end
@@ -730,9 +740,7 @@ function Macro.Init(Shared, UI)
         end)
 
         if not ok then
-            macroDebugLog(
-                "[RemoteDebug] Failed to install capture hook: " .. tostring(err)
-            )
+            macroDebugLog("[RemoteDebug] Hook install failed: " .. tostring(err))
             remoteCaptureInstalled = false
         end
 
@@ -751,51 +759,33 @@ function Macro.Init(Shared, UI)
     Instance.new("UICorner", remoteCaptureBtn).CornerRadius = UDim.new(0, 7)
 
     remoteCaptureBtn.Activated:Connect(function()
-        if not installRemoteCaptureHook() then
+        if not installRemoteCapture() then
             showTopNotification("Remote capture is unavailable in this executor.", 3)
             return
         end
 
-        remoteCaptureSerial += 1
+        remoteCaptureSerial = remoteCaptureSerial + 1
         remoteCaptureArmed = true
         remoteCaptureDeadline = os.clock() + 10
         remoteCaptureSeen = {}
-        remoteCaptureRecords = {}
 
         remoteCaptureBtn.BackgroundColor3 = Color3.fromRGB(190, 120, 35)
-        remoteCaptureBtn.Text = "⏺ Capturing next action..."
+        remoteCaptureBtn.Text = "⏺ Capturing ONE action..."
 
-        Shared.logLine(
-            "[RemoteDebug] ARMED | Perform ONE manual action now (Start/Skip/Replay/Next/etc.)."
-        )
-        Shared.logLine(
-            "[RemoteDebug] Capture window = 10s | automation should be OFF to avoid unrelated remotes."
-        )
+        Shared.logLine("[RemoteDebug] ARMED | Perform exactly ONE manual game action now.")
+        showTopNotification("Capture armed. Perform ONE action now.", 4)
 
-        showTopNotification(
-            "Capture armed. Perform ONE manual game action now.",
-            4
-        )
+        local serial = remoteCaptureSerial
 
-        local captureSerial = remoteCaptureSerial
         task.delay(10.15, function()
-            if captureSerial ~= remoteCaptureSerial then
+            if serial ~= remoteCaptureSerial then
                 return
             end
 
             remoteCaptureArmed = false
             remoteCaptureBtn.BackgroundColor3 = Color3.fromRGB(55, 68, 55)
             remoteCaptureBtn.Text = "🔎 Capture Next Action"
-
-            if #remoteCaptureRecords == 0 then
-                Shared.logLine("[RemoteDebug] DONE | No game remote captured.")
-            else
-                Shared.logLine(
-                    ("[RemoteDebug] DONE | Unique remotes captured=%d"):format(
-                        #remoteCaptureRecords
-                    )
-                )
-            end
+            Shared.logLine("[RemoteDebug] Capture window ended without a new remote.")
         end)
     end)
 
