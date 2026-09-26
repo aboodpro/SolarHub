@@ -1399,6 +1399,7 @@ function Macro.Init(Shared, UI)
                     end
 
                     local args = { table.unpack(action.args, 1, action.args.n) }
+                    local targetReplicaId = nil
 
                     macroDebugLog(
                         ("PLAY ATTEMPT #%d | type=%s | remote=%s | args=%s"):format(
@@ -1416,7 +1417,7 @@ function Macro.Init(Shared, UI)
                         end
                     elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
                         local targetOrder = tonumber(action.linkedPlacementOrder)
-                        local targetReplicaId = targetOrder
+                        targetReplicaId = targetOrder
                             and playbackUnitReplicaIds[targetOrder]
                             or nil
                         local placementAction = targetOrder
@@ -1540,6 +1541,15 @@ function Macro.Init(Shared, UI)
                                 tostring(targetReplicaId),
                                 tostring(targetUnitID),
                                 debugValue(targetCFrame)
+                            )
+                        )
+
+                        macroDebugLog(
+                            ("TARGET ARGS action=%d | replacing arg%d: %s -> %s"):format(
+                                actionIndex,
+                                tonumber(action.unitIdArgIndex) or 0,
+                                tostring(args[action.unitIdArgIndex or 0]),
+                                tostring(targetReplicaId)
                             )
                         )
 
