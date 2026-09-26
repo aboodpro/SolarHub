@@ -286,6 +286,16 @@ function UI.Init(Shared)
         toggleBtnItem.Activated:Connect(function()
             Config[configKey] = not Config[configKey]
             indicator.BackgroundColor3 = Config[configKey] and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(50, 50, 60)
+
+            if Config.MacroDebug == true and type(Shared.logLine) == "function" then
+                Shared.logLine(
+                    ("[ConfigDebug] %s (%s) = %s"):format(
+                        tostring(configKey),
+                        tostring(title),
+                        tostring(Config[configKey])
+                    )
+                )
+            end
         end)
     end
 
@@ -372,6 +382,16 @@ function UI.Init(Shared)
                 Config[configKey] = opt
                 valueLbl.Text = tostring(opt)
                 listFrame.Visible = false
+
+                if Config.MacroDebug == true and type(Shared.logLine) == "function" then
+                    Shared.logLine(
+                        ("[ConfigDebug] %s (%s) = %s"):format(
+                            tostring(configKey),
+                            tostring(title),
+                            tostring(Config[configKey])
+                        )
+                    )
+                end
             end)
         end
 
@@ -418,6 +438,16 @@ function UI.Init(Shared)
 
         textBox.FocusLost:Connect(function()
             Config[configKey] = textBox.Text
+
+            if Config.MacroDebug == true and type(Shared.logLine) == "function" then
+                Shared.logLine(
+                    ("[ConfigDebug] %s (%s) = %s"):format(
+                        tostring(configKey),
+                        tostring(title),
+                        tostring(Config[configKey])
+                    )
+                )
+            end
         end)
     end
 
