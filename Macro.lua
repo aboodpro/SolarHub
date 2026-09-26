@@ -1703,6 +1703,8 @@ function Macro.Init(Shared, UI)
             macroStatusLabel.Text = "Stopped"
         end
     end)
+
+    return true
 end
 
 return Macro
