@@ -2206,10 +2206,6 @@ function Macro.Init(Shared, UI)
                 local waitingForReplayTransition = false
                 local sawReplayTransition = false
                 local lastState = nil
-                local sawCompletedRound = false
-                local startCooldown = 0
-                local postRoundGraceUntil = 0
-                local lastState = nil
 
                 local cycleStarted = false
                 local waitingForReplayTransition = false
@@ -2355,7 +2351,8 @@ function Macro.Init(Shared, UI)
 
                 isPlayingMacro = false
                 Shared.isPlayingMacro = false
-                macroDebugLog("[PLAY END] PlayMacro loop exited")            end)
+                macroDebugLog("[PLAY END] PlayMacro loop exited")
+            end)
         else
             isPlayingMacro = false
             Shared.isPlayingMacro = false
