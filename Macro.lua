@@ -433,9 +433,9 @@ function Macro.Init(Shared, UI)
                                     end
 
                                 elseif actionDesc == "UnitUpgrade" then
-                                    actionEntry.linkedPlacementOrder =
-                                        recordedUnitToPlacementOrder[tostring(packedArgs[3])]
-                                        or resolveRecordedPlacementOrder(packedArgs[3])
+                                    -- linkedPlacementOrder is finalized after all
+                                    -- recording workers finish. Do not derive it
+                                    -- from async worker completion order here.
 
                                     pcall(function()
                                         local yenAfter = getCurrentYen()
@@ -466,9 +466,8 @@ function Macro.Init(Shared, UI)
                                     end)
 
                                 elseif actionDesc == "UnitAutoUpgrade" then
-                                    actionEntry.linkedPlacementOrder =
-                                        recordedUnitToPlacementOrder[tostring(packedArgs[3])]
-                                        or resolveRecordedPlacementOrder(packedArgs[3])
+                                    -- linkedPlacementOrder is finalized after the
+                                    -- complete recording sequence is known.
                                 end
                             end
                         end)
@@ -1311,45 +1310,79 @@ function Macro.Init(Shared, UI)
                             action._playbackPlacementOrder = playPlacementCount
                         end
                     elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
-                        local targetOrder = nil
-                        local targetReplicaId = nil
-                        local placementAction = nil
+                        local targetOrder = tonumber(action.linkedPlacementOrder)
+                        local targetReplicaId = targetOrder
+                            and playbackUnitReplicaIds[targetOrder]
+                            or nil
+                        local placementAction = targetOrder
+                            and placementActionsByOrder[targetOrder]
+                            or nil
 
-                        -- Prefer the exact recorded unit identity. This is the
-                        -- key to supporting multiple copies of the same character.
-                        if action.recordedUnitId ~= nil then
-                            placementAction = placementActionsByRecordedUnitId[
-                                tostring(action.recordedUnitId)
-                            ]
+                        local targetCFrame = typeof(action.targetCFrame) == "CFrame"
+                            and action.targetCFrame
+                            or nil
 
-                            if placementAction then
-                                targetOrder = placementAction._playbackPlacementOrder
+                        -- Revalidate/recover the placement using the saved target
+                        -- position. This is the decisive path for duplicate
+                        -- characters: each physical placement has its own CFrame.
+                        if typeof(targetCFrame) == "CFrame" then
+                            local bestOrder = nil
+                            local bestDistance = math.huge
+
+                            for order, savedPlace in pairs(placementActionsByOrder) do
+                                if playbackUnitReplicaIds[order] then
+                                    local cf = savedPlace.args and savedPlace.args[4]
+                                    if typeof(cf) == "CFrame" then
+                                        local distance =
+                                            (cf.Position - targetCFrame.Position).Magnitude
+
+                                        local unitPenalty = 0
+                                        if action.targetUnitID ~= nil
+                                            and savedPlace.targetUnitID ~= nil
+                                            and tostring(action.targetUnitID)
+                                                ~= tostring(savedPlace.targetUnitID) then
+                                            unitPenalty = 100000
+                                        end
+
+                                        local score = distance + unitPenalty
+                                        if score < bestDistance then
+                                            bestDistance = score
+                                            bestOrder = order
+                                        end
+                                    end
+                                end
                             end
-                        end
 
-                        -- Legacy fallback for older macros without a usable
-                        -- recordedUnitId.
-                        if not placementAction and action.linkedPlacementOrder then
-                            targetOrder = tonumber(action.linkedPlacementOrder)
-                            placementAction = targetOrder
-                                and placementActionsByOrder[targetOrder]
-                        end
-
-                        if targetOrder then
-                            targetReplicaId = playbackUnitReplicaIds[targetOrder]
+                            if bestOrder and bestDistance <= 12 then
+                                targetOrder = bestOrder
+                                placementAction = placementActionsByOrder[bestOrder]
+                                targetReplicaId = playbackUnitReplicaIds[bestOrder]
+                            end
                         end
 
                         local placementCFrame = placementAction
                             and placementAction.args
                             and placementAction.args[4]
 
-                        local targetCFrame = typeof(action.targetCFrame) == "CFrame"
-                            and action.targetCFrame
-                            or placementCFrame
-
                         local targetUnitID = action.targetUnitID
                             and tostring(action.targetUnitID)
                             or nil
+
+                        if targetReplicaId and typeof(targetCFrame) == "CFrame" then
+                            local validatedId = resolvePlaybackUnitReplicaId(
+                                targetCFrame,
+                                targetUnitID,
+                                0.5,
+                                targetReplicaId,
+                                myRunId
+                            )
+
+                            if validatedId then
+                                targetReplicaId = validatedId
+                            else
+                                targetReplicaId = nil
+                            end
+                        end
 
                         if not targetOrder and typeof(targetCFrame) == "CFrame" then
                             local bestOrder = nil
@@ -1396,7 +1429,11 @@ function Macro.Init(Shared, UI)
                         end
 
                         if targetReplicaId and action.unitIdArgIndex then
-                            args[action.unitIdArgIndex] = tostring(targetReplicaId)
+                            if type(action.recordedUnitId) == "number" then
+                                args[action.unitIdArgIndex] = tonumber(targetReplicaId)
+                            else
+                                args[action.unitIdArgIndex] = tostring(targetReplicaId)
+                            end
                             action._playbackReplicaId = targetReplicaId
                         else
                             lastError = ("Target unit not ready for placement #%s"):format(tostring(targetOrder))
@@ -1542,28 +1579,33 @@ function Macro.Init(Shared, UI)
 
 
     local function finalizeRecordedActionLinks()
-        -- Recording workers run asynchronously, so placementOrder MUST NOT be
-        -- assigned from worker completion order. Rebuild it from the real
-        -- remote-call sequence after every worker has finished.
+        -- Recording workers are asynchronous. Finalize identity only after all
+        -- workers finish and always use the true remote-call order.
         table.sort(recordedActions, function(a, b)
             return (a.recordSequence or math.huge) < (b.recordSequence or math.huge)
         end)
 
-        local placementOrderByRecordedUnitId = {}
         local placements = {}
         local nextPlacementOrder = 0
+        local placementOrderByRecordedUnitId = {}
 
         for _, action in ipairs(recordedActions) do
             if action.actionType == "UnitPlace" then
                 nextPlacementOrder += 1
                 action.placementOrder = nextPlacementOrder
+                action._playbackPlacementOrder = nextPlacementOrder
                 placements[nextPlacementOrder] = action
 
-                -- recordedUnitId identifies the actual placed unit replica,
-                -- not the character/unit type. Duplicate character types are
-                -- therefore kept as separate unit identities.
                 if action.recordedUnitId ~= nil then
-                    placementOrderByRecordedUnitId[tostring(action.recordedUnitId)] = nextPlacementOrder
+                    local key = tostring(action.recordedUnitId)
+                    -- A duplicate recorded id is intentionally NOT considered a
+                    -- unique character identity. This can happen when the game
+                    -- exposes a shared/unit-type id for multiple copies.
+                    if placementOrderByRecordedUnitId[key] == nil then
+                        placementOrderByRecordedUnitId[key] = nextPlacementOrder
+                    else
+                        placementOrderByRecordedUnitId[key] = false
+                    end
                 end
             end
         end
@@ -1573,17 +1615,18 @@ function Macro.Init(Shared, UI)
                 or action.actionType == "UnitAutoUpgrade" then
 
                 local linkedOrder = nil
+                local targetCFrame = typeof(action.targetCFrame) == "CFrame"
+                    and action.targetCFrame
+                    or nil
+                local targetUnitID = action.targetUnitID ~= nil
+                    and tostring(action.targetUnitID)
+                    or nil
 
-                -- Strongest match: exact unit replica id used by the original action.
-                if action.recordedUnitId ~= nil then
-                    linkedOrder =
-                        placementOrderByRecordedUnitId[tostring(action.recordedUnitId)]
-                end
-
-                -- Fallback for older/partial recordings: use the saved target
-                -- position and only consider placements that happened earlier.
-                if not linkedOrder and typeof(action.targetCFrame) == "CFrame" then
-                    local bestDistance = math.huge
+                -- Primary identity: target position + unit type, restricted to
+                -- placements that happened before this action. This is what
+                -- separates two copies of the same character.
+                if targetCFrame then
+                    local bestScore = math.huge
                     local bestOrder = nil
 
                     for order, placementAction in pairs(placements) do
@@ -1596,18 +1639,42 @@ function Macro.Init(Shared, UI)
 
                             if typeof(placementCFrame) == "CFrame" then
                                 local distance =
-                                    (placementCFrame.Position - action.targetCFrame.Position).Magnitude
+                                    (placementCFrame.Position - targetCFrame.Position).Magnitude
 
-                                if distance < bestDistance then
-                                    bestDistance = distance
+                                local placementUnitID = placementAction.targetUnitID
+                                    and tostring(placementAction.targetUnitID)
+                                    or nil
+
+                                -- Prefer the same unit type when available, but
+                                -- position remains the actual per-instance identity.
+                                local typePenalty = 0
+                                if targetUnitID ~= nil
+                                    and placementUnitID ~= nil
+                                    and targetUnitID ~= placementUnitID then
+                                    typePenalty = 100000
+                                end
+
+                                local score = distance + typePenalty
+                                if score < bestScore then
+                                    bestScore = score
                                     bestOrder = order
                                 end
                             end
                         end
                     end
 
-                    if bestOrder and bestDistance <= 12 then
+                    if bestOrder and bestScore < 12 then
                         linkedOrder = bestOrder
+                    end
+                end
+
+                -- Fallback for older captures where targetCFrame is missing.
+                -- Only use a recorded id if it was unique among placements.
+                if not linkedOrder and action.recordedUnitId ~= nil then
+                    local key = tostring(action.recordedUnitId)
+                    local mapped = placementOrderByRecordedUnitId[key]
+                    if mapped ~= false then
+                        linkedOrder = mapped
                     end
                 end
 
