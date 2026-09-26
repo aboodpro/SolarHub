@@ -1996,7 +1996,7 @@ function Macro.Init(Shared, UI)
                 local function fireSignal(...)
                     local args = table.pack(...)
 
-                    if args[1] == 87 and args[2] == "Response" and args[3] == true
+                    if args[1] == 175 and args[2] == "Response" and args[3] == true
                         and type(Shared.sendGameStart) == "function" then
 
                         macroDebugLog(
@@ -2159,7 +2159,7 @@ function Macro.Init(Shared, UI)
                                 )
                             )
                         else
-                            fired, fireErr = fireSignal(87, "Response", true)
+                            fired, fireErr = fireSignal(175, "Response", true)
                             macroDebugLog(
                                 ("[START REMOTE RESULT] attempt=%d | fired=%s | err=%s"):format(
                                     attempt,
