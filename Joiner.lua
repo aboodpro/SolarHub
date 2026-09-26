@@ -25,10 +25,30 @@ function Joiner.Init(Shared, UI)
     -- Auto Vote Start path so Macro does not resolve a different remote.
     Shared.ReplicaSignal = ReplicaSignal
     Shared.sendGameStart = function()
-        return pcall(function()
-            ReplicaSignal:FireServer(87, "Response", true)
+        local args = {87, "Response", true}
+        local ok, err = pcall(function()
+            ReplicaSignal:FireServer(table.unpack(args))
         end)
+
+        if Config.MacroDebug == true and type(Shared.logLine) == "function" then
+            Shared.logLine(
+                ("[GameDebug] Start/Vote -> %s | %s | args: arg1=%s | arg2=%s | arg3=%s | ok=%s | err=%s"):format(
+                    tostring(ReplicaSignal:GetFullName()),
+                    tostring(ReplicaSignal.ClassName),
+                    tostring(args[1]),
+                    tostring(args[2]),
+                    tostring(args[3]),
+                    tostring(ok),
+                    tostring(err)
+                )
+            )
+        end
+
+        return ok, err
     end
+
+    Shared.gameTransitionPending = false
+    Shared.gameAutomationState = "Unknown"
 
     -- Official game Network Nodes used by the game's own actions.
     -- Story matchmaking: REQUEST_ENTER_MATCHMAKING
@@ -900,19 +920,46 @@ function Joiner.Init(Shared, UI)
 
     local gameRoundActive = false
     local gameTransitionPending = false
+    local lastGameDebugState = nil
 
     local function runRemoteGameAutomation(state)
         state = state or getCurrentGameState()
+        Shared.gameTransitionPending = gameTransitionPending
+        Shared.gameAutomationState = state or "Unknown"
+
+        if Config.MacroDebug == true
+            and state ~= lastGameDebugState
+            and type(Shared.logLine) == "function" then
+            Shared.logLine(
+                ("[GameDebug] State -> %s | AutoVoteStart=%s | AutoSkipWave=%s | AutoReplay=%s | AutoNext=%s | AutoReturnLobby=%s | TransitionPending=%s"):format(
+                    tostring(state),
+                    tostring(Config.AutoVoteStart),
+                    tostring(Config.AutoSkipWave),
+                    tostring(Config.AutoReplay),
+                    tostring(Config.AutoNext),
+                    tostring(Config.AutoReturnLobby),
+                    tostring(gameTransitionPending)
+                )
+            )
+            lastGameDebugState = state
+        end
 
         if state == "InProgress" then
             gameRoundActive = true
             gameTransitionPending = false
 
             if Config.AutoSkipWave and remoteCooldown("AutoSkipWave", 2) then
-                pcall(function()
+                local ok, err = pcall(function()
                     ReplicaSignal:FireServer(215, "Response", true)
                 end)
-                Shared.logLine("[GameRemote] Auto Skip -> 215 Response true")
+
+                Shared.logLine(
+                    ("[GameRemote] Auto Skip -> %s | args: arg1=215 | arg2=Response | arg3=true | ok=%s | err=%s"):format(
+                        tostring(ReplicaSignal:GetFullName()),
+                        tostring(ok),
+                        tostring(err)
+                    )
+                )
             end
         elseif state then
             -- A non-InProgress state can exist before the first round. Replay/Next
@@ -926,7 +973,14 @@ function Joiner.Init(Shared, UI)
                     if ok then
                         gameTransitionPending = true
                         gameRoundActive = false
-                        Shared.logLine(("[GameRemote] Auto Replay/Restart -> 77 Restart (state=%s)"):format(state))
+                        Shared.gameTransitionPending = true
+                        Shared.logLine(
+                            ("[GameRemote] Auto Replay -> %s | args: arg1=77 | arg2=Restart | state=%s | ok=true | err=%s"):format(
+                                tostring(ReplicaSignal:GetFullName()),
+                                tostring(state),
+                                tostring(err)
+                            )
+                        )
                     else
                         Shared.logLine("[GameRemote] Auto Replay failed: " .. tostring(err))
                     end
@@ -938,7 +992,14 @@ function Joiner.Init(Shared, UI)
                     if ok then
                         gameTransitionPending = true
                         gameRoundActive = false
-                        Shared.logLine(("[GameRemote] Auto Next -> 77 Next (state=%s)"):format(state))
+                        Shared.gameTransitionPending = true
+                        Shared.logLine(
+                            ("[GameRemote] Auto Next -> %s | args: arg1=77 | arg2=Next | state=%s | ok=true | err=%s"):format(
+                                tostring(ReplicaSignal:GetFullName()),
+                                tostring(state),
+                                tostring(err)
+                            )
+                        )
                     else
                         Shared.logLine("[GameRemote] Auto Next failed: " .. tostring(err))
                     end
@@ -951,10 +1012,18 @@ function Joiner.Init(Shared, UI)
         if Config.AutoVoteStart and state ~= nil
             and not gameTransitionPending
             and remoteCooldown("AutoVoteStart", 3) then
-            pcall(function()
+            local ok, err = pcall(function()
                 ReplicaSignal:FireServer(87, "Response", true)
             end)
-            Shared.logLine("[GameRemote] Auto Vote Start -> 87 Response true")
+
+            Shared.logLine(
+                ("[GameRemote] Auto Vote Start -> %s | args: arg1=87 | arg2=Response | arg3=true | state=%s | ok=%s | err=%s"):format(
+                    tostring(ReplicaSignal:GetFullName()),
+                    tostring(state),
+                    tostring(ok),
+                    tostring(err)
+                )
+            )
         end
 
         if Config.AutoReturnLobby
@@ -967,11 +1036,18 @@ function Joiner.Init(Shared, UI)
                 RequestAFKLeave:Fire()
             end)
             if ok then
-                Shared.logLine("[GameRemote] Auto Return Lobby -> REQUEST_AFK_LEAVE")
+                Shared.logLine(
+                    ("[GameRemote] Auto Return Lobby -> REQUEST_AFK_LEAVE | ok=true | err=%s"):format(
+                        tostring(err)
+                    )
+                )
             else
                 Shared.logLine("[GameRemote] Auto Return Lobby failed: " .. tostring(err))
             end
         end
+
+        Shared.gameTransitionPending = gameTransitionPending
+        Shared.gameAutomationState = state or "Unknown"
     end
 
     task.spawn(function()
