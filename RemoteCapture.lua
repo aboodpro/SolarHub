@@ -9,6 +9,23 @@ local records = {}
 local seen = {}
 local started = os.clock()
 
+-- Also mirror captures into SolarHub's existing Debug Log when available.
+-- This keeps the diagnostic separate from Macro.lua, so capture changes cannot
+-- cause a Macro compile failure.
+local function logCapture(message)
+    print(message)
+
+    pcall(function()
+        local env = (getgenv and getgenv()) or _G
+        local solarHub = env and env.SolarHub
+        local shared = solarHub and solarHub.Shared
+
+        if shared and type(shared.logLine) == "function" then
+            shared.logLine(message)
+        end
+    end)
+end
+
 local function simpleValue(v, depth)
     depth = depth or 0
     if depth > 2 then
@@ -90,6 +107,20 @@ local function addRecord(self, method, args)
         method = method,
         args = values,
     })
+
+    local argText = {}
+    for index = 1, #values do
+        argText[index] = "arg" .. tostring(index) .. "=" .. tostring(values[index])
+    end
+
+    logCapture(
+        ("[RemoteDebug] #%d | %s %s | %s"):format(
+            #records,
+            tostring(method),
+            path,
+            table.concat(argText, " | ")
+        )
+    )
 end
 
 local oldNamecall
@@ -118,11 +149,11 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     return oldNamecall(self, ...)
 end)
 
-print("========================================")
-print("[RemoteCapture] READY")
-print("[RemoteCapture] Perform ONE game action now.")
-print("[RemoteCapture] Capture duration: " .. CAPTURE_SECONDS .. " seconds")
-print("========================================")
+logCapture("========================================")
+logCapture("[RemoteCapture] READY")
+logCapture("[RemoteCapture] Perform ONE game action now.")
+logCapture("[RemoteCapture] Capture duration: " .. CAPTURE_SECONDS .. " seconds")
+logCapture("========================================")
 
 task.wait(CAPTURE_SECONDS)
 
@@ -164,8 +195,8 @@ elseif toclipboard then
     end)
 end
 
-print("========================================")
-print("[RemoteCapture] DONE")
-print("[RemoteCapture] Records: " .. tostring(#records))
-print("[RemoteCapture] Clipboard copied: " .. tostring(copied))
-print("========================================")
+logCapture("========================================")
+logCapture("[RemoteCapture] DONE")
+logCapture("[RemoteCapture] Records: " .. tostring(#records))
+logCapture("[RemoteCapture] Clipboard copied: " .. tostring(copied))
+logCapture("========================================")
