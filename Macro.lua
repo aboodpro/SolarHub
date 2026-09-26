@@ -590,6 +590,214 @@ function Macro.Init(Shared, UI)
         end
     end)
 
+    -- One-shot remote inspector for diagnosing manual game actions such as
+    -- Start, Skip, Replay, Next, unit placement, upgrades, etc.
+    -- It is intentionally passive: it only observes and then forwards the
+    -- original __namecall unchanged.
+    local remoteCaptureArmed = false
+    local remoteCaptureInstalled = false
+    local remoteCaptureSerial = 0
+    local remoteCaptureDeadline = 0
+    local remoteCaptureSeen = {}
+    local remoteCaptureRecords = {}
+
+    local function remoteCaptureValue(value, depth)
+        depth = depth or 0
+
+        if depth > 3 then
+            return "<table>"
+        end
+
+        local valueType = typeof(value)
+
+        if valueType == "Instance" then
+            local fullName = "?"
+            pcall(function()
+                fullName = value:GetFullName()
+            end)
+            return fullName
+        elseif valueType == "CFrame" then
+            local components = {value:GetComponents()}
+            return "CFrame.new(" .. table.concat(components, ", ") .. ")"
+        elseif valueType == "Vector3" then
+            return ("Vector3.new(%s, %s, %s)"):format(
+                tostring(value.X),
+                tostring(value.Y),
+                tostring(value.Z)
+            )
+        elseif valueType == "Color3" then
+            return ("Color3.fromRGB(%d, %d, %d)"):format(
+                math.floor(value.R * 255 + 0.5),
+                math.floor(value.G * 255 + 0.5),
+                math.floor(value.B * 255 + 0.5)
+            )
+        elseif valueType == "table" then
+            local parts = {}
+            local count = 0
+
+            for key, child in pairs(value) do
+                count += 1
+                if count > 30 then
+                    table.insert(parts, "...")
+                    break
+                end
+
+                table.insert(
+                    parts,
+                    "[" .. tostring(key) .. "]=" .. remoteCaptureValue(child, depth + 1)
+                )
+            end
+
+            return "{" .. table.concat(parts, ", ") .. "}"
+        end
+
+        return tostring(value)
+    end
+
+    local function installRemoteCaptureHook()
+        if remoteCaptureInstalled then
+            return true
+        end
+
+        if type(hookmetamethod) ~= "function"
+            or type(getnamecallmethod) ~= "function"
+            or type(checkcaller) ~= "function" then
+
+            macroDebugLog("REMOTE CAPTURE unavailable: executor hook APIs missing.")
+            return false
+        end
+
+        local ok, err = pcall(function()
+            local oldNamecall
+            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+
+                if remoteCaptureArmed
+                    and os.clock() <= remoteCaptureDeadline
+                    and not checkcaller()
+                    and (method == "FireServer" or method == "InvokeServer") then
+
+                    pcall(function()
+                        local args = table.pack(...)
+                        local remotePath = self:GetFullName()
+                        local valueParts = {}
+
+                        for index = 1, args.n do
+                            valueParts[index] = remoteCaptureValue(args[index])
+                        end
+
+                        local signature =
+                            remotePath
+                            .. "|" .. tostring(method)
+                            .. "|" .. table.concat(valueParts, " | ")
+
+                        if not remoteCaptureSeen[signature] then
+                            remoteCaptureSeen[signature] = true
+
+                            local recordIndex = #remoteCaptureRecords + 1
+                            table.insert(remoteCaptureRecords, {
+                                index = recordIndex,
+                                remotePath = remotePath,
+                                remoteClass = self.ClassName,
+                                method = method,
+                                args = valueParts,
+                            })
+
+                            Shared.logLine(
+                                ("[RemoteDebug] #%d | %s %s | %s"):format(
+                                    recordIndex,
+                                    tostring(method),
+                                    tostring(remotePath),
+                                    table.concat(valueParts, " | ")
+                                )
+                            )
+
+                            if recordIndex >= 30 then
+                                remoteCaptureArmed = false
+                                Shared.logLine("[RemoteDebug] Auto-stopped after 30 unique remote calls.")
+                            end
+                        end
+                    end)
+                elseif remoteCaptureArmed and os.clock() > remoteCaptureDeadline then
+                    remoteCaptureArmed = false
+                end
+
+                return oldNamecall(self, ...)
+            end)
+
+            remoteCaptureInstalled = true
+        end)
+
+        if not ok then
+            macroDebugLog(
+                "[RemoteDebug] Failed to install capture hook: " .. tostring(err)
+            )
+            remoteCaptureInstalled = false
+        end
+
+        return remoteCaptureInstalled
+    end
+
+    local remoteCaptureBtn = Instance.new("TextButton")
+    remoteCaptureBtn.Size = UDim2.new(1, 0, 0, 34)
+    remoteCaptureBtn.BackgroundColor3 = Color3.fromRGB(55, 68, 55)
+    remoteCaptureBtn.Text = "🔎 Capture Next Action"
+    remoteCaptureBtn.Font = Enum.Font.GothamBold
+    remoteCaptureBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    remoteCaptureBtn.TextSize = 10
+    remoteCaptureBtn.LayoutOrder = -49
+    remoteCaptureBtn.Parent = macroTab
+    Instance.new("UICorner", remoteCaptureBtn).CornerRadius = UDim.new(0, 7)
+
+    remoteCaptureBtn.Activated:Connect(function()
+        if not installRemoteCaptureHook() then
+            showTopNotification("Remote capture is unavailable in this executor.", 3)
+            return
+        end
+
+        remoteCaptureSerial += 1
+        remoteCaptureArmed = true
+        remoteCaptureDeadline = os.clock() + 10
+        remoteCaptureSeen = {}
+        remoteCaptureRecords = {}
+
+        remoteCaptureBtn.BackgroundColor3 = Color3.fromRGB(190, 120, 35)
+        remoteCaptureBtn.Text = "⏺ Capturing next action..."
+
+        Shared.logLine(
+            "[RemoteDebug] ARMED | Perform ONE manual action now (Start/Skip/Replay/Next/etc.)."
+        )
+        Shared.logLine(
+            "[RemoteDebug] Capture window = 10s | automation should be OFF to avoid unrelated remotes."
+        )
+
+        showTopNotification(
+            "Capture armed. Perform ONE manual game action now.",
+            4
+        )
+
+        local captureSerial = remoteCaptureSerial
+        task.delay(10.15, function()
+            if captureSerial ~= remoteCaptureSerial then
+                return
+            end
+
+            remoteCaptureArmed = false
+            remoteCaptureBtn.BackgroundColor3 = Color3.fromRGB(55, 68, 55)
+            remoteCaptureBtn.Text = "🔎 Capture Next Action"
+
+            if #remoteCaptureRecords == 0 then
+                Shared.logLine("[RemoteDebug] DONE | No game remote captured.")
+            else
+                Shared.logLine(
+                    ("[RemoteDebug] DONE | Unique remotes captured=%d"):format(
+                        #remoteCaptureRecords
+                    )
+                )
+            end
+        end)
+    end)
+
     local createSec = Instance.new("Frame")
     createSec.Size = UDim2.new(1, 0, 0, 100)
     createSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
