@@ -691,7 +691,7 @@ function Macro.Init(Shared, UI)
     end)
 
     local recordSec = Instance.new("Frame")
-    recordSec.Size = UDim2.new(1, 0, 0, 125)
+    recordSec.Size = UDim2.new(1, 0, 0, 160)
     recordSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     recordSec.Parent = macroTab
     Instance.new("UICorner", recordSec).CornerRadius = UDim.new(0, 6)
@@ -718,9 +718,28 @@ function Macro.Init(Shared, UI)
     playBtn.Parent = recordSec
     Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 7)
 
+    local debugLogBtn = Instance.new("TextButton")
+    debugLogBtn.Size = UDim2.new(1, -16, 0, 28)
+    debugLogBtn.Position = UDim2.fromOffset(8, 80)
+    debugLogBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 68)
+    debugLogBtn.Text = "🐛 Debug Log"
+    debugLogBtn.Font = Enum.Font.GothamBold
+    debugLogBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    debugLogBtn.TextSize = 10
+    debugLogBtn.Parent = recordSec
+    Instance.new("UICorner", debugLogBtn).CornerRadius = UDim.new(0, 7)
+
+    debugLogBtn.Activated:Connect(function()
+        if type(Shared.showSessionLogWindow) == "function" then
+            Shared.showSessionLogWindow()
+        else
+            showTopNotification("Debug Log is unavailable.", 3)
+        end
+    end)
+
     local macroStatusLabel = Instance.new("TextLabel")
     macroStatusLabel.Size = UDim2.new(1, -16, 0, 32)
-    macroStatusLabel.Position = UDim2.fromOffset(8, 80)
+    macroStatusLabel.Position = UDim2.fromOffset(8, 112)
     macroStatusLabel.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
     macroStatusLabel.Font = Enum.Font.Code
     macroStatusLabel.Text = "Idle"
