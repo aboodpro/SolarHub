@@ -24,7 +24,107 @@ function Joiner.Init(Shared, UI)
     -- Expose the exact ReplicaSignal instance used by Joiner's working
     -- Auto Vote Start path so Macro does not resolve a different remote.
     Shared.ReplicaSignal = ReplicaSignal
+    local function findStartVoteButton()
+        local candidates = {}
+
+        pcall(function()
+            for _, descendant in ipairs(player.PlayerGui:GetDescendants()) do
+                if descendant:IsA("GuiButton")
+                    and descendant.Visible
+                    and descendant.Active then
+
+                    local text = ""
+                    pcall(function()
+                        text = tostring(descendant.Text or "")
+                    end)
+
+                    local loweredText = text:lower()
+                    local score = 0
+
+                    if loweredText == "yes" then
+                        score = score + 100
+                    elseif loweredText == "start game" then
+                        score = score + 95
+                    elseif loweredText == "start" then
+                        score = score + 90
+                    end
+
+                    local ancestor = descendant.Parent
+                    local depth = 0
+
+                    while ancestor and depth < 5 do
+                        local ancestorName = tostring(ancestor.Name):lower()
+
+                        if ancestorName:find("vote") then
+                            score = score + 40
+                        end
+
+                        if ancestorName:find("start") then
+                            score = score + 20
+                        end
+
+                        if ancestorName:find("notification") then
+                            score = score + 10
+                        end
+
+                        ancestor = ancestor.Parent
+                        depth = depth + 1
+                    end
+
+                    if score > 0 then
+                        table.insert(candidates, {
+                            button = descendant,
+                            score = score,
+                            text = text,
+                        })
+                    end
+                end
+            end
+        end)
+
+        table.sort(candidates, function(a, b)
+            return a.score > b.score
+        end)
+
+        return candidates[1]
+    end
+
+    Shared.findStartVoteButton = findStartVoteButton
+
     Shared.sendGameStart = function()
+        -- Use the game's own visible Vote button first. This avoids guessing
+        -- a server-assigned VoteWindow replica ID.
+        local candidate = findStartVoteButton()
+
+        if candidate and candidate.button then
+            local button = candidate.button
+            local buttonPath = "?"
+
+            pcall(function()
+                buttonPath = button:GetFullName()
+            end)
+
+            local ok, err = pcall(function()
+                button:Activate()
+            end)
+
+            if Config.MacroDebug == true and type(Shared.logLine) == "function" then
+                Shared.logLine(
+                    ("[GameUI] Start/Vote -> %s | text=%s | score=%d | activated=%s | err=%s"):format(
+                        tostring(buttonPath),
+                        tostring(candidate.text),
+                        tonumber(candidate.score) or 0,
+                        tostring(ok),
+                        tostring(err)
+                    )
+                )
+            end
+
+            return ok, err
+        end
+
+        -- Diagnostic fallback for older sessions. 175 was observed as the
+        -- current VoteWindow replica ID, but it can change between sessions.
         local args = {175, "Response", true}
         local ok, err = pcall(function()
             ReplicaSignal:FireServer(table.unpack(args))
@@ -32,7 +132,7 @@ function Joiner.Init(Shared, UI)
 
         if Config.MacroDebug == true and type(Shared.logLine) == "function" then
             Shared.logLine(
-                ("[GameDebug] Start/Vote -> %s | %s | args: arg1=%s | arg2=%s | arg3=%s | ok=%s | err=%s"):format(
+                ("[GameRemote] Start/Vote FALLBACK -> %s | %s | args: arg1=%s | arg2=%s | arg3=%s | ok=%s | err=%s"):format(
                     tostring(ReplicaSignal:GetFullName()),
                     tostring(ReplicaSignal.ClassName),
                     tostring(args[1]),
@@ -1026,23 +1126,23 @@ function Joiner.Init(Shared, UI)
             and state ~= nil
             and not gameTransitionPending
             and remoteCooldown("AutoVoteStart", 3) then
-            local ok, err = pcall(function()
-                ReplicaSignal:FireServer(175, "Response", true)
-            end)
+            local source = macroRequestedStart and "Macro" or "AutoVoteStart"
+            local ok, err = Shared.sendGameStart()
 
             if ok then
                 Shared.macroStartRequested = false
             end
 
-            Shared.logLine(
-                ("[GameRemote] Start -> %s | source=%s | args: arg1=175 | arg2=Response | arg3=true | state=%s | ok=%s | err=%s"):format(
-                    tostring(ReplicaSignal:GetFullName()),
-                    macroRequestedStart and "Macro" or "AutoVoteStart",
-                    tostring(state),
-                    tostring(ok),
-                    tostring(err)
+            if Config.MacroDebug == true then
+                Shared.logLine(
+                    ("[GameRemote] Start -> source=%s | state=%s | ok=%s | err=%s"):format(
+                        source,
+                        tostring(state),
+                        tostring(ok),
+                        tostring(err)
+                    )
                 )
-            )
+            end
         end
 
         if Config.AutoReturnLobby
