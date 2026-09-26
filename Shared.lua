@@ -565,6 +565,27 @@ end
 
 Shared.getGameDebugSnapshot = getGameDebugSnapshot
 
+local function getActiveGameReplicaId()
+    if not replicaClientModule or type(replicaClientModule.FromId) ~= "function" then
+        return nil
+    end
+
+    local bestId = nil
+
+    for id = 1, 2000 do
+        local ok, replica = pcall(replicaClientModule.FromId, id)
+
+        if ok and replica and type(replica.Data) == "table"
+            and replica.Data.CurrentGameState ~= nil then
+            bestId = id
+        end
+    end
+
+    return bestId
+end
+
+Shared.getActiveGameReplicaId = getActiveGameReplicaId
+
 local cachedPlayerMatchReplica = nil
 local function findPlayerMatchReplica()
     local stillValid = false
