@@ -397,12 +397,17 @@ task.spawn(function()
     task.delay(5, function()
         setLoadingStatus("Loading Macro engine...")
         print("[Loader] Loading Macro...")
-        runModule("Macro.Init", function()
+        local macroInit = runModule("Macro.Init", function()
             local MacroModule = compiled.Macro()
             return MacroModule.Init(Shared, UI)
         end)
     
-        setLoadingStatus("SolarHub ready")
+        if macroInit == true then
+            setLoadingStatus("SolarHub ready")
+        else
+            setLoadingStatus("Macro failed to initialize")
+        end
+
         task.spawn(finishLoadingScreen)
     end)
     
