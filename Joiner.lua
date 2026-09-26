@@ -516,10 +516,14 @@ function Joiner.Init(Shared, UI)
                 local bestId = nil
                 local bestScore = -1
                 for _, id in ipairs(candidateIds) do
-                    local score = candidateScores[id] or 0
-                    if score > bestScore then
-                        bestScore = score
-                        bestId = id
+                    -- Skip replicas whose StartGame retry sequence has already
+                    -- been exhausted for this PARTY_CREATE attempt.
+                    if not attemptedReplicaIds[id] then
+                        local score = candidateScores[id] or 0
+                        if score > bestScore then
+                            bestScore = score
+                            bestId = id
+                        end
                     end
                 end
                 return bestId, bestScore
@@ -617,6 +621,19 @@ function Joiner.Init(Shared, UI)
                                 .. tostring(id)
                                 .. " after limited retries"
                         )
+
+                        -- If another candidate arrived during this same
+                        -- PARTY_CREATE attempt, try it before giving up.
+                        if not attemptClosed then
+                            local nextId = getBestCandidate()
+                            if nextId then
+                                task.delay(0.05, function()
+                                    if not attemptClosed then
+                                        tryStartGame(nextId)
+                                    end
+                                end)
+                            end
+                        end
                     end
                 end)
             end
