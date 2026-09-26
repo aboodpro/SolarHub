@@ -140,8 +140,9 @@ oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             and not lower:find("camera")
             and not lower:find("mouse") then
 
+            local packedArgs = table.pack(...)
             pcall(function()
-                addRecord(self, method, table.pack(...))
+                addRecord(self, method, packedArgs)
             end)
         end
     end
