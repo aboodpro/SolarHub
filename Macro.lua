@@ -1099,51 +1099,49 @@ function Macro.Init(Shared, UI)
         return true
     end
     local function runUpgradeUntilAccepted(remoteObj, action, args, timeoutSeconds, runId)
-        local deadline = os.clock() + (timeoutSeconds or 30)
+        if not isPlayingMacro or (runId ~= nil and macroRunId ~= runId) then
+            return false, "Macro stopped"
+        end
 
+        -- One outer loop iteration is one actual attempt. Do not hide additional
+        -- remote fires inside an attempt, otherwise Retry=1 could send many
+        -- Upgrade requests before the configured retry count is reached.
+        local beforeYen = getCurrentYen()
+        local beforeLevel = getUnitLevelByReplicaId(action._playbackReplicaId)
+
+        local tempAction = {
+            actionType = action.actionType,
+            args = args,
+            method = action.method,
+        }
+
+        local fired, err = fireAction(remoteObj, tempAction)
+        if not fired then
+            return false, err or "Remote call failed"
+        end
+
+        local deadline = os.clock() + (timeoutSeconds or 1.5)
         repeat
             if not isPlayingMacro or (runId ~= nil and macroRunId ~= runId) then
                 return false, "Macro stopped"
             end
 
-            local beforeYen = getCurrentYen()
-            local beforeLevel = getUnitLevelByReplicaId(action._playbackReplicaId)
-
-            local tempAction = {
-                actionType = action.actionType,
-                args = args,
-                method = action.method,
-            }
-
-            local fired, err = fireAction(remoteObj, tempAction)
-            if not fired then
-                if os.clock() >= deadline then
-                    return false, err or "Remote call failed"
-                end
-                task.wait(0.35)
-            else
-                local verified = verifyAction(
-                    action,
-                    beforeYen,
-                    {},
-                    beforeLevel
-                )
-                if verified then
-                    return true
-                end
-
-                if os.clock() >= deadline then
-                    return false, "Upgrade was not confirmed before timeout"
-                end
-
-                local currentYen = getCurrentYen()
-                macroStatusLabel.Text =
-                    ("Upgrade waiting | Yen: %s"):format(tostring(currentYen or "?"))
-                task.wait(0.35)
+            if verifyAction(action, beforeYen, {}, beforeLevel) then
+                return true
             end
-        until os.clock() >= deadline
 
-        return false, "Upgrade timeout"
+            local currentYen = getCurrentYen()
+            macroStatusLabel.Text =
+                ("Upgrade waiting | Yen: %s"):format(tostring(currentYen or "?"))
+
+            if os.clock() >= deadline then
+                break
+            end
+
+            task.wait(0.1)
+        until false
+
+        return false, "Upgrade was not confirmed before timeout"
     end
 
     local function runMacroOnce(macroData)
