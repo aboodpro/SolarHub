@@ -2147,21 +2147,45 @@ function Macro.Init(Shared, UI)
                         macroStatusLabel.Text =
                             ("Starting game... Attempt %d"):format(attempt)
 
-                        local fired, fireErr = fireSignal(87, "Response", true)
+                        local fired, fireErr
 
-                        macroDebugLog(
-                            ("[START REMOTE RESULT] attempt=%d | fired=%s | err=%s"):format(
-                                attempt,
-                                tostring(fired),
-                                tostring(fireErr)
+                        if type(Shared.requestMacroStart) == "function" then
+                            fired, fireErr = Shared.requestMacroStart()
+                            macroDebugLog(
+                                ("[START REQUEST QUEUED] attempt=%d | queued=%s | err=%s"):format(
+                                    attempt,
+                                    tostring(fired),
+                                    tostring(fireErr)
+                                )
                             )
-                        )
+                        else
+                            fired, fireErr = fireSignal(87, "Response", true)
+                            macroDebugLog(
+                                ("[START REMOTE RESULT] attempt=%d | fired=%s | err=%s"):format(
+                                    attempt,
+                                    tostring(fired),
+                                    tostring(fireErr)
+                                )
+                            )
+                        end
 
                         local deadline = os.clock() + 8
+                        local loggedWaiting = false
 
                         while Config.PlayMacro and os.clock() < deadline do
                             local current = getGameSnapshot()
                             local started, reason = isRealRoundStarted(baseline, current)
+
+                            if not loggedWaiting and Config.MacroDebug == true then
+                                macroDebugLog(
+                                    ("[START WAITING] attempt=%d | current=%s | GameRequestPending=%s"):format(
+                                        attempt,
+                                        snapshotText(current),
+                                        tostring(Shared.macroStartRequested == true)
+                                    )
+                                )
+                                loggedWaiting = true
+                            end
 
                             if started then
                                 macroDebugLog(
