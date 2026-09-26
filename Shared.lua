@@ -468,6 +468,49 @@ local function getWaveInfo()
 end
 Shared.getWaveInfo = getWaveInfo
 
+local function getGameDebugSnapshot()
+    local snapshot = {
+        State = nil,
+        Wave = nil,
+        MaxWave = nil,
+    }
+
+    local ok = pcall(function()
+        local replica = findGameReplica()
+        if not replica or not replica.Data then
+            return
+        end
+
+        local data = replica.Data
+        snapshot.State = data.CurrentGameState
+        snapshot.Wave = data.Wave
+        snapshot.MaxWave = data.MaxWave
+
+        local count = 0
+        for key, value in pairs(data) do
+            if count >= 35 then
+                break
+            end
+
+            if key ~= "CurrentGameState"
+                and key ~= "Wave"
+                and key ~= "MaxWave"
+                and (type(value) ~= "table" and typeof(value) ~= "Instance") then
+                snapshot[tostring(key)] = value
+                count += 1
+            end
+        end
+    end)
+
+    if not ok then
+        snapshot.Error = "Game replica read failed"
+    end
+
+    return snapshot
+end
+
+Shared.getGameDebugSnapshot = getGameDebugSnapshot
+
 local cachedPlayerMatchReplica = nil
 local function findPlayerMatchReplica()
     local stillValid = false
