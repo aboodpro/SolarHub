@@ -1390,6 +1390,7 @@ function Macro.Init(Shared, UI)
                         local fired, err
                         local beforeYenForVerification = nil
                         local beforeLevelForVerification = nil
+                        local placementAlreadyMapped = false
 
                         if action.actionType == "UnitPlace" then
                             -- Before retrying a placement, check whether the previous
@@ -1400,6 +1401,7 @@ function Macro.Init(Shared, UI)
                                 local placementOrder = action._playbackPlacementOrder
                                 playbackUnitReplicaIds[placementOrder] = existingReplicaId
                                 success = true
+                                placementAlreadyMapped = true
                                 Shared.logLine(
                                     "[Macro] Place already exists -> order "
                                         .. tostring(placementOrder)
@@ -1434,24 +1436,26 @@ function Macro.Init(Shared, UI)
 
                         if success or fired then
                             if action.actionType == "UnitPlace" then
-                                local placementOrder = action._playbackPlacementOrder
-                                local newReplicaId = waitForNewPlacementReplica(
-                                    beforeIds,
-                                    args[4],
-                                    12
-                                )
-
-                                if newReplicaId then
-                                    playbackUnitReplicaIds[placementOrder] = newReplicaId
-                                    Shared.logLine(
-                                        "[Macro] Place mapped -> order "
-                                            .. tostring(placementOrder)
-                                            .. " replica "
-                                            .. tostring(newReplicaId)
+                                if not placementAlreadyMapped then
+                                    local placementOrder = action._playbackPlacementOrder
+                                    local newReplicaId = waitForNewPlacementReplica(
+                                        beforeIds,
+                                        args[4],
+                                        12
                                     )
-                                    success = true
-                                else
-                                    lastError = "Placed unit replica was not detected yet"
+
+                                    if newReplicaId then
+                                        playbackUnitReplicaIds[placementOrder] = newReplicaId
+                                        Shared.logLine(
+                                            "[Macro] Place mapped -> order "
+                                                .. tostring(placementOrder)
+                                                .. " replica "
+                                                .. tostring(newReplicaId)
+                                        )
+                                        success = true
+                                    else
+                                        lastError = "Placed unit replica was not detected yet"
+                                    end
                                 end
                             else
                                 local verified = verifyAction(
