@@ -423,15 +423,13 @@ function Macro.Init(Shared, UI)
                                 ))
 
                                 if actionDesc == "UnitPlace" then
-                                    recordPlacementCount = recordPlacementCount + 1
-                                    actionEntry.placementOrder = recordPlacementCount
+                                    -- Placement identity is finalized after all
+                                    -- async recording workers finish. Do not assign
+                                    -- placementOrder from worker completion timing.
                                     actionEntry.recordedUnitId = packedArgs[3]
-                                    recordedPlacementCFrames[recordPlacementCount] = packedArgs[4]
 
-                                    if packedArgs[3] ~= nil then
-                                        recordedUnitToPlacementOrder[
-                                            tostring(packedArgs[3])
-                                        ] = recordPlacementCount
+                                    if packedArgs[4] ~= nil then
+                                        recordedPlacementCFrames[actionSequence] = packedArgs[4]
                                     end
 
                                 elseif actionDesc == "UnitUpgrade" then
@@ -1189,16 +1187,17 @@ function Macro.Init(Shared, UI)
         -- Rebuild placement order from the saved macro itself. The old code
         -- depended on recordedPlacementCFrames from the recording session,
         -- which is empty when an already-saved macro is played later.
-        local savedPlacementOrder = 0
+        local normalizedPlacementOrder = 0
         local placementActionsByRecordedUnitId = {}
+
+        -- Normalize placement identities from the actual saved action order.
+        -- Ignore stale placementOrder values from older macro versions.
         for _, savedAction in ipairs(macroData.actions) do
             if savedAction.actionType == "UnitPlace" then
-                savedPlacementOrder += 1
-                local order = tonumber(savedAction.placementOrder) or savedPlacementOrder
-                placementActionsByOrder[order] = savedAction
+                normalizedPlacementOrder += 1
+                savedAction._playbackPlacementOrder = normalizedPlacementOrder
+                placementActionsByOrder[normalizedPlacementOrder] = savedAction
 
-                -- Older saved macros may have linkedPlacementOrder missing,
-                -- but still contain the original UnitPlace recordedUnitId.
                 if savedAction.recordedUnitId ~= nil then
                     placementActionsByRecordedUnitId[
                         tostring(savedAction.recordedUnitId)
@@ -1312,18 +1311,32 @@ function Macro.Init(Shared, UI)
                             action._playbackPlacementOrder = playPlacementCount
                         end
                     elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
-                        local targetOrder = action.linkedPlacementOrder
-                        local targetReplicaId = targetOrder and playbackUnitReplicaIds[targetOrder]
-                        local placementAction = targetOrder and placementActionsByOrder[targetOrder]
+                        local targetOrder = nil
+                        local targetReplicaId = nil
+                        local placementAction = nil
 
-                        if not placementAction and action.recordedUnitId ~= nil then
+                        -- Prefer the exact recorded unit identity. This is the
+                        -- key to supporting multiple copies of the same character.
+                        if action.recordedUnitId ~= nil then
                             placementAction = placementActionsByRecordedUnitId[
                                 tostring(action.recordedUnitId)
                             ]
 
                             if placementAction then
-                                targetOrder = tonumber(placementAction.placementOrder)
+                                targetOrder = placementAction._playbackPlacementOrder
                             end
+                        end
+
+                        -- Legacy fallback for older macros without a usable
+                        -- recordedUnitId.
+                        if not placementAction and action.linkedPlacementOrder then
+                            targetOrder = tonumber(action.linkedPlacementOrder)
+                            placementAction = targetOrder
+                                and placementActionsByOrder[targetOrder]
+                        end
+
+                        if targetOrder then
+                            targetReplicaId = playbackUnitReplicaIds[targetOrder]
                         end
 
                         local placementCFrame = placementAction
@@ -1343,14 +1356,19 @@ function Macro.Init(Shared, UI)
                             local bestDistance = math.huge
 
                             for order, savedPlace in pairs(placementActionsByOrder) do
-                                local cf = savedPlace.args and savedPlace.args[4]
-                                if typeof(cf) == "CFrame" then
-                                    local distance =
-                                        (cf.Position - targetCFrame.Position).Magnitude
+                                -- Only consider placements that already exist in
+                                -- this playback run; future placements cannot be
+                                -- the target of a current upgrade.
+                                if playbackUnitReplicaIds[order] then
+                                    local cf = savedPlace.args and savedPlace.args[4]
+                                    if typeof(cf) == "CFrame" then
+                                        local distance =
+                                            (cf.Position - targetCFrame.Position).Magnitude
 
-                                    if distance < bestDistance then
-                                        bestDistance = distance
-                                        bestOrder = order
+                                        if distance < bestDistance then
+                                            bestDistance = distance
+                                            bestOrder = order
+                                        end
                                     end
                                 end
                             end
@@ -1522,6 +1540,83 @@ function Macro.Init(Shared, UI)
 
     Shared.runMacroOnce = runMacroOnce
 
+
+    local function finalizeRecordedActionLinks()
+        -- Recording workers run asynchronously, so placementOrder MUST NOT be
+        -- assigned from worker completion order. Rebuild it from the real
+        -- remote-call sequence after every worker has finished.
+        table.sort(recordedActions, function(a, b)
+            return (a.recordSequence or math.huge) < (b.recordSequence or math.huge)
+        end)
+
+        local placementOrderByRecordedUnitId = {}
+        local placements = {}
+        local nextPlacementOrder = 0
+
+        for _, action in ipairs(recordedActions) do
+            if action.actionType == "UnitPlace" then
+                nextPlacementOrder += 1
+                action.placementOrder = nextPlacementOrder
+                placements[nextPlacementOrder] = action
+
+                -- recordedUnitId identifies the actual placed unit replica,
+                -- not the character/unit type. Duplicate character types are
+                -- therefore kept as separate unit identities.
+                if action.recordedUnitId ~= nil then
+                    placementOrderByRecordedUnitId[tostring(action.recordedUnitId)] = nextPlacementOrder
+                end
+            end
+        end
+
+        for _, action in ipairs(recordedActions) do
+            if action.actionType == "UnitUpgrade"
+                or action.actionType == "UnitAutoUpgrade" then
+
+                local linkedOrder = nil
+
+                -- Strongest match: exact unit replica id used by the original action.
+                if action.recordedUnitId ~= nil then
+                    linkedOrder =
+                        placementOrderByRecordedUnitId[tostring(action.recordedUnitId)]
+                end
+
+                -- Fallback for older/partial recordings: use the saved target
+                -- position and only consider placements that happened earlier.
+                if not linkedOrder and typeof(action.targetCFrame) == "CFrame" then
+                    local bestDistance = math.huge
+                    local bestOrder = nil
+
+                    for order, placementAction in pairs(placements) do
+                        if (placementAction.recordSequence or math.huge)
+                            < (action.recordSequence or math.huge) then
+
+                            local placementCFrame =
+                                placementAction.args
+                                and placementAction.args[4]
+
+                            if typeof(placementCFrame) == "CFrame" then
+                                local distance =
+                                    (placementCFrame.Position - action.targetCFrame.Position).Magnitude
+
+                                if distance < bestDistance then
+                                    bestDistance = distance
+                                    bestOrder = order
+                                end
+                            end
+                        end
+                    end
+
+                    if bestOrder and bestDistance <= 12 then
+                        linkedOrder = bestOrder
+                    end
+                end
+
+                action.linkedPlacementOrder = linkedOrder
+            end
+        end
+    end
+
+
     createBtn.Activated:Connect(function()
         local name = nameInput.Text -- تم التصحيح هنا وإزالة .Test الخاطئة
         if name ~= "" then
@@ -1571,9 +1666,7 @@ function Macro.Init(Shared, UI)
                 task.wait(0.05)
             end
 
-            table.sort(recordedActions, function(a, b)
-                return (a.recordSequence or math.huge) < (b.recordSequence or math.huge)
-            end)
+            finalizeRecordedActionLinks()
 
             if savedMacros[Config.CurrentMacroName] then
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
