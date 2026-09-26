@@ -829,32 +829,33 @@ function Joiner.Init(Shared, UI)
         return result ~= false
     end
 
-    local function runRemoteGameAutomation()
-        if Config.AutoVoteStart and remoteCooldown("AutoVoteStart", 3) then
-            pcall(function()
-                ReplicaSignal:FireServer(87, "Response", true)
-            end)
-            Shared.logLine("[GameRemote] Auto Vote Start -> 87 Response true")
-        end
+    local function runRemoteGameAutomation(state)
+        state = state or getCurrentGameState()
 
-        if Config.AutoSkipWave and remoteCooldown("AutoSkipWave", 2) then
-            pcall(function()
-                ReplicaSignal:FireServer(215, "Response", true)
-            end)
-            Shared.logLine("[GameRemote] Auto Skip -> 215 Response true")
-        end
+        if state == "InProgress" then
+            if Config.AutoVoteStart and remoteCooldown("AutoVoteStart", 3) then
+                pcall(function()
+                    ReplicaSignal:FireServer(87, "Response", true)
+                end)
+                Shared.logLine("[GameRemote] Auto Vote Start -> 87 Response true")
+            end
 
-        local state = getCurrentGameState()
-
-        if Config.AutoReplay and state and state ~= "InProgress" then
-            if remoteCooldown("AutoReplay", 6) then
+            if Config.AutoSkipWave and remoteCooldown("AutoSkipWave", 2) then
+                pcall(function()
+                    ReplicaSignal:FireServer(215, "Response", true)
+                end)
+                Shared.logLine("[GameRemote] Auto Skip -> 215 Response true")
+            end
+        elseif state then
+            -- Replay/Next belong to the Game automation, not Macro.
+            -- This branch must also run while the match is in its finished/lobby
+            -- state so the transition is sent after a round ends.
+            if Config.AutoReplay and remoteCooldown("AutoReplay", 6) then
                 pcall(function()
                     ReplicaSignal:FireServer(77, "Restart")
                 end)
                 Shared.logLine(("[GameRemote] Auto Replay/Restart -> 77 Restart (state=%s)"):format(state))
-            end
-        elseif Config.AutoNext and state and state ~= "InProgress" then
-            if remoteCooldown("AutoNext", 6) then
+            elseif Config.AutoNext and remoteCooldown("AutoNext", 6) then
                 pcall(function()
                     ReplicaSignal:FireServer(77, "Next")
                 end)
@@ -890,6 +891,10 @@ function Joiner.Init(Shared, UI)
 
                 local state = getCurrentGameState()
 
+                -- Game automation must run in both gameplay and post-round states.
+                -- Macro only handles Start; Game handles Replay/Next.
+                runRemoteGameAutomation(state)
+
                 -- Do not use WaveInfo as a lobby detector. It can exist before
                 -- a match starts, which previously prevented Auto Join from firing.
                 if state == "InProgress" then
@@ -897,7 +902,6 @@ function Joiner.Init(Shared, UI)
                     joinRequested.Raid = false
                     joinRequested.Expedition = false
                     joinRequested.Challenge = false
-                    runRemoteGameAutomation()
                 elseif not Config.DisableAutoJoiners then
                     if Config.AutoJoinStory and not joinRequested.Story then
                         -- Story has two distinct flows in the game's UI:
@@ -946,7 +950,7 @@ function Joiner.Init(Shared, UI)
                         end
                     end
                 else
-                    runRemoteGameAutomation()
+                    -- Game automation was already evaluated above for this state.
                 end
             end)
         end
