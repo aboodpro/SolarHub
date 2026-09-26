@@ -1172,51 +1172,101 @@ function Macro.Init(Shared, UI)
         if action.actionType == "UnitUpgrade"
             or action.actionType == "UnitAutoUpgrade"
             or action.actionType == "UnitSell" then
+
             local targetId = action._playbackReplicaId
             if not targetId then
                 return false
             end
 
             local replicaClient = getReplicaClient()
+
+            if action.actionType == "UnitSell" then
+                local deadline = os.clock() + 1.5
+
+                while os.clock() < deadline and isPlayingMacro == true do
+                    local targetStillExists = false
+
+                    if replicaClient and type(replicaClient.FromId) == "function" then
+                        local ok, targetReplica = pcall(
+                            replicaClient.FromId,
+                            tonumber(targetId)
+                        )
+
+                        targetStillExists = ok
+                            and targetReplica ~= nil
+                            and targetReplica.Data ~= nil
+                    end
+
+                    if not targetStillExists and type(getOwnedGameUnitReplicas) == "function" then
+                        local currentUnits = getOwnedGameUnitReplicas()
+
+                        if currentUnits[tostring(targetId)] then
+                            targetStillExists = true
+                        end
+
+                        if not targetStillExists
+                            and typeof(action.targetCFrame) == "CFrame" then
+
+                            local targetUnitID = action.targetUnitID ~= nil
+                                and tostring(action.targetUnitID)
+                                or nil
+
+                            for _, replica in pairs(currentUnits) do
+                                if replica and replica.Data then
+                                    local cf = replica.Data.CFrame
+                                    local unitId = replica.Data.UnitID ~= nil
+                                        and tostring(replica.Data.UnitID)
+                                        or nil
+
+                                    if typeof(cf) == "CFrame"
+                                        and (cf.Position - action.targetCFrame.Position).Magnitude <= 2.5
+                                        and (targetUnitID == nil or unitId == targetUnitID) then
+                                        targetStillExists = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    if not targetStillExists then
+                        return true
+                    end
+
+                    task.wait(0.1)
+                end
+
+                return false
+            end
+
             if not replicaClient or type(replicaClient.FromId) ~= "function" then
                 return true
             end
 
             local deadline = os.clock() + 1.5
+
             while os.clock() < deadline and isPlayingMacro == true do
-                local ok, replica = pcall(replicaClient.FromId, tonumber(targetId))
+                local ok, replica = pcall(
+                    replicaClient.FromId,
+                    tonumber(targetId)
+                )
+
                 if ok and replica and replica.Data then
                     if action.actionType == "UnitAutoUpgrade" then
                         return true
                     end
 
-                    if action.actionType == "UnitSell" then
-                        -- A successful sell removes the target unit replica.
-                        -- Some game revisions leave the replica briefly, so
-                        -- keep polling until the verification deadline.
-                        -- If it is still present, fall through and keep waiting.
-                    else
-                        local currentLevel = getUnitLevel(replica.Data)
+                    local currentLevel = getUnitLevel(replica.Data)
 
-                        if beforeLevel ~= nil and currentLevel ~= nil
-                            and tostring(currentLevel) ~= tostring(beforeLevel) then
-                            return true
-                        end
-
-                        if beforeYen ~= nil then
-                            local currentYen = getCurrentYen()
-                            if currentYen ~= nil and currentYen < beforeYen then
-                                return true
-                            end
-                        end
-                    end
-                    if beforeLevel ~= nil and currentLevel ~= nil
+                    if beforeLevel ~= nil
+                        and currentLevel ~= nil
                         and tostring(currentLevel) ~= tostring(beforeLevel) then
                         return true
                     end
 
                     if beforeYen ~= nil then
                         local currentYen = getCurrentYen()
+
                         if currentYen ~= nil and currentYen < beforeYen then
                             return true
                         end
@@ -1226,66 +1276,37 @@ function Macro.Init(Shared, UI)
                 task.wait(0.1)
             end
 
-            if action.actionType == "UnitSell" then
-                local targetCFrame = typeof(action.targetCFrame) == "CFrame"
-                    and action.targetCFrame
-                    or nil
-                local targetUnitID = action.targetUnitID ~= nil
-                    and tostring(action.targetUnitID)
-                    or nil
-
-                local currentUnits = getOwnedGameUnitReplicas()
-                local targetStillExists = false
-
-                if targetId and currentUnits[tostring(targetId)] then
-                    targetStillExists = true
-                end
-
-                if not targetStillExists and targetCFrame then
-                    for _, replica in pairs(currentUnits) do
-                        if replica and replica.Data then
-                            local cf = replica.Data.CFrame
-                            local unitId = replica.Data.UnitID ~= nil
-                                and tostring(replica.Data.UnitID)
-                                or nil
-
-                            if typeof(cf) == "CFrame"
-                                and (cf.Position - targetCFrame.Position).Magnitude <= 2.5
-                                and (targetUnitID == nil or unitId == targetUnitID) then
-                                targetStillExists = true
-                                break
-                            end
-                        end
-                    end
-                end
-
-                if not targetStillExists then
-                    return true
-                end
-            elseif beforeYen ~= nil then
+            if beforeYen ~= nil then
                 local currentYen = getCurrentYen()
+
                 if currentYen ~= nil and currentYen < beforeYen then
                     return true
                 end
             end
 
             return false
+
         elseif action.actionType == "UnitPlace" then
             local deadline = os.clock() + 0.8
+
             while os.clock() < deadline and isPlayingMacro == true do
                 local now = getOwnedGameUnitReplicas()
+
                 for id in pairs(now) do
                     if not beforeUnits[id] then
                         return true
                     end
                 end
+
                 task.wait(0.08)
             end
+
             return false
         end
 
         return true
     end
+
     local function runUpgradeUntilAccepted(remoteObj, action, args, timeoutSeconds, runId)
         if not isPlayingMacro or (runId ~= nil and macroRunId ~= runId) then
             return false, "Macro stopped"
