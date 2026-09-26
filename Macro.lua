@@ -1436,14 +1436,21 @@ function Macro.Init(Shared, UI)
             end
 
             if not success then
-                -- An action is skipped only after all configured retries fail.
-                warn(("[Macro] Skipping action #%d after %d failed attempt(s): %s"):format(
-                    actionIndex, attemptTotal, lastError
-                ))
-                macroStatusLabel.Text = ("[%d/%d] %s | SKIPPED"):format(
-                    actionIndex, totalActions, actionLabel
-                )
-                task.wait(0.15)
+                if retryCount == 0 then
+                    -- Retry=0 never skips an action. Reaching this point means
+                    -- Play Macro was stopped while the action was still retrying.
+                    macroStatusLabel.Text = ("[%d/%d] %s | STOPPED"):format(
+                        actionIndex, totalActions, actionLabel
+                    )
+                else
+                    warn(("[Macro] Skipping action #%d after %d failed attempt(s): %s"):format(
+                        actionIndex, attempt, lastError
+                    ))
+                    macroStatusLabel.Text = ("[%d/%d] %s | SKIPPED"):format(
+                        actionIndex, totalActions, actionLabel
+                    )
+                    task.wait(0.15)
+                end
             else
                 macroStatusLabel.Text = ("[%d/%d] %s | SUCCESS"):format(
                     actionIndex, totalActions, actionLabel
