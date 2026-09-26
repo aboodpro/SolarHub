@@ -24,139 +24,222 @@ function Joiner.Init(Shared, UI)
     -- Expose the exact ReplicaSignal instance used by Joiner's working
     -- Auto Vote Start path so Macro does not resolve a different remote.
     Shared.ReplicaSignal = ReplicaSignal
-    local function findStartVoteButton()
+    local replicaClientForStart = nil
+
+    local function getReplicaClientForStart()
+        if replicaClientForStart then
+            return replicaClientForStart
+        end
+
+        local ok, result = pcall(function()
+            return require(Shared.ReplicatedStorage.Shared.ReplicaClient)
+        end)
+
+        if ok and result and type(result.FromId) == "function" then
+            replicaClientForStart = result
+        end
+
+        return replicaClientForStart
+    end
+
+    local function scoreStartVoteData(value, depth, keyHint)
+        depth = depth or 0
+
+        if depth > 4 then
+            return 0
+        end
+
+        local score = 0
+        local keyText = tostring(keyHint or ""):lower()
+
+        if keyText:find("vote") then
+            score = score + 80
+        elseif keyText:find("response") then
+            score = score + 55
+        elseif keyText:find("start") then
+            score = score + 40
+        elseif keyText:find("notification") then
+            score = score + 20
+        end
+
+        if type(value) == "string" then
+            local lower = value:lower()
+
+            if lower:find("vote") then
+                score = score + 80
+            end
+
+            if lower:find("response") then
+                score = score + 55
+            end
+
+            if lower:find("start") then
+                score = score + 40
+            end
+
+            if lower == "yes" or lower == "no" then
+                score = score + 35
+            end
+
+            if lower:find("ready") then
+                score = score + 25
+            end
+
+            if lower:find("notification") then
+                score = score + 20
+            end
+
+            return score
+        end
+
+        if type(value) ~= "table" then
+            return score
+        end
+
+        for key, child in pairs(value) do
+            score = score + scoreStartVoteData(child, depth + 1, key)
+        end
+
+        return score
+    end
+
+    local function findStartVoteReplica()
+        local replicaClient = getReplicaClientForStart()
+        if not replicaClient then
+            return nil, "ReplicaClient unavailable"
+        end
+
+        local bestId = nil
+        local bestScore = 0
         local candidates = {}
 
-        pcall(function()
-            for _, descendant in ipairs(player.PlayerGui:GetDescendants()) do
-                if descendant:IsA("GuiButton")
-                    and descendant.Visible
-                    and descendant.Active then
+        for id = 1, 2000 do
+            local ok, replica = pcall(replicaClient.FromId, id)
 
-                    local text = ""
-                    pcall(function()
-                        text = tostring(descendant.Text or "")
-                    end)
+            if ok and replica and type(replica.Data) == "table" then
+                local score = scoreStartVoteData(replica.Data, 0, nil)
 
-                    local loweredText = text:lower()
-                    local score = 0
+                if score >= 80 then
+                    local entry = {
+                        id = id,
+                        score = score,
+                        data = replica.Data,
+                    }
 
-                    if loweredText == "yes" then
-                        score = score + 100
-                    elseif loweredText == "start game" then
-                        score = score + 95
-                    elseif loweredText == "start" then
-                        score = score + 90
-                    elseif loweredText == "ready" then
-                        score = score + 70
-                    end
+                    table.insert(candidates, entry)
 
-                    local ancestor = descendant.Parent
-                    local depth = 0
-
-                    while ancestor and depth < 6 do
-                        local ancestorName = tostring(ancestor.Name):lower()
-
-                        if ancestorName:find("vote") then
-                            score = score + 50
-                        end
-
-                        if ancestorName:find("start") then
-                            score = score + 25
-                        end
-
-                        if ancestorName:find("notification") then
-                            score = score + 15
-                        end
-
-                        if ancestorName:find("match") then
-                            score = score + 5
-                        end
-
-                        ancestor = ancestor.Parent
-                        depth = depth + 1
-                    end
-
-                    if score > 0 then
-                        table.insert(candidates, {
-                            button = descendant,
-                            score = score,
-                            text = text,
-                        })
+                    if score > bestScore then
+                        bestScore = score
+                        bestId = id
                     end
                 end
             end
-        end)
+        end
 
         table.sort(candidates, function(a, b)
             return a.score > b.score
         end)
 
-        return candidates[1], candidates
-    end
-
-    Shared.findStartVoteButton = findStartVoteButton
-
-    Shared.sendGameStart = function()
-        -- Do not hard-code the first ReplicaSignal argument. The game's
-        -- VoteWindow replica ID is server-assigned and changes between rounds.
-        local candidate, candidates = findStartVoteButton()
-
-        if candidate and candidate.button then
-            local button = candidate.button
-            local buttonPath = "?"
-
-            pcall(function()
-                buttonPath = button:GetFullName()
-            end)
-
-            local ok, err = pcall(function()
-                button:Activate()
-            end)
-
-            if Config.MacroDebug == true and type(Shared.logLine) == "function" then
-                Shared.logLine(
-                    ("[GameUI] Start/Vote -> %s | text=%s | score=%d | activated=%s | err=%s"):format(
-                        tostring(buttonPath),
-                        tostring(candidate.text),
-                        tonumber(candidate.score) or 0,
-                        tostring(ok),
-                        tostring(err)
-                    )
-                )
-            end
-
-            return ok, err
-        end
-
         if Config.MacroDebug == true and type(Shared.logLine) == "function" then
             Shared.logLine(
-                ("[GameUI] Start/Vote button NOT FOUND | candidates=%d | no hard-coded Replica ID sent"):format(
-                    #candidates
+                ("[StartResolve] Vote replica scan -> candidates=%d | best=%s | score=%d"):format(
+                    #candidates,
+                    tostring(bestId),
+                    bestScore
                 )
             )
 
             local limit = math.min(#candidates, 8)
-            for index = 1, limit do
-                local item = candidates[index]
-                local path = "?"
 
-                pcall(function()
-                    path = item.button:GetFullName()
-                end)
+            for index = 1, limit do
+                local candidate = candidates[index]
+                local scalarParts = {}
+                local scalarCount = 0
+
+                local function collectScalars(value, depth)
+                    if depth > 2 or type(value) ~= "table" then
+                        return
+                    end
+
+                    for key, child in pairs(value) do
+                        if type(child) == "string"
+                            or type(child) == "number"
+                            or type(child) == "boolean" then
+                            scalarCount = scalarCount + 1
+
+                            if scalarCount <= 12 then
+                                table.insert(
+                                    scalarParts,
+                                    tostring(key) .. "=" .. tostring(child)
+                                )
+                            end
+                        elseif type(child) == "table" then
+                            collectScalars(child, depth + 1)
+                        end
+
+                        if scalarCount >= 12 then
+                            break
+                        end
+                    end
+                end
+
+                collectScalars(candidate.data, 0)
 
                 Shared.logLine(
-                    ("[GameUI] Candidate #%d | score=%d | text=%s | path=%s"):format(
+                    ("[StartResolve] Candidate #%d | id=%d | score=%d | data=%s"):format(
                         index,
-                        tonumber(item.score) or 0,
-                        tostring(item.text),
-                        tostring(path)
+                        candidate.id,
+                        candidate.score,
+                        table.concat(scalarParts, " | ")
                     )
                 )
             end
         end
 
-        return false, "Start/Vote button not found"
+        if bestId then
+            return bestId, nil
+        end
+
+        return nil, "No vote replica candidate found"
+    end
+
+    Shared.findStartVoteReplica = findStartVoteReplica
+
+    Shared.sendGameStart = function()
+        -- The first ReplicaSignal argument is NOT a global Start opcode.
+        -- It is the server-assigned ID of the current VoteWindow replica.
+        local replicaId, resolveError = findStartVoteReplica()
+
+        if not replicaId then
+            if Config.MacroDebug == true and type(Shared.logLine) == "function" then
+                Shared.logLine(
+                    "[GameRemote] Start/Vote NOT SENT -> " .. tostring(resolveError)
+                )
+            end
+
+            return false, resolveError
+        end
+
+        local args = {replicaId, "Response", true}
+        local ok, err = pcall(function()
+            ReplicaSignal:FireServer(table.unpack(args))
+        end)
+
+        if Config.MacroDebug == true and type(Shared.logLine) == "function" then
+            Shared.logLine(
+                ("[GameRemote] Start/Vote -> %s | dynamicReplica=%s | args: arg1=%s | arg2=%s | arg3=%s | ok=%s | err=%s"):format(
+                    tostring(ReplicaSignal:GetFullName()),
+                    tostring(replicaId),
+                    tostring(args[1]),
+                    tostring(args[2]),
+                    tostring(args[3]),
+                    tostring(ok),
+                    tostring(err)
+                )
+            )
+        end
+
+        return ok, err
     end
 
     Shared.gameTransitionPending = false
