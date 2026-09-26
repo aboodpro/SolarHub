@@ -332,13 +332,20 @@ function Macro.Init(Shared, UI)
 
                 local yenBefore = nil
                 local replicaActionBefore = nil
+                local placementBeforeIds = nil
 
                 if isRemoteCall and Config.RecordMacro then
                     pcall(function()
                         if selfRef.Name == "ReplicaSignal" then
                             replicaActionBefore = getReplicaSignalAction(packedArgs)
+
                             if replicaActionBefore == "UnitUpgrade" then
                                 yenBefore = getCurrentYen()
+                            elseif replicaActionBefore == "UnitPlace" then
+                                -- Snapshot the owned unit replicas BEFORE the placement.
+                                -- The replica that appears after the remote call is the
+                                -- exact physical unit created by this PlaceGameUnit action.
+                                placementBeforeIds = snapshotOwnedGameUnits()
                             end
                         end
                     end)
@@ -423,13 +430,35 @@ function Macro.Init(Shared, UI)
                                 ))
 
                                 if actionDesc == "UnitPlace" then
-                                    -- Placement identity is finalized after all
-                                    -- async recording workers finish. Do not assign
-                                    -- placementOrder from worker completion timing.
+                                    -- Keep the original argument for compatibility,
+                                    -- but also capture the REAL replica created by this
+                                    -- placement. This is the per-instance identity we
+                                    -- use to link later Upgrade/AutoUpgrade actions.
                                     actionEntry.recordedUnitId = packedArgs[3]
 
                                     if packedArgs[4] ~= nil then
                                         recordedPlacementCFrames[actionSequence] = packedArgs[4]
+                                    end
+
+                                    if placementBeforeIds then
+                                        local placedReplicaId = findNewUnitReplicaId(
+                                            placementBeforeIds,
+                                            packedArgs[4],
+                                            4
+                                        )
+
+                                        if placedReplicaId ~= nil then
+                                            actionEntry.recordedPlacementReplicaId =
+                                                tonumber(placedReplicaId) or placedReplicaId
+
+                                            print(("[Macro Record] Place replica -> %s"):format(
+                                                tostring(actionEntry.recordedPlacementReplicaId)
+                                            ))
+                                        else
+                                            warn(("[Macro Record] Could not resolve placement replica for action #%d"):format(
+                                                actionSequence
+                                            ))
+                                        end
                                     end
 
                                 elseif actionDesc == "UnitUpgrade" then
@@ -1588,6 +1617,7 @@ function Macro.Init(Shared, UI)
         local placements = {}
         local nextPlacementOrder = 0
         local placementOrderByRecordedUnitId = {}
+        local placementOrderByRecordedReplicaId = {}
 
         for _, action in ipairs(recordedActions) do
             if action.actionType == "UnitPlace" then
@@ -1596,11 +1626,18 @@ function Macro.Init(Shared, UI)
                 action._playbackPlacementOrder = nextPlacementOrder
                 placements[nextPlacementOrder] = action
 
+                -- PRIMARY IDENTITY:
+                -- the actual server replica created by this exact placement.
+                if action.recordedPlacementReplicaId ~= nil then
+                    placementOrderByRecordedReplicaId[
+                        tostring(action.recordedPlacementReplicaId)
+                    ] = nextPlacementOrder
+                end
+
                 if action.recordedUnitId ~= nil then
                     local key = tostring(action.recordedUnitId)
-                    -- A duplicate recorded id is intentionally NOT considered a
-                    -- unique character identity. This can happen when the game
-                    -- exposes a shared/unit-type id for multiple copies.
+                    -- Legacy fallback only. A shared/duplicate unit-type id is
+                    -- never treated as a unique per-instance identity.
                     if placementOrderByRecordedUnitId[key] == nil then
                         placementOrderByRecordedUnitId[key] = nextPlacementOrder
                     else
@@ -1622,10 +1659,19 @@ function Macro.Init(Shared, UI)
                     and tostring(action.targetUnitID)
                     or nil
 
-                -- Primary identity: target position + unit type, restricted to
-                -- placements that happened before this action. This is what
-                -- separates two copies of the same character.
-                if targetCFrame then
+                -- PRIMARY identity: the exact replica that was targeted while
+                -- recording. This is immune to duplicate character/unit IDs.
+                if action.recordedUnitId ~= nil then
+                    linkedOrder = placementOrderByRecordedReplicaId[
+                        tostring(action.recordedUnitId)
+                    ]
+                end
+
+                -- SECONDARY identity: target position + unit type, restricted to
+                -- placements that happened before this action. This covers older
+                -- macros and recordings where the exact placement replica could
+                -- not be resolved in time.
+                if not linkedOrder and targetCFrame then
                     local bestScore = math.huge
                     local bestOrder = nil
 
@@ -1668,8 +1714,8 @@ function Macro.Init(Shared, UI)
                     end
                 end
 
-                -- Fallback for older captures where targetCFrame is missing.
-                -- Only use a recorded id if it was unique among placements.
+                -- LAST fallback for old captures that have neither the exact
+                -- placement replica link nor a usable target CFrame.
                 if not linkedOrder and action.recordedUnitId ~= nil then
                     local key = tostring(action.recordedUnitId)
                     local mapped = placementOrderByRecordedUnitId[key]
