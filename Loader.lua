@@ -307,29 +307,49 @@ task.spawn(function()
     local function compile(fileName)
         local source = moduleSources[fileName]
         if not source then
-            error("[Loader] Missing collected source: " .. fileName)
+            return nil, "[Loader] Missing collected source: " .. fileName
         end
-    
-        local ok, chunk = pcall(loadstring, source)
-        if not ok or type(chunk) ~= "function" then
-            error("[Loader] COMPILE ERROR in " .. fileName .. ": " .. tostring(chunk))
+
+        -- pcall(loadstring, source) returns (true, nil, compileError) when
+        -- the source has a syntax/compile error. Keep that third return value.
+        local ok, chunk, compileError = pcall(loadstring, source)
+        if not ok then
+            return nil, "[Loader] loadstring failed for " .. fileName .. ": " .. tostring(chunk)
         end
-    
-        return chunk
+
+        if type(chunk) ~= "function" then
+            return nil, "[Loader] COMPILE ERROR in " .. fileName .. ": " .. tostring(compileError)
+        end
+
+        return chunk, nil
     end
-    
+
     setLoadingStatus("Compiling Solar modules...")
     print("[Loader] Compiling modules...")
-    
-    local compiled = {
-        Shared = compile("Shared.lua"),
-        UI = compile("UI.lua"),
-        Joiner = compile("Joiner.lua"),
-        Macro = compile("Macro.lua"),
-        Webhook = compile("Webhook.lua"),
-    }
-    
-    moduleSources = nil
+
+    local compiled = {}
+
+    for _, fileName in ipairs({
+        "Shared.lua",
+        "UI.lua",
+        "Joiner.lua",
+        "Macro.lua",
+        "Webhook.lua",
+    }) do
+        local label = fileName:gsub("%.lua$", "")
+        local chunk, compileError = compile(fileName)
+
+        if not chunk then
+            setLoadingStatus(label .. " compile error")
+            warn(compileError)
+            moduleSources = nil
+            return
+        end
+
+        compiled[label] = chunk
+    end
+
+        moduleSources = nil
     
     -------------------------------------------------
     -- LOAD / INIT
