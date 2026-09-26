@@ -1009,7 +1009,9 @@ function Joiner.Init(Shared, UI)
 
         -- Auto Vote Start is a pre-round action. Allow it before InProgress, but
         -- never while waiting for Replay/Next to create the next round.
-        if Config.AutoVoteStart and state ~= nil
+        if Config.AutoVoteStart
+            and not Config.PlayMacro
+            and state ~= nil
             and not gameTransitionPending
             and remoteCooldown("AutoVoteStart", 3) then
             local ok, err = pcall(function()
