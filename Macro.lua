@@ -571,6 +571,25 @@ function Macro.Init(Shared, UI)
         warn("[Macro] Recording hook unavailable; playback UI will still load.")
     end
 
+    local debugTopBtn = Instance.new("TextButton")
+    debugTopBtn.Size = UDim2.new(1, 0, 0, 34)
+    debugTopBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 68)
+    debugTopBtn.Text = "🐛 Debug Log"
+    debugTopBtn.Font = Enum.Font.GothamBold
+    debugTopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    debugTopBtn.TextSize = 10
+    debugTopBtn.LayoutOrder = -50
+    debugTopBtn.Parent = macroTab
+    Instance.new("UICorner", debugTopBtn).CornerRadius = UDim.new(0, 7)
+
+    debugTopBtn.Activated:Connect(function()
+        if type(Shared.showSessionLogWindow) == "function" then
+            Shared.showSessionLogWindow()
+        else
+            showTopNotification("Debug Log is unavailable.", 3)
+        end
+    end)
+
     local createSec = Instance.new("Frame")
     createSec.Size = UDim2.new(1, 0, 0, 100)
     createSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
@@ -794,25 +813,6 @@ function Macro.Init(Shared, UI)
     playBtn.TextSize = 10
     playBtn.Parent = recordSec
     Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 7)
-
-    local debugLogBtn = Instance.new("TextButton")
-    debugLogBtn.Size = UDim2.new(1, -16, 0, 28)
-    debugLogBtn.Position = UDim2.fromOffset(8, 80)
-    debugLogBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 68)
-    debugLogBtn.Text = "🐛 Debug Log"
-    debugLogBtn.Font = Enum.Font.GothamBold
-    debugLogBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    debugLogBtn.TextSize = 10
-    debugLogBtn.Parent = recordSec
-    Instance.new("UICorner", debugLogBtn).CornerRadius = UDim.new(0, 7)
-
-    debugLogBtn.Activated:Connect(function()
-        if type(Shared.showSessionLogWindow) == "function" then
-            Shared.showSessionLogWindow()
-        else
-            showTopNotification("Debug Log is unavailable.", 3)
-        end
-    end)
 
     local macroStatusLabel = Instance.new("TextLabel")
     macroStatusLabel.Size = UDim2.new(1, -16, 0, 32)
