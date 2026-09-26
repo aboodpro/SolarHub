@@ -47,24 +47,30 @@ function Joiner.Init(Shared, UI)
                         score = score + 95
                     elseif loweredText == "start" then
                         score = score + 90
+                    elseif loweredText == "ready" then
+                        score = score + 70
                     end
 
                     local ancestor = descendant.Parent
                     local depth = 0
 
-                    while ancestor and depth < 5 do
+                    while ancestor and depth < 6 do
                         local ancestorName = tostring(ancestor.Name):lower()
 
                         if ancestorName:find("vote") then
-                            score = score + 40
+                            score = score + 50
                         end
 
                         if ancestorName:find("start") then
-                            score = score + 20
+                            score = score + 25
                         end
 
                         if ancestorName:find("notification") then
-                            score = score + 10
+                            score = score + 15
+                        end
+
+                        if ancestorName:find("match") then
+                            score = score + 5
                         end
 
                         ancestor = ancestor.Parent
@@ -86,15 +92,15 @@ function Joiner.Init(Shared, UI)
             return a.score > b.score
         end)
 
-        return candidates[1]
+        return candidates[1], candidates
     end
 
     Shared.findStartVoteButton = findStartVoteButton
 
     Shared.sendGameStart = function()
-        -- Use the game's own visible Vote button first. This avoids guessing
-        -- a server-assigned VoteWindow replica ID.
-        local candidate = findStartVoteButton()
+        -- Do not hard-code the first ReplicaSignal argument. The game's
+        -- VoteWindow replica ID is server-assigned and changes between rounds.
+        local candidate, candidates = findStartVoteButton()
 
         if candidate and candidate.button then
             local button = candidate.button
@@ -123,28 +129,34 @@ function Joiner.Init(Shared, UI)
             return ok, err
         end
 
-        -- Diagnostic fallback for older sessions. 175 was observed as the
-        -- current VoteWindow replica ID, but it can change between sessions.
-        local args = {175, "Response", true}
-        local ok, err = pcall(function()
-            ReplicaSignal:FireServer(table.unpack(args))
-        end)
-
         if Config.MacroDebug == true and type(Shared.logLine) == "function" then
             Shared.logLine(
-                ("[GameRemote] Start/Vote FALLBACK -> %s | %s | args: arg1=%s | arg2=%s | arg3=%s | ok=%s | err=%s"):format(
-                    tostring(ReplicaSignal:GetFullName()),
-                    tostring(ReplicaSignal.ClassName),
-                    tostring(args[1]),
-                    tostring(args[2]),
-                    tostring(args[3]),
-                    tostring(ok),
-                    tostring(err)
+                ("[GameUI] Start/Vote button NOT FOUND | candidates=%d | no hard-coded Replica ID sent"):format(
+                    #candidates
                 )
             )
+
+            local limit = math.min(#candidates, 8)
+            for index = 1, limit do
+                local item = candidates[index]
+                local path = "?"
+
+                pcall(function()
+                    path = item.button:GetFullName()
+                end)
+
+                Shared.logLine(
+                    ("[GameUI] Candidate #%d | score=%d | text=%s | path=%s"):format(
+                        index,
+                        tonumber(item.score) or 0,
+                        tostring(item.text),
+                        tostring(path)
+                    )
+                )
+            end
         end
 
-        return ok, err
+        return false, "Start/Vote button not found"
     end
 
     Shared.gameTransitionPending = false
