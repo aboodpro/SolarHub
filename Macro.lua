@@ -1996,23 +1996,17 @@ function Macro.Init(Shared, UI)
                 local function fireSignal(...)
                     local args = table.pack(...)
 
-                    if args[1] == 175 and args[2] == "Response" and args[3] == true
-                        and type(Shared.sendGameStart) == "function" then
+                    if type(Shared.sendGameStart) == "function"
+                        and args[1] == "__GAME_START__" then
 
-                        macroDebugLog(
-                            ("START REQUEST | exact args: arg1=%s | arg2=%s | arg3=%s"):format(
-                                tostring(args[1]),
-                                tostring(args[2]),
-                                tostring(args[3])
-                            )
-                        )
+                        macroDebugLog("START REQUEST | route=Shared.sendGameStart")
 
                         local ok, err = Shared.sendGameStart()
 
                         if ok then
-                            Shared.logLine("[Macro] Game Start sent successfully")
+                            Shared.logLine("[Macro] Game Start request sent successfully")
                         else
-                            Shared.logLine("[Macro] Game Start ERROR -> " .. tostring(err))
+                            Shared.logLine("[Macro] Game Start request ERROR -> " .. tostring(err))
                         end
 
                         return ok
@@ -2159,7 +2153,7 @@ function Macro.Init(Shared, UI)
                                 )
                             )
                         else
-                            fired, fireErr = fireSignal(175, "Response", true)
+                            fired, fireErr = fireSignal("__GAME_START__")
                             macroDebugLog(
                                 ("[START REMOTE RESULT] attempt=%d | fired=%s | err=%s"):format(
                                     attempt,
