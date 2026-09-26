@@ -25,7 +25,7 @@ function Joiner.Init(Shared, UI)
     -- Auto Vote Start path so Macro does not resolve a different remote.
     Shared.ReplicaSignal = ReplicaSignal
     Shared.sendGameStart = function()
-        local args = {87, "Response", true}
+        local args = {175, "Response", true}
         local ok, err = pcall(function()
             ReplicaSignal:FireServer(table.unpack(args))
         end)
@@ -1027,7 +1027,7 @@ function Joiner.Init(Shared, UI)
             and not gameTransitionPending
             and remoteCooldown("AutoVoteStart", 3) then
             local ok, err = pcall(function()
-                ReplicaSignal:FireServer(87, "Response", true)
+                ReplicaSignal:FireServer(175, "Response", true)
             end)
 
             if ok then
@@ -1035,7 +1035,7 @@ function Joiner.Init(Shared, UI)
             end
 
             Shared.logLine(
-                ("[GameRemote] Start -> %s | source=%s | args: arg1=87 | arg2=Response | arg3=true | state=%s | ok=%s | err=%s"):format(
+                ("[GameRemote] Start -> %s | source=%s | args: arg1=175 | arg2=Response | arg3=true | state=%s | ok=%s | err=%s"):format(
                     tostring(ReplicaSignal:GetFullName()),
                     macroRequestedStart and "Macro" or "AutoVoteStart",
                     tostring(state),
