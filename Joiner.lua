@@ -902,7 +902,9 @@ function Joiner.Init(Shared, UI)
                     joinRequested.Raid = false
                     joinRequested.Expedition = false
                     joinRequested.Challenge = false
-                elseif not Config.DisableAutoJoiners then
+                elseif not Config.DisableAutoJoiners
+                    and not Config.AutoReplay
+                    and not Config.AutoNext then
                     if Config.AutoJoinStory and not joinRequested.Story then
                         -- Story has two distinct flows in the game's UI:
                         -- Matchmaking -> REQUEST_ENTER_MATCHMAKING
