@@ -210,6 +210,60 @@ local function logLine(msg)
     print(msg)
 end
 Shared.logLine = logLine
+
+-- Capture Roblox Output errors/warnings into the same SolarHub Session Log.
+-- LogService.MessageOut is the engine's output stream, including MessageError
+-- and MessageWarning entries that appear in the Roblox output console.
+local robloxOutputConnection = nil
+pcall(function()
+    local LogService = game:GetService("LogService")
+
+    robloxOutputConnection = LogService.MessageOut:Connect(function(message, messageType, context)
+        if messageType ~= Enum.MessageType.MessageError
+            and messageType ~= Enum.MessageType.MessageWarning then
+            return
+        end
+
+        local label = messageType == Enum.MessageType.MessageError
+            and "RobloxError"
+            or "RobloxWarning"
+
+        local contextText = ""
+        if type(context) == "table" then
+            local parts = {}
+
+            for key, value in pairs(context) do
+                local valueText
+
+                if typeof(value) == "Instance" then
+                    valueText = value:GetFullName()
+                else
+                    valueText = tostring(value)
+                end
+
+                table.insert(parts, tostring(key) .. "=" .. valueText)
+            end
+
+            if #parts > 0 then
+                contextText = " | Context=" .. table.concat(parts, ", ")
+            end
+        end
+
+        -- MessageOut fires after the output entry is created, so logging through
+        -- logLine prints a separate SolarHub entry without recursively capturing
+        -- itself (SolarHub uses print(), not warn/error).
+        table.insert(
+            sessionLog,
+            ("[%s] %s%s"):format(
+                label,
+                tostring(message),
+                contextText
+            )
+        )
+    end)
+end)
+
+Shared.robloxOutputConnection = robloxOutputConnection
 Shared.resetSessionLog = function() sessionLog = {} end
 
 local function copySessionLogToClipboard()
