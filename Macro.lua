@@ -871,16 +871,19 @@ function Macro.Init(Shared, UI)
     setRetryValue(Config.MacroRetry or 0)
 
     local isPlayingMacro = false
+    local macroRunId = 0
     local macroGameSession = 0
 
     -- Resolve a playback unit after the placement remote has already fired.
     -- Ignore Timing removes timestamp waits, not the game's replication/readiness
     -- requirements. Keep resolving until the correct live unit is visible.
-    local function resolvePlaybackUnitReplicaId(targetCFrame, targetUnitID, timeoutSeconds, preferredId)
+    local function resolvePlaybackUnitReplicaId(targetCFrame, targetUnitID, timeoutSeconds, preferredId, runId)
         local deadline = os.clock() + (timeoutSeconds or 12)
         local lastBestId = preferredId
 
-        while os.clock() < deadline and isPlayingMacro == true do
+        while os.clock() < deadline
+            and isPlayingMacro == true
+            and (runId == nil or macroRunId == runId) do
             if lastBestId then
                 local data = getReplicaDataById(lastBestId, 0.15)
                 if data and data.CFrame ~= nil and data.UnitID ~= nil then
@@ -1095,11 +1098,11 @@ function Macro.Init(Shared, UI)
 
         return true
     end
-    local function runUpgradeUntilAccepted(remoteObj, action, args, timeoutSeconds)
+    local function runUpgradeUntilAccepted(remoteObj, action, args, timeoutSeconds, runId)
         local deadline = os.clock() + (timeoutSeconds or 30)
 
         repeat
-            if not isPlayingMacro then
+            if not isPlayingMacro or (runId ~= nil and macroRunId ~= runId) then
                 return false, "Macro stopped"
             end
 
@@ -1145,6 +1148,8 @@ function Macro.Init(Shared, UI)
 
     local function runMacroOnce(macroData)
         if isPlayingMacro then return false end
+        macroRunId += 1
+        local myRunId = macroRunId
         isPlayingMacro = true
         local playbackStartTime = os.clock()
         Shared.isPlayingMacro = true
@@ -1179,7 +1184,7 @@ function Macro.Init(Shared, UI)
         end
 
         for actionIndex, action in ipairs(macroData.actions) do
-            if not isPlayingMacro then break end
+            if not isPlayingMacro or macroRunId ~= myRunId then break end
 
             local actionLabel = action.actionType or "Action"
             local effectiveYenCost = action.yenCost
@@ -1194,7 +1199,7 @@ function Macro.Init(Shared, UI)
                 local targetTime = tonumber(action.time) or lastTime
                 local elapsed = os.clock() - playbackStartTime
                 local remaining = targetTime - elapsed
-                while remaining > 0 and isPlayingMacro do
+                while remaining > 0 and isPlayingMacro and macroRunId == myRunId do
                     macroStatusLabel.Text = ("[%d/%d] Waiting %.1fs (%s)"):format(
                         actionIndex, totalActions, remaining, actionLabel
                     )
@@ -1213,7 +1218,7 @@ function Macro.Init(Shared, UI)
                 local lastSampleAt = os.clock()
                 local estimatedRate = nil
 
-                while isPlayingMacro do
+                while isPlayingMacro and macroRunId == myRunId do
                     local yen = getCurrentYen()
                     local missing = yen and math.max(0, effectiveYenCost - yen) or effectiveYenCost
                     local now = os.clock()
@@ -1252,7 +1257,7 @@ function Macro.Init(Shared, UI)
                 end
             end
 
-            if not isPlayingMacro then break end
+            if not isPlayingMacro or macroRunId ~= myRunId then break end
 
             local success = false
             local lastError = "unknown"
@@ -1261,7 +1266,9 @@ function Macro.Init(Shared, UI)
             -- Retry semantics:
             --   0 = retry forever until this action succeeds or Play Macro is stopped.
             --   1-10 = initial attempt + that many retries, then skip.
-            while isPlayingMacro and (retryCount == 0 or attempt < (retryCount + 1)) do
+            while isPlayingMacro
+                and macroRunId == myRunId
+                and (retryCount == 0 or attempt < (retryCount + 1)) do
                 attempt += 1
 
                 local remoteObj = findRemote(action.remoteName, action.remoteClass)
@@ -1337,7 +1344,8 @@ function Macro.Init(Shared, UI)
                                 targetCFrame,
                                 targetUnitID,
                                 15,
-                                nil
+                                nil,
+                                myRunId
                             )
 
                             if targetReplicaId and targetOrder then
@@ -1370,7 +1378,8 @@ function Macro.Init(Shared, UI)
                                 remoteObj,
                                 action,
                                 args,
-                                30
+                                30,
+                                myRunId
                             )
                         else
                             local tempAction = {
@@ -1458,8 +1467,10 @@ function Macro.Init(Shared, UI)
             end
         end
 
-        isPlayingMacro = false
-        Shared.isPlayingMacro = false
+        if macroRunId == myRunId then
+            isPlayingMacro = false
+            Shared.isPlayingMacro = false
+        end
         return true
     end
 
@@ -1643,6 +1654,16 @@ function Macro.Init(Shared, UI)
 
                         startCooldown = os.clock()
                     else
+                        -- Invalidate the previous round's Macro worker as soon as the
+                        -- game leaves InProgress. This prevents Retry=0 or replication
+                        -- waits from leaking into the next round.
+                        if cycleStarted then
+                            cycleStarted = false
+                            isPlayingMacro = false
+                            macroRunId += 1
+                            Shared.isPlayingMacro = false
+                        end
+
                         -- Initial start is always allowed. After a completed round,
                         -- keep the macro alive only when Game -> Auto Replay or Auto Next
                         -- is enabled; Joiner owns those transitions.
