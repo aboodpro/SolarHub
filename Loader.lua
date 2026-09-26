@@ -185,7 +185,6 @@ local function finishLoadingScreen()
         return
     end
 
-    setLoadingStatus("SolarHub ready")
     task.wait(0.35)
 
     local card = loadingGui:FindFirstChildWhichIsA("Frame")
