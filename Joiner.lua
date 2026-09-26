@@ -829,16 +829,15 @@ function Joiner.Init(Shared, UI)
         return result ~= false
     end
 
+    local gameRoundActive = false
+    local gameTransitionPending = false
+
     local function runRemoteGameAutomation(state)
         state = state or getCurrentGameState()
 
         if state == "InProgress" then
-            if Config.AutoVoteStart and remoteCooldown("AutoVoteStart", 3) then
-                pcall(function()
-                    ReplicaSignal:FireServer(87, "Response", true)
-                end)
-                Shared.logLine("[GameRemote] Auto Vote Start -> 87 Response true")
-            end
+            gameRoundActive = true
+            gameTransitionPending = false
 
             if Config.AutoSkipWave and remoteCooldown("AutoSkipWave", 2) then
                 pcall(function()
@@ -847,23 +846,44 @@ function Joiner.Init(Shared, UI)
                 Shared.logLine("[GameRemote] Auto Skip -> 215 Response true")
             end
         elseif state then
-            -- Replay/Next belong to the Game automation, not Macro.
-            -- This branch must also run while the match is in its finished/lobby
-            -- state so the transition is sent after a round ends.
-            if Config.AutoReplay and remoteCooldown("AutoReplay", 6) then
-                pcall(function()
-                    ReplicaSignal:FireServer(77, "Restart")
-                end)
-                Shared.logLine(("[GameRemote] Auto Replay/Restart -> 77 Restart (state=%s)"):format(state))
-            elseif Config.AutoNext and remoteCooldown("AutoNext", 6) then
-                pcall(function()
-                    ReplicaSignal:FireServer(77, "Next")
-                end)
-                Shared.logLine(("[GameRemote] Auto Next -> 77 Next (state=%s)"):format(state))
+            -- A non-InProgress state can exist before the first round. Replay/Next
+            -- must only fire after we have actually observed a completed round.
+            if gameRoundActive and not gameTransitionPending then
+                if Config.AutoReplay and remoteCooldown("AutoReplay", 6) then
+                    pcall(function()
+                        ReplicaSignal:FireServer(77, "Restart")
+                    end)
+                    gameTransitionPending = true
+                    gameRoundActive = false
+                    Shared.logLine(("[GameRemote] Auto Replay/Restart -> 77 Restart (state=%s)"):format(state))
+                elseif Config.AutoNext and remoteCooldown("AutoNext", 6) then
+                    pcall(function()
+                        ReplicaSignal:FireServer(77, "Next")
+                    end)
+                    gameTransitionPending = true
+                    gameRoundActive = false
+                    Shared.logLine(("[GameRemote] Auto Next -> 77 Next (state=%s)"):format(state))
+                end
             end
         end
 
-        if Config.AutoReturnLobby and remoteCooldown("AutoReturnLobby", 10) then
+        -- Auto Vote Start is a pre-round action. Allow it before InProgress, but
+        -- never while waiting for Replay/Next to create the next round.
+        if Config.AutoVoteStart and state ~= nil
+            and not gameTransitionPending
+            and remoteCooldown("AutoVoteStart", 3) then
+            pcall(function()
+                ReplicaSignal:FireServer(87, "Response", true)
+            end)
+            Shared.logLine("[GameRemote] Auto Vote Start -> 87 Response true")
+        end
+
+        if Config.AutoReturnLobby
+            and gameRoundActive
+            and not gameTransitionPending
+            and not Config.AutoReplay
+            and not Config.AutoNext
+            and remoteCooldown("AutoReturnLobby", 10) then
             local ok, err = pcall(function()
                 RequestAFKLeave:Fire()
             end)
@@ -903,8 +923,7 @@ function Joiner.Init(Shared, UI)
                     joinRequested.Expedition = false
                     joinRequested.Challenge = false
                 elseif not Config.DisableAutoJoiners
-                    and not Config.AutoReplay
-                    and not Config.AutoNext then
+                    and not gameTransitionPending then
                     if Config.AutoJoinStory and not joinRequested.Story then
                         -- Story has two distinct flows in the game's UI:
                         -- Matchmaking -> REQUEST_ENTER_MATCHMAKING
