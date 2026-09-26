@@ -850,19 +850,29 @@ function Joiner.Init(Shared, UI)
             -- must only fire after we have actually observed a completed round.
             if gameRoundActive and not gameTransitionPending then
                 if Config.AutoReplay and remoteCooldown("AutoReplay", 6) then
-                    pcall(function()
+                    local ok, err = pcall(function()
                         ReplicaSignal:FireServer(77, "Restart")
                     end)
-                    gameTransitionPending = true
-                    gameRoundActive = false
-                    Shared.logLine(("[GameRemote] Auto Replay/Restart -> 77 Restart (state=%s)"):format(state))
+
+                    if ok then
+                        gameTransitionPending = true
+                        gameRoundActive = false
+                        Shared.logLine(("[GameRemote] Auto Replay/Restart -> 77 Restart (state=%s)"):format(state))
+                    else
+                        Shared.logLine("[GameRemote] Auto Replay failed: " .. tostring(err))
+                    end
                 elseif Config.AutoNext and remoteCooldown("AutoNext", 6) then
-                    pcall(function()
+                    local ok, err = pcall(function()
                         ReplicaSignal:FireServer(77, "Next")
                     end)
-                    gameTransitionPending = true
-                    gameRoundActive = false
-                    Shared.logLine(("[GameRemote] Auto Next -> 77 Next (state=%s)"):format(state))
+
+                    if ok then
+                        gameTransitionPending = true
+                        gameRoundActive = false
+                        Shared.logLine(("[GameRemote] Auto Next -> 77 Next (state=%s)"):format(state))
+                    else
+                        Shared.logLine("[GameRemote] Auto Next failed: " .. tostring(err))
+                    end
                 end
             end
         end
@@ -981,6 +991,10 @@ function Joiner.Init(Shared, UI)
     -- ANTI-AFK INITIALIZATION
     -------------------------------------------------
     player.Idled:Connect(function()
+        if not Config.WalkAround then
+            return
+        end
+
         pcall(function()
             game:GetService("VirtualUser"):Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
             task.wait(1)
