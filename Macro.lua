@@ -271,6 +271,61 @@ function Macro.Init(Shared, UI)
         return nil
     end
 
+    local function macroDebugLog(message)
+        if Config.MacroDebug ~= true then
+            return
+        end
+
+        local line = "[MacroDebug] " .. tostring(message)
+        if type(Shared.logLine) == "function" then
+            Shared.logLine(line)
+        else
+            print(line)
+        end
+    end
+
+    local function debugValue(value, depth)
+        depth = depth or 0
+        if depth > 2 then
+            return "{...}"
+        end
+
+        local valueType = typeof(value)
+
+        if valueType == "CFrame" then
+            local p = value.Position
+            return ("CFrame(%.2f, %.2f, %.2f)"):format(p.X, p.Y, p.Z)
+        elseif valueType == "Vector3" then
+            return ("Vector3(%.2f, %.2f, %.2f)"):format(value.X, value.Y, value.Z)
+        elseif valueType == "Instance" then
+            return value:GetFullName()
+        elseif valueType == "table" then
+            local parts = {}
+            local count = 0
+            for k, v in pairs(value) do
+                count += 1
+                if count > 8 then
+                    table.insert(parts, "...")
+                    break
+                end
+                table.insert(parts, tostring(k) .. "=" .. debugValue(v, depth + 1))
+            end
+            return "{" .. table.concat(parts, ", ") .. "}"
+        end
+
+        return tostring(value)
+    end
+
+    local function debugArgs(args)
+        local parts = {}
+        local count = args and (args.n or #args) or 0
+        for i = 1, count do
+            parts[i] = ("arg%d=%s"):format(i, debugValue(args[i]))
+        end
+        return table.concat(parts, " | ")
+    end
+
+
     local function getReplicaSignalAction(args)
         local actionName = tostring(args[2] or "")
 
@@ -421,6 +476,28 @@ function Macro.Init(Shared, UI)
                                     #recordedActions,
                                     actionDesc
                                 ))
+
+                                macroDebugLog(
+                                    ("RECORD #%d | type=%s | remote=%s | method=%s | %s"):format(
+                                        actionSequence,
+                                        tostring(actionDesc),
+                                        tostring(selfRef:GetFullName()),
+                                        tostring(method),
+                                        debugArgs(packedArgs)
+                                    )
+                                )
+
+                                if actionDesc == "UnitUpgrade"
+                                    or actionDesc == "UnitAutoUpgrade" then
+                                    macroDebugLog(
+                                        ("RECORD TARGET #%d | recordedReplica=%s | targetUnitID=%s | targetCFrame=%s"):format(
+                                            actionSequence,
+                                            tostring(actionEntry.recordedUnitId),
+                                            tostring(actionEntry.targetUnitID),
+                                            debugValue(actionEntry.targetCFrame)
+                                        )
+                                    )
+                                end
 
                                 if actionDesc == "UnitPlace" then
                                     -- Placement identity is finalized after all
@@ -1323,6 +1400,15 @@ function Macro.Init(Shared, UI)
 
                     local args = { table.unpack(action.args, 1, action.args.n) }
 
+                    macroDebugLog(
+                        ("PLAY ATTEMPT #%d | type=%s | remote=%s | args=%s"):format(
+                            actionIndex,
+                            tostring(action.actionType),
+                            remoteObj and tostring(remoteObj:GetFullName()) or "nil",
+                            debugArgs(args)
+                        )
+                    )
+
                     if action.actionType == "UnitPlace" then
                         if not action._playbackPlacementOrder then
                             playPlacementCount = playPlacementCount + 1
@@ -1447,6 +1533,16 @@ function Macro.Init(Shared, UI)
                             end
                         end
 
+                        macroDebugLog(
+                            ("TARGET RESOLVE action=%d | linkedOrder=%s | liveReplica=%s | targetUnitID=%s | targetCFrame=%s"):format(
+                                actionIndex,
+                                tostring(targetOrder),
+                                tostring(targetReplicaId),
+                                tostring(targetUnitID),
+                                debugValue(targetCFrame)
+                            )
+                        )
+
                         if targetReplicaId and action.unitIdArgIndex then
                             if type(action.recordedUnitId) == "number" then
                                 args[action.unitIdArgIndex] = tonumber(targetReplicaId)
@@ -1508,6 +1604,17 @@ function Macro.Init(Shared, UI)
                             end
                         end
 
+                        macroDebugLog(
+                            ("REMOTE RESULT action=%d | type=%s | fired=%s | err=%s | playbackReplica=%s | finalArgs=%s"):format(
+                                actionIndex,
+                                tostring(action.actionType),
+                                tostring(fired),
+                                tostring(err),
+                                tostring(action._playbackReplicaId),
+                                debugArgs(args)
+                            )
+                        )
+
                         if success or fired then
                             if action.actionType == "UnitPlace" then
                                 if not placementAlreadyMapped then
@@ -1541,8 +1648,24 @@ function Macro.Init(Shared, UI)
 
                                 if verified then
                                     success = true
+                                    macroDebugLog(
+                                        ("VERIFY SUCCESS action=%d | type=%s | replica=%s"):format(
+                                            actionIndex,
+                                            tostring(action.actionType),
+                                            tostring(action._playbackReplicaId)
+                                        )
+                                    )
                                 else
                                     lastError = "Action verification failed"
+                                    macroDebugLog(
+                                        ("VERIFY FAILED action=%d | type=%s | replica=%s | beforeYen=%s | beforeLevel=%s"):format(
+                                            actionIndex,
+                                            tostring(action.actionType),
+                                            tostring(action._playbackReplicaId),
+                                            tostring(beforeYenForVerification),
+                                            tostring(beforeLevelForVerification)
+                                        )
+                                    )
                                 end
                             end
                         else
@@ -1564,7 +1687,26 @@ function Macro.Init(Shared, UI)
                 end
             end
 
+            if success then
+                macroDebugLog(
+                    ("ACTION SUCCESS #%d | type=%s | attempts=%d"):format(
+                        actionIndex,
+                        tostring(action.actionType),
+                        attempt
+                    )
+                )
+            end
+
             if not success then
+                macroDebugLog(
+                    ("ACTION FAILED #%d | type=%s | attempts=%d | reason=%s"):format(
+                        actionIndex,
+                        tostring(action.actionType),
+                        attempt,
+                        tostring(lastError)
+                    )
+                )
+
                 if retryCount == 0 then
                     -- Retry=0 never skips an action. Reaching this point means
                     -- Play Macro was stopped while the action was still retrying.
@@ -1698,6 +1840,17 @@ function Macro.Init(Shared, UI)
                 end
 
                 action.linkedPlacementOrder = linkedOrder
+
+                macroDebugLog(
+                    ("LINK actionSeq=%s | type=%s | recordedReplica=%s | targetUnitID=%s | linkedPlacement=%s | targetCFrame=%s"):format(
+                        tostring(action.recordSequence),
+                        tostring(action.actionType),
+                        tostring(action.recordedUnitId),
+                        tostring(action.targetUnitID),
+                        tostring(linkedOrder),
+                        debugValue(action.targetCFrame)
+                    )
+                )
             end
         end
     end
