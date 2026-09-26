@@ -1173,42 +1173,60 @@ function Joiner.Init(Shared, UI)
             -- must only fire after we have actually observed a completed round.
             if gameRoundActive and not gameTransitionPending then
                 if Config.AutoReplay and remoteCooldown("AutoReplay", 6) then
-                    local ok, err = pcall(function()
-                        ReplicaSignal:FireServer(77, "Restart")
-                    end)
+                    local gameReplicaId = type(Shared.getActiveGameReplicaId) == "function"
+                        and Shared.getActiveGameReplicaId()
+                        or nil
 
-                    if ok then
-                        gameTransitionPending = true
-                        gameRoundActive = false
-                        Shared.gameTransitionPending = true
-                        Shared.logLine(
-                            ("[GameRemote] Auto Replay -> %s | args: arg1=77 | arg2=Restart | state=%s | ok=true | err=%s"):format(
-                                tostring(ReplicaSignal:GetFullName()),
-                                tostring(state),
-                                tostring(err)
-                            )
-                        )
+                    if not gameReplicaId then
+                        Shared.logLine("[GameRemote] Auto Replay blocked -> active game replica not found")
                     else
-                        Shared.logLine("[GameRemote] Auto Replay failed: " .. tostring(err))
+                        local ok, err = pcall(function()
+                            ReplicaSignal:FireServer(gameReplicaId, "Restart")
+                        end)
+
+                        if ok then
+                            gameTransitionPending = true
+                            gameRoundActive = false
+                            Shared.gameTransitionPending = true
+                            Shared.logLine(
+                                ("[GameRemote] Auto Replay -> %s | dynamicGameReplica=%s | args: arg1=%s | arg2=Restart | state=%s | ok=true | err=%s"):format(
+                                    tostring(ReplicaSignal:GetFullName()),
+                                    tostring(gameReplicaId),
+                                    tostring(gameReplicaId),
+                                    tostring(state)
+                                )
+                            )
+                        else
+                            Shared.logLine("[GameRemote] Auto Replay failed: " .. tostring(err))
+                        end
                     end
                 elseif Config.AutoNext and remoteCooldown("AutoNext", 6) then
-                    local ok, err = pcall(function()
-                        ReplicaSignal:FireServer(77, "Next")
-                    end)
+                    local gameReplicaId = type(Shared.getActiveGameReplicaId) == "function"
+                        and Shared.getActiveGameReplicaId()
+                        or nil
 
-                    if ok then
-                        gameTransitionPending = true
-                        gameRoundActive = false
-                        Shared.gameTransitionPending = true
-                        Shared.logLine(
-                            ("[GameRemote] Auto Next -> %s | args: arg1=77 | arg2=Next | state=%s | ok=true | err=%s"):format(
-                                tostring(ReplicaSignal:GetFullName()),
-                                tostring(state),
-                                tostring(err)
-                            )
-                        )
+                    if not gameReplicaId then
+                        Shared.logLine("[GameRemote] Auto Next blocked -> active game replica not found")
                     else
-                        Shared.logLine("[GameRemote] Auto Next failed: " .. tostring(err))
+                        local ok, err = pcall(function()
+                            ReplicaSignal:FireServer(gameReplicaId, "Next")
+                        end)
+
+                        if ok then
+                            gameTransitionPending = true
+                            gameRoundActive = false
+                            Shared.gameTransitionPending = true
+                            Shared.logLine(
+                                ("[GameRemote] Auto Next -> %s | dynamicGameReplica=%s | args: arg1=%s | arg2=Next | state=%s | ok=true | err=%s"):format(
+                                    tostring(ReplicaSignal:GetFullName()),
+                                    tostring(gameReplicaId),
+                                    tostring(gameReplicaId),
+                                    tostring(state)
+                                )
+                            )
+                        else
+                            Shared.logLine("[GameRemote] Auto Next failed: " .. tostring(err))
+                        end
                     end
                 end
             end
