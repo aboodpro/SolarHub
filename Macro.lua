@@ -46,6 +46,55 @@ function Macro.Init(Shared, UI)
     local pendingRecordWorkers = 0
     local scannedUnitsDatabase = {}
 
+    local function macroDebugLog(message, ...)
+        if not Config.MacroDebug then return end
+        local ok, formatted = pcall(function()
+            if select("#", ...) > 0 then
+                return string.format(message, ...)
+            end
+            return tostring(message)
+        end)
+        if ok then
+            if type(Shared.logLine) == "function" then
+                Shared.logLine("[MacroDBG] " .. tostring(formatted))
+            else
+                print("[MacroDBG] " .. tostring(formatted))
+            end
+        end
+    end
+
+    local function macroDebugValue(value)
+        local t = typeof(value)
+        if t == "CFrame" then
+            local p = value.Position
+            return ("CFrame(%.2f, %.2f, %.2f)"):format(p.X, p.Y, p.Z)
+        elseif t == "Vector3" then
+            return ("Vector3(%.2f, %.2f, %.2f)"):format(value.X, value.Y, value.Z)
+        elseif t == "Instance" then
+            return value:GetFullName()
+        end
+        return tostring(value)
+    end
+
+    local function macroDebugAction(action, phase)
+        if not Config.MacroDebug or not action then return end
+        local args = action.args or {}
+        macroDebugLog(
+            "%s | type=%s seq=%s | arg3=%s[%s] | arg4=%s | placeReplica=%s | targetReplica=%s | targetUnit=%s | targetCF=%s | linked=%s",
+            tostring(phase),
+            tostring(action.actionType),
+            tostring(action.recordSequence),
+            tostring(args[3]),
+            typeof(args[3]),
+            macroDebugValue(args[4]),
+            tostring(action.recordedPlacementReplicaId),
+            tostring(action.recordedTargetReplicaId),
+            tostring(action.targetUnitID),
+            macroDebugValue(action.targetCFrame),
+            tostring(action.linkedPlacementOrder)
+        )
+    end
+
     local replicaClientModule = nil
 
     -- Resolve ReplicaClient lazily and defensively. Some game revisions/executors
@@ -407,6 +456,7 @@ function Macro.Init(Shared, UI)
                                     and (actionDesc == "UnitUpgrade"
                                         or actionDesc == "UnitAutoUpgrade") then
                                     actionEntry.recordedUnitId = packedArgs[3]
+                                    actionEntry.recordedTargetReplicaId = packedArgs[3]
                                     actionEntry.unitIdArgIndex = 3
 
                                     -- Save a stable target reference from the recording session.
@@ -428,6 +478,7 @@ function Macro.Init(Shared, UI)
                                     #recordedActions,
                                     actionDesc
                                 ))
+                                macroDebugAction(actionEntry, "RECORD")
 
                                 if actionDesc == "UnitPlace" then
                                     -- Keep the original argument for compatibility,
@@ -454,10 +505,22 @@ function Macro.Init(Shared, UI)
                                             print(("[Macro Record] Place replica -> %s"):format(
                                                 tostring(actionEntry.recordedPlacementReplicaId)
                                             ))
+                                            macroDebugLog(
+                                                "RECORD PLACE RESOLVED seq=%s arg3=%s -> replica=%s",
+                                                tostring(actionSequence),
+                                                tostring(packedArgs[3]),
+                                                tostring(actionEntry.recordedPlacementReplicaId)
+                                            )
                                         else
                                             warn(("[Macro Record] Could not resolve placement replica for action #%d"):format(
                                                 actionSequence
                                             ))
+                                            macroDebugLog(
+                                                "RECORD PLACE FAILED seq=%s arg3=%s cf=%s",
+                                                tostring(actionSequence),
+                                                tostring(packedArgs[3]),
+                                                macroDebugValue(packedArgs[4])
+                                            )
                                         end
                                     end
 
@@ -760,6 +823,28 @@ function Macro.Init(Shared, UI)
     macroStatusLabel.Parent = recordSec
     Instance.new("UICorner", macroStatusLabel).CornerRadius = UDim.new(0, 7)
 
+    local debugLogBtn = Instance.new("TextButton")
+    debugLogBtn.Size = UDim2.new(1, -16, 0, 24)
+    debugLogBtn.Position = UDim2.fromOffset(8, 114)
+    debugLogBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    debugLogBtn.BorderSizePixel = 0
+    debugLogBtn.Text = "Open Debug Log"
+    debugLogBtn.Font = Enum.Font.GothamBold
+    debugLogBtn.TextColor3 = Color3.fromRGB(230, 230, 235)
+    debugLogBtn.TextSize = 10
+    debugLogBtn.Parent = recordSec
+    Instance.new("UICorner", debugLogBtn).CornerRadius = UDim.new(0, 7)
+
+    debugLogBtn.Activated:Connect(function()
+        if type(Shared.showSessionLogWindow) == "function" then
+            Shared.showSessionLogWindow()
+        else
+            print("[MacroDBG] Session log window unavailable")
+        end
+    end)
+
+    recordSec.Size = UDim2.new(1, 0, 0, 146)
+
     local macroOptionsSec = Instance.new("Frame")
     macroOptionsSec.Size = UDim2.new(1, 0, 0, 132)
     macroOptionsSec.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
@@ -787,6 +872,7 @@ function Macro.Init(Shared, UI)
     end
 
     makeOptionToggle("Ignore Timing", 6, "MacroIgnoreTiming")
+    makeOptionToggle("Debug Logging", 36, "MacroDebug")
 
     -- Retry slider: 0 = retry forever, 1-10 = additional retries after the first attempt.
     local retryLabel = Instance.new("TextLabel")
@@ -1208,6 +1294,7 @@ function Macro.Init(Shared, UI)
         local playPlacementCount = 0
         local playbackUnitReplicaIds = {}
         local placementActionsByOrder = {}
+        local playbackPlacementByRecordedReplicaId = {}
         local totalActions = #macroData.actions
         local ignoreTiming = Config.MacroIgnoreTiming == true
         local retryCount = math.clamp(tonumber(Config.MacroRetry) or 0, 0, 10)
@@ -1226,6 +1313,12 @@ function Macro.Init(Shared, UI)
                 savedAction._playbackPlacementOrder = normalizedPlacementOrder
                 placementActionsByOrder[normalizedPlacementOrder] = savedAction
 
+                if savedAction.recordedPlacementReplicaId ~= nil then
+                    playbackPlacementByRecordedReplicaId[
+                        tostring(savedAction.recordedPlacementReplicaId)
+                    ] = normalizedPlacementOrder
+                end
+
                 if savedAction.recordedUnitId ~= nil then
                     placementActionsByRecordedUnitId[
                         tostring(savedAction.recordedUnitId)
@@ -1238,6 +1331,7 @@ function Macro.Init(Shared, UI)
             if not isPlayingMacro or macroRunId ~= myRunId then break end
 
             local actionLabel = action.actionType or "Action"
+            macroDebugAction(action, "PLAYBACK")
             local effectiveYenCost = action.yenCost
             if not effectiveYenCost and action.yenBefore and action.yenAfter then
                 local delta = action.yenBefore - action.yenAfter
@@ -1346,6 +1440,29 @@ function Macro.Init(Shared, UI)
                         local placementAction = targetOrder
                             and placementActionsByOrder[targetOrder]
                             or nil
+
+                        local recordedTargetReplicaId = action.recordedTargetReplicaId
+                            or action.recordedUnitId
+                        local exactRecordedOrder = recordedTargetReplicaId ~= nil
+                            and playbackPlacementByRecordedReplicaId[
+                                tostring(recordedTargetReplicaId)
+                            ]
+                            or nil
+
+                        if exactRecordedOrder then
+                            targetOrder = exactRecordedOrder
+                            targetReplicaId = playbackUnitReplicaIds[exactRecordedOrder]
+                            placementAction = placementActionsByOrder[exactRecordedOrder]
+                        end
+
+                        macroDebugLog(
+                            "TARGET | %s | recordedTarget=%s | exactOrder=%s | linkedOrder=%s | liveReplica=%s",
+                            tostring(action.actionType),
+                            tostring(recordedTargetReplicaId),
+                            tostring(exactRecordedOrder),
+                            tostring(action.linkedPlacementOrder),
+                            tostring(targetReplicaId)
+                        )
 
                         local targetCFrame = typeof(action.targetCFrame) == "CFrame"
                             and action.targetCFrame
@@ -1514,7 +1631,21 @@ function Macro.Init(Shared, UI)
                                     args = args,
                                     method = action.method,
                                 }
+                                macroDebugLog(
+                                    "FIRE | action=%s | remote=%s | arg3=%s | arg4=%s | targetReplica=%s",
+                                    tostring(action.actionType),
+                                    tostring(action.remoteName),
+                                    tostring(args[3]),
+                                    macroDebugValue(args[4]),
+                                    tostring(action._playbackReplicaId)
+                                )
                                 fired, err = fireAction(remoteObj, tempAction)
+                                macroDebugLog(
+                                    "FIRE RESULT | action=%s | fired=%s | err=%s",
+                                    tostring(action.actionType),
+                                    tostring(fired),
+                                    tostring(err)
+                                )
                             end
                         end
 
@@ -1530,6 +1661,19 @@ function Macro.Init(Shared, UI)
 
                                     if newReplicaId then
                                         playbackUnitReplicaIds[placementOrder] = newReplicaId
+
+                                        if action.recordedPlacementReplicaId ~= nil then
+                                            playbackPlacementByRecordedReplicaId[
+                                                tostring(action.recordedPlacementReplicaId)
+                                            ] = placementOrder
+                                        end
+
+                                        macroDebugLog(
+                                            "PLACE MAP | order=%s | recordedReplica=%s | liveReplica=%s",
+                                            tostring(placementOrder),
+                                            tostring(action.recordedPlacementReplicaId),
+                                            tostring(newReplicaId)
+                                        )
                                         Shared.logLine(
                                             "[Macro] Place mapped -> order "
                                                 .. tostring(placementOrder)
@@ -1540,6 +1684,19 @@ function Macro.Init(Shared, UI)
                                     else
                                         lastError = "Placed unit replica was not detected yet"
                                     end
+                                end
+                            elseif action.actionType == "UnitAutoUpgrade" then
+                                -- Toggle action: it does not purchase an upgrade and
+                                -- does not require Yen or an immediate level change.
+                                success = fired == true
+                                macroDebugLog(
+                                    "AUTOUPGRADE | targetReplica=%s | arg3=%s | fired=%s",
+                                    tostring(action._playbackReplicaId),
+                                    tostring(args[3]),
+                                    tostring(fired)
+                                )
+                                if not success then
+                                    lastError = "AutoUpgrade FireServer failed"
                                 end
                             else
                                 local verified = verifyAction(
@@ -1725,6 +1882,7 @@ function Macro.Init(Shared, UI)
                 end
 
                 action.linkedPlacementOrder = linkedOrder
+                macroDebugAction(action, "FINALIZE")
             end
         end
     end
