@@ -38,6 +38,7 @@ function Macro.Init(Shared, UI)
 
     local recordedActions = {}
     local recordStartTime = 0
+    local recordActionSequence = 0
     local recordPlacementCount = 0
     local recordUnitIdMap = {}
     local recordedUnitToPlacementOrder = {}
@@ -346,6 +347,8 @@ function Macro.Init(Shared, UI)
                 local result = table.pack(oldNamecall(self, ...))
 
                 if isRemoteCall and Config.RecordMacro then
+                    recordActionSequence = recordActionSequence + 1
+                    local actionSequence = recordActionSequence
                     pendingRecordWorkers = pendingRecordWorkers + 1
                     task.spawn(function()
                         pcall(function()
@@ -390,6 +393,7 @@ function Macro.Init(Shared, UI)
                                     method = method,
                                     args = packedArgs,
                                     yenBefore = yenBefore,
+                                    recordSequence = actionSequence,
                                 }
 
                                 if isReplicaSignal
@@ -758,7 +762,7 @@ function Macro.Init(Shared, UI)
 
     makeOptionToggle("Ignore Timing", 6, "MacroIgnoreTiming")
 
-    -- Retry slider: 0 = retry disabled, 1-10 = additional retries.
+    -- Retry slider: 0 = retry forever, 1-10 = additional retries after the first attempt.
     local retryLabel = Instance.new("TextLabel")
     retryLabel.Size = UDim2.new(1, -16, 0, 18)
     retryLabel.Position = UDim2.fromOffset(8, 88)
@@ -965,19 +969,13 @@ function Macro.Init(Shared, UI)
     local macroLastStartedSession = {}
 
     local function getCurrentGameState()
-        local replicaClient = getReplicaClient()
-        if not replicaClient or type(replicaClient.FromId) ~= "function" then
+        local getWaveInfo = Shared.getWaveInfo
+        if type(getWaveInfo) ~= "function" then
             return nil
         end
 
-        for id = 1, 200 do
-            local ok, replica = pcall(replicaClient.FromId, id)
-            if ok and replica and replica.Data and replica.Data.CurrentGameState ~= nil then
-                return tostring(replica.Data.CurrentGameState)
-            end
-        end
-
-        return nil
+        local _, _, state = getWaveInfo()
+        return type(state) == "string" and state or nil
     end
 
     local function updateMacroGameSession()
@@ -1258,10 +1256,13 @@ function Macro.Init(Shared, UI)
 
             local success = false
             local lastError = "unknown"
-            local attemptTotal = 1 + retryCount
+            local attempt = 0
 
-            for attempt = 1, attemptTotal do
-                if not isPlayingMacro then break end
+            -- Retry semantics:
+            --   0 = retry forever until this action succeeds or Play Macro is stopped.
+            --   1-10 = initial attempt + that many retries, then skip.
+            while isPlayingMacro and (retryCount == 0 or attempt < (retryCount + 1)) do
+                attempt += 1
 
                 local remoteObj = findRemote(action.remoteName, action.remoteClass)
                 if not remoteObj then
@@ -1282,9 +1283,6 @@ function Macro.Init(Shared, UI)
                     elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
                         local targetOrder = action.linkedPlacementOrder
                         local targetReplicaId = targetOrder and playbackUnitReplicaIds[targetOrder]
-
-                        -- Older macros may not have linkedPlacementOrder. Recover
-                        -- the correct placement from recordedUnitId first.
                         local placementAction = targetOrder and placementActionsByOrder[targetOrder]
 
                         if not placementAction and action.recordedUnitId ~= nil then
@@ -1309,8 +1307,6 @@ function Macro.Init(Shared, UI)
                             and tostring(action.targetUnitID)
                             or nil
 
-                        -- If targetOrder is still missing, use the closest recorded
-                        -- placement to the saved target CFrame.
                         if not targetOrder and typeof(targetCFrame) == "CFrame" then
                             local bestOrder = nil
                             local bestDistance = math.huge
@@ -1350,8 +1346,6 @@ function Macro.Init(Shared, UI)
                         end
 
                         if targetReplicaId and action.unitIdArgIndex then
-                            -- UpgradeGameUnit expects the live replica identifier
-                            -- in the same string form used by the game's calls.
                             args[action.unitIdArgIndex] = tostring(targetReplicaId)
                             action._playbackReplicaId = targetReplicaId
                         else
@@ -1362,6 +1356,13 @@ function Macro.Init(Shared, UI)
 
                     if targetReplicaId or action.actionType == "UnitPlace" or (action.actionType ~= "UnitUpgrade" and action.actionType ~= "UnitAutoUpgrade") then
                         local fired, err
+                        local beforeYenForVerification = nil
+                        local beforeLevelForVerification = nil
+
+                        if action.actionType == "UnitUpgrade" then
+                            beforeYenForVerification = getCurrentYen()
+                            beforeLevelForVerification = getUnitLevelByReplicaId(action._playbackReplicaId)
+                        end
 
                         if action.actionType == "UnitUpgrade"
                             and ignoreTiming then
@@ -1400,14 +1401,15 @@ function Macro.Init(Shared, UI)
                                     success = true
                                 else
                                     lastError = "Placed unit replica was not detected yet"
-                                    success = false
                                 end
                             else
                                 local verified = verifyAction(
                                     action,
-                                    getCurrentYen(),
-                                    beforeIds
+                                    beforeYenForVerification,
+                                    beforeIds,
+                                    beforeLevelForVerification
                                 )
+
                                 if verified then
                                     success = true
                                 else
@@ -1420,11 +1422,14 @@ function Macro.Init(Shared, UI)
                     end
                 end
 
-                if success then break end
+                if success then
+                    break
+                end
 
-                if attempt < attemptTotal then
-                    macroStatusLabel.Text = ("[%d/%d] %s | Retry %d/%d"):format(
-                        actionIndex, totalActions, actionLabel, attempt, retryCount
+                if isPlayingMacro then
+                    local maxAttempts = retryCount == 0 and "∞" or tostring(retryCount + 1)
+                    macroStatusLabel.Text = ("[%d/%d] %s | Retry %d/%s"):format(
+                        actionIndex, totalActions, actionLabel, attempt, maxAttempts
                     )
                     task.wait(0.2)
                 end
@@ -1481,6 +1486,7 @@ function Macro.Init(Shared, UI)
             installRecordingHook()
             recordedActions = {}
             recordStartTime = os.clock()
+            recordActionSequence = 0
             recordPlacementCount = 0
             recordUnitIdMap = {}
             recordedUnitToPlacementOrder = {}
@@ -1496,10 +1502,14 @@ function Macro.Init(Shared, UI)
             -- Remote recording/enrichment runs in small worker tasks.
             -- Wait for them to finish before serializing, otherwise the last
             -- Upgrade may be saved before its Yen cost is attached.
-            local saveDeadline = os.clock() + 1.5
+            local saveDeadline = os.clock() + 5
             while pendingRecordWorkers > 0 and os.clock() < saveDeadline do
                 task.wait(0.05)
             end
+
+            table.sort(recordedActions, function(a, b)
+                return (a.recordSequence or math.huge) < (b.recordSequence or math.huge)
+            end)
 
             if savedMacros[Config.CurrentMacroName] then
                 savedMacros[Config.CurrentMacroName].actions = recordedActions
@@ -1602,48 +1612,34 @@ function Macro.Init(Shared, UI)
                 end
 
                 local cycleStarted = false
-                local transitionSent = false
+                local hasCompletedRound = false
                 local startCooldown = 0
 
-                -- Send Start BEFORE doing any expensive replica/state scan.
-                -- This guarantees Play Macro's first action is the in-game Start/Vote.
+                -- Play Macro owns only the in-game Start/Vote signal.
+                -- Auto Replay/Next stay in the Game tab and are handled by Joiner.
                 macroStatusLabel.Text = "Sending Start..."
                 fireSignal(87, "Response", true)
 
                 while Config.PlayMacro do
                     local state = getCurrentGameState()
 
-                    if state == "InProgress" and not cycleStarted then
-                        cycleStarted = true
-                        transitionSent = false
-                        macroStatusLabel.Text = "Starting macro..."
-
-                        task.spawn(function()
-                            runMacroOnce(macroData)
-                        end)
-                    end
-
                     if state == "InProgress" then
-                        startCooldown = os.clock()
-                    elseif not transitionSent and os.clock() - startCooldown >= 0.75 then
-                        -- Keep pressing Start until the game accepts it. A successful
-                        -- FireServer call does not necessarily mean the game accepted
-                        -- the vote, so the state is the actual confirmation.
-                        startCooldown = os.clock()
-                        macroStatusLabel.Text = "Starting game..."
-                        fireSignal(87, "Response", true)
-                    end
+                        if not cycleStarted then
+                            cycleStarted = true
+                            hasCompletedRound = true
+                            macroStatusLabel.Text = "Starting macro..."
 
-                    if cycleStarted and state ~= "InProgress" and not transitionSent then
-                        transitionSent = true
+                            task.spawn(function()
+                                runMacroOnce(macroData)
+                            end)
+                        end
 
-                        if Config.AutoReplay then
-                            macroStatusLabel.Text = "Replay requested..."
-                            fireSignal(77, "Restart")
-                        elseif Config.AutoNext then
-                            macroStatusLabel.Text = "Next requested..."
-                            fireSignal(77, "Next")
-                        else
+                        startCooldown = os.clock()
+                    else
+                        -- Initial start is always allowed. After a completed round,
+                        -- keep the macro alive only when Game -> Auto Replay or Auto Next
+                        -- is enabled; Joiner owns those transitions.
+                        if hasCompletedRound and not Config.AutoReplay and not Config.AutoNext then
                             Config.PlayMacro = false
                             playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
                             playBtn.Text = "▶ Play Macro"
@@ -1651,9 +1647,15 @@ function Macro.Init(Shared, UI)
                             break
                         end
 
+                        if os.clock() - startCooldown >= 0.75 then
+                            startCooldown = os.clock()
+                            macroStatusLabel.Text = hasCompletedRound
+                                and "Waiting for Replay/Next..."
+                                or "Starting game..."
+                            fireSignal(87, "Response", true)
+                        end
+
                         cycleStarted = false
-                        transitionSent = false
-                        startCooldown = os.clock()
                     end
 
                     task.wait(0.3)
