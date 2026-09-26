@@ -49,6 +49,18 @@ function Joiner.Init(Shared, UI)
 
     Shared.gameTransitionPending = false
     Shared.gameAutomationState = "Unknown"
+    Shared.macroStartRequested = false
+
+    -- Macro asks the Game automation layer to perform the exact same Start/Vote
+    -- action used by the normal Auto Vote Start feature. This keeps one owner
+    -- for the game's Start behavior instead of having Macro duplicate it.
+    Shared.requestMacroStart = function()
+        Shared.macroStartRequested = true
+        if Config.MacroDebug == true and type(Shared.logLine) == "function" then
+            Shared.logLine("[GameDebug] Macro requested Start")
+        end
+        return true
+    end
 
     -- Official game Network Nodes used by the game's own actions.
     -- Story matchmaking: REQUEST_ENTER_MATCHMAKING
@@ -947,6 +959,9 @@ function Joiner.Init(Shared, UI)
         if state == "InProgress" then
             gameRoundActive = true
             gameTransitionPending = false
+            if Shared.macroStartRequested == true then
+                Shared.macroStartRequested = false
+            end
 
             if Config.AutoSkipWave and remoteCooldown("AutoSkipWave", 2) then
                 local ok, err = pcall(function()
@@ -1009,8 +1024,8 @@ function Joiner.Init(Shared, UI)
 
         -- Auto Vote Start is a pre-round action. Allow it before InProgress, but
         -- never while waiting for Replay/Next to create the next round.
-        if Config.AutoVoteStart
-            and not Config.PlayMacro
+        local macroRequestedStart = Shared.macroStartRequested == true
+        if (Config.AutoVoteStart or macroRequestedStart)
             and state ~= nil
             and not gameTransitionPending
             and remoteCooldown("AutoVoteStart", 3) then
@@ -1018,9 +1033,14 @@ function Joiner.Init(Shared, UI)
                 ReplicaSignal:FireServer(87, "Response", true)
             end)
 
+            if ok then
+                Shared.macroStartRequested = false
+            end
+
             Shared.logLine(
-                ("[GameRemote] Auto Vote Start -> %s | args: arg1=87 | arg2=Response | arg3=true | state=%s | ok=%s | err=%s"):format(
+                ("[GameRemote] Start -> %s | source=%s | args: arg1=87 | arg2=Response | arg3=true | state=%s | ok=%s | err=%s"):format(
                     tostring(ReplicaSignal:GetFullName()),
+                    macroRequestedStart and "Macro" or "AutoVoteStart",
                     tostring(state),
                     tostring(ok),
                     tostring(err)
