@@ -2046,27 +2046,226 @@ function Macro.Init(Shared, UI)
                     return ok
                 end
 
+                local function getGameSnapshot()
+                    if type(Shared.getGameDebugSnapshot) == "function" then
+                        return Shared.getGameDebugSnapshot()
+                    end
+
+                    local wave, maxWave, state = getWaveInfo()
+                    return {
+                        State = state,
+                        Wave = wave,
+                        MaxWave = maxWave,
+                    }
+                end
+
+                local function snapshotText(snapshot)
+                    if not snapshot then
+                        return "snapshot=nil"
+                    end
+
+                    local parts = {
+                        "State=" .. tostring(snapshot.State),
+                        "Wave=" .. tostring(snapshot.Wave),
+                        "MaxWave=" .. tostring(snapshot.MaxWave),
+                    }
+
+                    local extraCount = 0
+                    for key, value in pairs(snapshot) do
+                        if key ~= "State"
+                            and key ~= "Wave"
+                            and key ~= "MaxWave"
+                            and key ~= "Error"
+                            and extraCount < 12 then
+                            table.insert(parts, tostring(key) .. "=" .. debugValue(value))
+                            extraCount += 1
+                        end
+                    end
+
+                    if snapshot.Error then
+                        table.insert(parts, "Error=" .. tostring(snapshot.Error))
+                    end
+
+                    return table.concat(parts, " | ")
+                end
+
+                local function isRealRoundStarted(before, current)
+                    if not current then
+                        return false, "no snapshot"
+                    end
+
+                    if before and before.State ~= current.State
+                        and current.State == "InProgress" then
+                        return true, "CurrentGameState changed to InProgress"
+                    end
+
+                    local beforeWave = before and tonumber(before.Wave) or nil
+                    local currentWave = tonumber(current.Wave)
+
+                    if currentWave ~= nil and beforeWave ~= nil
+                        and currentWave > beforeWave then
+                        return true, ("Wave changed %s -> %s"):format(
+                            tostring(beforeWave),
+                            tostring(currentWave)
+                        )
+                    end
+
+                    if current.State == "InProgress"
+                        and currentWave ~= nil
+                        and currentWave > 0
+                        and (beforeWave == nil or beforeWave <= 0) then
+                        return true, ("Wave became %s while state is InProgress"):format(
+                            tostring(currentWave)
+                        )
+                    end
+
+                    return false, "no confirmed transition"
+                end
+
+                local function requestRoundStart()
+                    local baseline = getGameSnapshot()
+                    macroDebugLog(
+                        "[START CHECK] Before Start -> " .. snapshotText(baseline)
+                    )
+
+                    local attempt = 0
+                    local retryLimit = retryCountAtStart
+
+                    -- Start is a prerequisite, not a skippable macro action.
+                    -- We never allow Place/Upgrade to run while Start is unconfirmed.
+                    while Config.PlayMacro do
+                        attempt += 1
+
+                        macroDebugLog(
+                            ("[START ATTEMPT] #%d | RetrySetting=%d | baseline=%s"):format(
+                                attempt,
+                                retryLimit,
+                                snapshotText(baseline)
+                            )
+                        )
+
+                        macroStatusLabel.Text =
+                            ("Starting game... Attempt %d"):format(attempt)
+
+                        local fired, fireErr = fireSignal(87, "Response", true)
+
+                        macroDebugLog(
+                            ("[START REMOTE RESULT] attempt=%d | fired=%s | err=%s"):format(
+                                attempt,
+                                tostring(fired),
+                                tostring(fireErr)
+                            )
+                        )
+
+                        local deadline = os.clock() + 8
+
+                        while Config.PlayMacro and os.clock() < deadline do
+                            local current = getGameSnapshot()
+                            local started, reason = isRealRoundStarted(baseline, current)
+
+                            if started then
+                                macroDebugLog(
+                                    ("[START CONFIRMED] attempt=%d | reason=%s | after=%s"):format(
+                                        attempt,
+                                        tostring(reason),
+                                        snapshotText(current)
+                                    )
+                                )
+                                return true
+                            end
+
+                            task.wait(0.15)
+                        end
+
+                        local afterTimeout = getGameSnapshot()
+                        macroDebugLog(
+                            ("[START NOT CONFIRMED] attempt=%d | afterWait=%s"):format(
+                                attempt,
+                                snapshotText(afterTimeout)
+                            )
+                        )
+
+                        -- Retry=0 means retry forever.
+                        -- Retry=N means N extra attempts after the first one.
+                        if retryLimit > 0 and attempt >= (retryLimit + 1) then
+                            macroDebugLog(
+                                ("[START FAILED] Retry limit reached (%d). Macro will NOT place units."):format(
+                                    retryLimit
+                                )
+                            )
+                            return false
+                        end
+
+                        task.wait(0.25)
+                    end
+
+                    return false
+                end
+
                 local cycleStarted = false
+                local waitingForReplayTransition = false
+                local sawReplayTransition = false
+                local lastState = nil
                 local sawCompletedRound = false
                 local startCooldown = 0
                 local postRoundGraceUntil = 0
                 local lastState = nil
 
-                macroStatusLabel.Text = "Sending Start..."
-                fireSignal(87, "Response", true)
+                local cycleStarted = false
+                local waitingForReplayTransition = false
+                local sawReplayTransition = false
+                local lastState = nil
+                local sawCompletedRound = false
+                local startCooldown = 0
+                local postRoundGraceUntil = 0
+                local lastState = nil
+
+                macroStatusLabel.Text = "Checking game before Start..."
+                local initialSnapshot = getGameSnapshot()
+                macroDebugLog("[PLAY INITIAL SNAPSHOT] " .. snapshotText(initialSnapshot))
+
+                -- If a real round is already active (Wave > 0), do not send a
+                -- duplicate Start. Otherwise Start is mandatory before Actions.
+                local initialWave = tonumber(initialSnapshot and initialSnapshot.Wave)
+                local alreadyActive =
+                    initialSnapshot
+                    and initialSnapshot.State == "InProgress"
+                    and initialWave ~= nil
+                    and initialWave > 0
+
+                local initialStartConfirmed = false
+
+                if alreadyActive then
+                    initialStartConfirmed = true
+                    macroDebugLog(
+                        "[PLAY] Round already active -> skipping Start request and running Actions"
+                    )
+                else
+                    initialStartConfirmed = requestRoundStart()
+                end
+
+                if not initialStartConfirmed then
+                    playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+                    playBtn.Text = "▶ Play Macro"
+                    macroStatusLabel.Text = "Start failed - Actions blocked"
+                    Config.PlayMacro = false
+                    isPlayingMacro = false
+                    Shared.isPlayingMacro = false
+                    macroDebugLog("[PLAY STOP] Start was not confirmed; Actions were blocked")
+                    return
+                end
 
                 while Config.PlayMacro do
                     local state = getCurrentGameState()
                     local transitionPending = Shared.gameTransitionPending == true
 
                     if state ~= lastState then
+                        local snapshot = getGameSnapshot()
                         macroDebugLog(
-                            ("ROUND STATE | state=%s | transitionPending=%s | PlayMacro=%s | AutoReplay=%s | AutoNext=%s"):format(
+                            ("[ROUND STATE] %s | transitionPending=%s | %s"):format(
                                 tostring(state),
                                 tostring(transitionPending),
-                                tostring(Config.PlayMacro),
-                                tostring(Config.AutoReplay),
-                                tostring(Config.AutoNext)
+                                snapshotText(snapshot)
                             )
                         )
                         lastState = state
@@ -2075,26 +2274,26 @@ function Macro.Init(Shared, UI)
                     if state == "InProgress" then
                         if not cycleStarted then
                             cycleStarted = true
-                            sawCompletedRound = true
+                            waitingForReplayTransition = false
+                            sawReplayTransition = false
                             macroStatusLabel.Text = "Starting macro..."
-                            macroDebugLog("[ROUND START] InProgress detected -> starting recorded actions")
+                            macroDebugLog("[ROUND START] Start confirmed -> running Actions")
 
                             task.spawn(function()
                                 runMacroOnce(macroData)
                             end)
                         end
-
-                        startCooldown = os.clock()
-                        postRoundGraceUntil = 0
                     else
                         if cycleStarted then
                             cycleStarted = false
                             isPlayingMacro = false
                             macroRunId += 1
                             Shared.isPlayingMacro = false
-                            postRoundGraceUntil = os.clock() + 1.2
+                            waitingForReplayTransition = true
+                            sawReplayTransition = false
+
                             macroDebugLog(
-                                ("ROUND END | state=%s | grace=1.2s | AutoReplay=%s | AutoNext=%s"):format(
+                                ("[ROUND END] state=%s | AutoReplay=%s | AutoNext=%s"):format(
                                     tostring(state),
                                     tostring(Config.AutoReplay),
                                     tostring(Config.AutoNext)
@@ -2102,26 +2301,52 @@ function Macro.Init(Shared, UI)
                             )
                         end
 
-                        if sawCompletedRound and not Config.AutoReplay and not Config.AutoNext then
-                            Config.PlayMacro = false
-                            playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-                            playBtn.Text = "▶ Play Macro"
-                            macroStatusLabel.Text = "Finished"
-                            macroDebugLog("[PLAY STOP] Round completed and Replay/Next are both OFF")
-                            break
-                        end
-
-                        if transitionPending then
-                            macroStatusLabel.Text = "Waiting for Game Replay/Next..."
-                        elseif os.clock() >= postRoundGraceUntil
-                            and os.clock() - startCooldown >= 0.75 then
-
-                            startCooldown = os.clock()
-                            macroStatusLabel.Text = "Starting game..."
-                            macroDebugLog("[START LOOP] Sending 87 Response true for next round")
-                            fireSignal(87, "Response", true)
+                        if not Config.AutoReplay and not Config.AutoNext then
+                            if waitingForReplayTransition then
+                                Config.PlayMacro = false
+                                playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+                                playBtn.Text = "▶ Play Macro"
+                                macroStatusLabel.Text = "Finished"
+                                macroDebugLog("[PLAY STOP] Round ended and Replay/Next are OFF")
+                                break
+                            end
                         else
-                            macroStatusLabel.Text = "Waiting for next round..."
+                            -- After a completed round, wait for the Game tab to
+                            -- actually run Replay/Next. Only then can Macro press Start
+                            -- for the next round.
+                            if transitionPending then
+                                sawReplayTransition = true
+                                macroStatusLabel.Text = "Game is replaying/next..."
+                                macroDebugLog("[NEXT ROUND] Game transition detected")
+                            elseif waitingForReplayTransition
+                                and sawReplayTransition
+                                and state ~= "InProgress" then
+
+                                macroStatusLabel.Text = "Waiting to confirm next Start..."
+                                macroDebugLog(
+                                    "[NEXT ROUND] Replay/Next transition finished -> requesting Start"
+                                )
+
+                                local nextStartConfirmed = requestRoundStart()
+
+                                if nextStartConfirmed then
+                                    waitingForReplayTransition = false
+                                    sawReplayTransition = false
+                                    macroStatusLabel.Text = "Next round starting..."
+                                    macroDebugLog("[NEXT ROUND] Start confirmed -> Actions will run")
+                                else
+                                    -- requestRoundStart only returns false when PlayMacro
+                                    -- was stopped or finite Start retries were exhausted.
+                                    Config.PlayMacro = false
+                                    playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+                                    playBtn.Text = "▶ Play Macro"
+                                    macroStatusLabel.Text = "Next round Start failed"
+                                    macroDebugLog("[PLAY STOP] Next round Start was not confirmed")
+                                    break
+                                end
+                            elseif waitingForReplayTransition then
+                                macroStatusLabel.Text = "Waiting for Game Replay/Next..."
+                            end
                         end
                     end
 
@@ -2130,8 +2355,7 @@ function Macro.Init(Shared, UI)
 
                 isPlayingMacro = false
                 Shared.isPlayingMacro = false
-                macroDebugLog("[PLAY END] PlayMacro loop exited")
-            end)
+                macroDebugLog("[PLAY END] PlayMacro loop exited")            end)
         else
             isPlayingMacro = false
             Shared.isPlayingMacro = false
