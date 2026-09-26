@@ -337,6 +337,8 @@ function Macro.Init(Shared, UI)
             return "UnitUpgrade"
         elseif actionName == "ChangeGameUnitAutoUpgradePriority" then
             return "UnitAutoUpgrade"
+        elseif actionName == "SellGameUnit" then
+            return "UnitSell"
         end
 
         return nil
@@ -453,7 +455,8 @@ function Macro.Init(Shared, UI)
 
                                 if isReplicaSignal
                                     and (actionDesc == "UnitUpgrade"
-                                        or actionDesc == "UnitAutoUpgrade") then
+                                        or actionDesc == "UnitAutoUpgrade"
+                                        or actionDesc == "UnitSell") then
                                     actionEntry.recordedUnitId = packedArgs[3]
                                     actionEntry.unitIdArgIndex = 3
 
@@ -488,7 +491,8 @@ function Macro.Init(Shared, UI)
                                 )
 
                                 if actionDesc == "UnitUpgrade"
-                                    or actionDesc == "UnitAutoUpgrade" then
+                                    or actionDesc == "UnitAutoUpgrade"
+                                    or actionDesc == "UnitSell" then
                                     macroDebugLog(
                                         ("RECORD TARGET #%d | recordedReplica=%s | targetUnitID=%s | targetCFrame=%s"):format(
                                             actionSequence,
@@ -1165,7 +1169,9 @@ function Macro.Init(Shared, UI)
 
 
     local function verifyAction(action, beforeYen, beforeUnits, beforeLevel)
-        if action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
+        if action.actionType == "UnitUpgrade"
+            or action.actionType == "UnitAutoUpgrade"
+            or action.actionType == "UnitSell" then
             local targetId = action._playbackReplicaId
             if not targetId then
                 return false
@@ -1184,7 +1190,26 @@ function Macro.Init(Shared, UI)
                         return true
                     end
 
-                    local currentLevel = getUnitLevel(replica.Data)
+                    if action.actionType == "UnitSell" then
+                        -- A successful sell removes the target unit replica.
+                        -- Some game revisions leave the replica briefly, so
+                        -- keep polling until the verification deadline.
+                        -- If it is still present, fall through and keep waiting.
+                    else
+                        local currentLevel = getUnitLevel(replica.Data)
+
+                        if beforeLevel ~= nil and currentLevel ~= nil
+                            and tostring(currentLevel) ~= tostring(beforeLevel) then
+                            return true
+                        end
+
+                        if beforeYen ~= nil then
+                            local currentYen = getCurrentYen()
+                            if currentYen ~= nil and currentYen < beforeYen then
+                                return true
+                            end
+                        end
+                    end
                     if beforeLevel ~= nil and currentLevel ~= nil
                         and tostring(currentLevel) ~= tostring(beforeLevel) then
                         return true
@@ -1201,7 +1226,43 @@ function Macro.Init(Shared, UI)
                 task.wait(0.1)
             end
 
-            if beforeYen ~= nil then
+            if action.actionType == "UnitSell" then
+                local targetCFrame = typeof(action.targetCFrame) == "CFrame"
+                    and action.targetCFrame
+                    or nil
+                local targetUnitID = action.targetUnitID ~= nil
+                    and tostring(action.targetUnitID)
+                    or nil
+
+                local currentUnits = getOwnedGameUnitReplicas()
+                local targetStillExists = false
+
+                if targetId and currentUnits[tostring(targetId)] then
+                    targetStillExists = true
+                end
+
+                if not targetStillExists and targetCFrame then
+                    for _, replica in pairs(currentUnits) do
+                        if replica and replica.Data then
+                            local cf = replica.Data.CFrame
+                            local unitId = replica.Data.UnitID ~= nil
+                                and tostring(replica.Data.UnitID)
+                                or nil
+
+                            if typeof(cf) == "CFrame"
+                                and (cf.Position - targetCFrame.Position).Magnitude <= 2.5
+                                and (targetUnitID == nil or unitId == targetUnitID) then
+                                targetStillExists = true
+                                break
+                            end
+                        end
+                    end
+                end
+
+                if not targetStillExists then
+                    return true
+                end
+            elseif beforeYen ~= nil then
                 local currentYen = getCurrentYen()
                 if currentYen ~= nil and currentYen < beforeYen then
                     return true
@@ -1423,7 +1484,9 @@ function Macro.Init(Shared, UI)
                             playPlacementCount = playPlacementCount + 1
                             action._playbackPlacementOrder = playPlacementCount
                         end
-                    elseif action.actionType == "UnitUpgrade" or action.actionType == "UnitAutoUpgrade" then
+                    elseif action.actionType == "UnitUpgrade"
+                        or action.actionType == "UnitAutoUpgrade"
+                        or action.actionType == "UnitSell" then
                         local targetOrder = tonumber(action.linkedPlacementOrder)
                         targetReplicaId = targetOrder
                             and playbackUnitReplicaIds[targetOrder]
@@ -1574,7 +1637,11 @@ function Macro.Init(Shared, UI)
                         end
                     end
 
-                    if targetReplicaId or action.actionType == "UnitPlace" or (action.actionType ~= "UnitUpgrade" and action.actionType ~= "UnitAutoUpgrade") then
+                    if targetReplicaId
+                        or action.actionType == "UnitPlace"
+                        or (action.actionType ~= "UnitUpgrade"
+                            and action.actionType ~= "UnitAutoUpgrade"
+                            and action.actionType ~= "UnitSell") then
                         local fired, err
                         local beforeYenForVerification = nil
                         local beforeLevelForVerification = nil
