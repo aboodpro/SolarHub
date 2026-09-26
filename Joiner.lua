@@ -925,15 +925,23 @@ function Joiner.Init(Shared, UI)
                 -- Macro only handles Start; Game handles Replay/Next.
                 runRemoteGameAutomation(state)
 
-                -- Do not use WaveInfo as a lobby detector. It can exist before
-                -- a match starts, which previously prevented Auto Join from firing.
+                -- CurrentGameState alone is not a reliable lobby detector.
+                -- The Joiner uses gameRoundActive to remember whether we actually
+                -- observed an active round, so a stale InProgress replica cannot
+                -- block the initial Auto Join.
                 if state == "InProgress" then
                     joinRequested.Story = false
                     joinRequested.Raid = false
                     joinRequested.Expedition = false
                     joinRequested.Challenge = false
-                elseif not Config.DisableAutoJoiners
-                    and not gameTransitionPending then
+                end
+
+                local canRunAutoJoin =
+                    not Config.DisableAutoJoiners
+                    and not gameTransitionPending
+                    and not gameRoundActive
+
+                if canRunAutoJoin then
                     if Config.AutoJoinStory and not joinRequested.Story then
                         -- Story has two distinct flows in the game's UI:
                         -- Matchmaking -> REQUEST_ENTER_MATCHMAKING
@@ -980,8 +988,6 @@ function Joiner.Init(Shared, UI)
                             end
                         end
                     end
-                else
-                    -- Game automation was already evaluated above for this state.
                 end
             end)
         end
