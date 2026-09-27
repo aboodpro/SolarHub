@@ -244,7 +244,7 @@ function Macro.Init(Shared, UI)
             end
 
             if bestId and (typeof(placementCFrame) ~= "CFrame"
-                or bestDistance <= 12) then
+                or bestDistance <= 2) then
                 return bestId
             end
 
@@ -998,7 +998,7 @@ function Macro.Init(Shared, UI)
                     if typeof(targetCFrame) == "CFrame"
                         and typeof(data.CFrame) == "CFrame" then
                         cframeMatches =
-                            (data.CFrame.Position - targetCFrame.Position).Magnitude <= 12
+                            (data.CFrame.Position - targetCFrame.Position).Magnitude <= 2
                     end
 
                     if targetUnitID ~= nil then
@@ -1042,12 +1042,12 @@ function Macro.Init(Shared, UI)
                 end
             end
 
-            if bestId and (typeof(targetCFrame) ~= "CFrame" or bestScore <= 12) then
+            if bestId and (typeof(targetCFrame) ~= "CFrame" or bestScore <= 2) then
                 return bestId
             end
 
             if fallbackId and targetUnitID == nil
-                and (typeof(targetCFrame) ~= "CFrame" or fallbackDistance <= 12) then
+                and (typeof(targetCFrame) ~= "CFrame" or fallbackDistance <= 2) then
                 return fallbackId
             end
 
@@ -1127,7 +1127,7 @@ function Macro.Init(Shared, UI)
         return data.Level or data.Upgrade or data.UpgradeLevel
     end
 
-    local function findExistingPlacementReplica(placementCFrame)
+    local function findExistingPlacementReplica(placementCFrame, excludedReplicaIds)
         if typeof(placementCFrame) ~= "CFrame" then
             return nil
         end
@@ -1137,8 +1137,17 @@ function Macro.Init(Shared, UI)
         local bestDistance = math.huge
 
         for id, replica in pairs(candidates) do
-            if replica and replica.Data and typeof(replica.Data.CFrame) == "CFrame" then
-                local distance = (replica.Data.CFrame.Position - placementCFrame.Position).Magnitude
+            local excluded = excludedReplicaIds
+                and excludedReplicaIds[tostring(id)] == true
+
+            if not excluded
+                and replica
+                and replica.Data
+                and typeof(replica.Data.CFrame) == "CFrame" then
+
+                local distance =
+                    (replica.Data.CFrame.Position - placementCFrame.Position).Magnitude
+
                 if distance < bestDistance then
                     bestDistance = distance
                     bestId = id
@@ -1146,7 +1155,9 @@ function Macro.Init(Shared, UI)
             end
         end
 
-        if bestId and bestDistance <= 4 then
+        -- Adjacent units in this game can be only a few studs apart.
+        -- Never call a nearby unit the requested placement.
+        if bestId and bestDistance <= 1.25 then
             return bestId
         end
 
@@ -1672,7 +1683,21 @@ function Macro.Init(Shared, UI)
                             -- Before retrying a placement, check whether the previous
                             -- attempt actually created the unit. This prevents duplicate
                             -- placements when replica detection was delayed.
-                            local existingReplicaId = findExistingPlacementReplica(args[4])
+                            local excludedReplicaIds = {}
+                            local currentPlacementOrder = action._playbackPlacementOrder
+
+                            -- A live replica already assigned to another placement
+                            -- can never satisfy this placement action.
+                            for assignedOrder, assignedReplicaId
+                                in pairs(playbackUnitReplicaIds) do
+                                if assignedOrder ~= currentPlacementOrder
+                                    and assignedReplicaId ~= nil then
+                                    excludedReplicaIds[tostring(assignedReplicaId)] = true
+                                end
+                            end
+
+                            local existingReplicaId =
+                                findExistingPlacementReplica(args[4], excludedReplicaIds)
                             if existingReplicaId then
                                 local placementOrder = action._playbackPlacementOrder
                                 playbackUnitReplicaIds[placementOrder] = existingReplicaId
@@ -1732,14 +1757,37 @@ function Macro.Init(Shared, UI)
                                     )
 
                                     if newReplicaId then
-                                        playbackUnitReplicaIds[placementOrder] = newReplicaId
-                                        Shared.logLine(
-                                            "[Macro] Place mapped -> order "
-                                                .. tostring(placementOrder)
-                                                .. " replica "
-                                                .. tostring(newReplicaId)
-                                        )
-                                        success = true
+                                        local alreadyAssigned = false
+
+                                        for assignedOrder, assignedReplicaId
+                                            in pairs(playbackUnitReplicaIds) do
+                                            if assignedOrder ~= placementOrder
+                                                and tostring(assignedReplicaId)
+                                                    == tostring(newReplicaId) then
+                                                alreadyAssigned = true
+                                                break
+                                            end
+                                        end
+
+                                        if alreadyAssigned then
+                                            lastError =
+                                                "Detected replica is already assigned to another placement"
+                                            macroDebugLog(
+                                                ("[PLACEMENT GUARD] Rejected reused replica=%s for order=%s"):format(
+                                                    tostring(newReplicaId),
+                                                    tostring(placementOrder)
+                                                )
+                                            )
+                                        else
+                                            playbackUnitReplicaIds[placementOrder] = newReplicaId
+                                            Shared.logLine(
+                                                "[Macro] Place mapped -> order "
+                                                    .. tostring(placementOrder)
+                                                    .. " replica "
+                                                    .. tostring(newReplicaId)
+                                            )
+                                            success = true
+                                        end
                                     else
                                         lastError = "Placed unit replica was not detected yet"
                                     end
@@ -1930,7 +1978,7 @@ function Macro.Init(Shared, UI)
                         end
                     end
 
-                    if bestOrder and bestScore < 12 then
+                    if bestOrder and bestScore < 2 then
                         linkedOrder = bestOrder
                     end
                 end
