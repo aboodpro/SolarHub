@@ -1614,10 +1614,29 @@ function Macro.Init(Shared, UI)
                     local readinessLabel =
                         action.actionType == "UnitPlace" and "Place" or "Upgrade"
 
-                    macroStatusLabel.Text = ("[%d/%d] %s | Missing: %s Yen | Timer: %.1fs | ETA: %s"):format(
-                        actionIndex, totalActions, readinessLabel, tostring(missing),
-                        now - waitStartedAt, etaText
-                    )
+                    if ignoreTiming then
+                        macroStatusLabel.Text =
+                            ("[%d/%d] %s | Missing: %s Yen | ETA: %s"):format(
+                                actionIndex,
+                                totalActions,
+                                readinessLabel,
+                                tostring(missing),
+                                etaText
+                            )
+                    else
+                        local remainingText = missing <= 0
+                            and "Ready"
+                            or ("ETA: %s"):format(etaText)
+
+                        macroStatusLabel.Text =
+                            ("[%d/%d] %s | Missing: %s Yen | %s"):format(
+                                actionIndex,
+                                totalActions,
+                                readinessLabel,
+                                tostring(missing),
+                                remainingText
+                            )
+                    end
 
                     if yen == nil then
                         -- If the Yen replica is temporarily unavailable, do not
@@ -2392,6 +2411,31 @@ function Macro.Init(Shared, UI)
                     return table.concat(parts, " | ")
                 end
 
+                local function isGameplayActive(snapshot)
+                    if not snapshot then
+                        return false
+                    end
+
+                    local state = snapshot.State
+                    local wave = tonumber(snapshot.Wave)
+
+                    if state ~= "InProgress" then
+                        return false
+                    end
+
+                    -- The stage can report InProgress before the Start vote is
+                    -- accepted. Wave 0 + Active=false is the key pre-start state.
+                    if wave ~= nil and wave > 0 then
+                        return true
+                    end
+
+                    if snapshot.Active == true then
+                        return true
+                    end
+
+                    return false
+                end
+
                 local function isRealRoundStarted(before, current)
                     if not current then
                         return false, "no snapshot"
@@ -2549,19 +2593,13 @@ function Macro.Init(Shared, UI)
 
                 -- If a real round is already active (Wave > 0), do not send a
                 -- duplicate Start. Otherwise Start is mandatory before Actions.
-                local initialWave = tonumber(initialSnapshot and initialSnapshot.Wave)
-                local alreadyActive =
-                    initialSnapshot
-                    and initialSnapshot.State == "InProgress"
-                    and initialWave ~= nil
-                    and initialWave > 0
-
+                local alreadyActive = isGameplayActive(initialSnapshot)
                 local initialStartConfirmed = false
 
                 if alreadyActive then
                     initialStartConfirmed = true
                     macroDebugLog(
-                        "[PLAY] Round already active -> skipping Start request and running Actions"
+                        "[PLAY] Real round already active -> skipping Start request"
                     )
                 else
                     initialStartConfirmed = requestRoundStart()
@@ -2579,7 +2617,9 @@ function Macro.Init(Shared, UI)
                 end
 
                 while Config.PlayMacro do
-                    local state = getCurrentGameState()
+                    local snapshot = getGameSnapshot()
+                    local state = snapshot and snapshot.State or getCurrentGameState()
+                    local gameplayActive = isGameplayActive(snapshot)
                     local transitionPending = Shared.gameTransitionPending == true
 
                     if state ~= lastState then
@@ -2594,17 +2634,35 @@ function Macro.Init(Shared, UI)
                         lastState = state
                     end
 
-                    if state == "InProgress" then
+                    if state == "InProgress" and gameplayActive then
                         if not cycleStarted then
                             cycleStarted = true
                             waitingForReplayTransition = false
                             sawReplayTransition = false
                             macroStatusLabel.Text = "Starting macro..."
-                            macroDebugLog("[ROUND START] Start confirmed -> running Actions")
+                            macroDebugLog("[ROUND START] Real gameplay detected -> running Actions")
 
                             task.spawn(function()
                                 runMacroOnce(macroData)
                             end)
+                        end
+                    elseif state == "InProgress" then
+                        -- InProgress + Wave 0/Active=false is the pre-start lobby.
+                        -- Never execute placement Actions here; request Start unless
+                        -- the Game automation is already waiting on a Replay/Next.
+                        if not cycleStarted
+                            and not transitionPending
+                            and not waitingForReplayTransition then
+
+                            macroStatusLabel.Text = "Waiting for Start..."
+                            macroDebugLog(
+                                "[ROUND WAIT] InProgress but round not started -> requesting Start"
+                            )
+
+                            local startOk = requestRoundStart()
+                            if startOk then
+                                macroDebugLog("[ROUND WAIT] Start confirmed")
+                            end
                         end
                     else
                         if cycleStarted then
