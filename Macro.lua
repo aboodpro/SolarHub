@@ -379,7 +379,10 @@ function Macro.Init(Shared, UI)
         local ok, result = pcall(function()
             local bestCost, bestDistance = nil, math.huge
 
-            for _, inst in ipairs(workspace:GetDescendants()) do
+            local unitsFolder = workspace:FindFirstChild("Units")
+            local searchRoot = unitsFolder or workspace
+
+            for _, inst in ipairs(searchRoot:GetDescendants()) do
                 if inst:IsA("Model") then
                     local root = inst:FindFirstChild("HumanoidRootPart") or inst.PrimaryPart
                     if root then
@@ -439,17 +442,10 @@ function Macro.Init(Shared, UI)
                         if spent > 0 then return spent end
                     end
 
-                    local paymentDeadline = os.clock() + 1
-                    while os.clock() < paymentDeadline do
-                        task.wait(0.05)
-                        yenNow = getCurrentYen()
-                        if yenBefore ~= nil and yenNow ~= nil then
-                            local spent = yenBefore - yenNow
-                            if spent > 0 then return spent end
-                        end
-                    end
-
-                    return nil
+                    -- The replica can appear before the Yen update. Keep
+                    -- observing until the overall deadline instead of giving up
+                    -- after one second.
+                    task.wait(0.05)
                 end
             end
 
@@ -2231,7 +2227,7 @@ function Macro.Init(Shared, UI)
             -- Remote recording/enrichment runs in small worker tasks.
             -- Wait for them to finish before serializing, otherwise the last
             -- Upgrade may be saved before its Yen cost is attached.
-            local saveDeadline = os.clock() + 10
+            local saveDeadline = os.clock() + 13
             while pendingRecordWorkers > 0 and os.clock() < saveDeadline do
                 task.wait(0.05)
             end
