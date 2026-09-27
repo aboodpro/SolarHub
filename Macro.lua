@@ -46,6 +46,18 @@ function Macro.Init(Shared, UI)
     local pendingRecordWorkers = 0
     local scannedUnitsDatabase = {}
 
+    -- Lifecycle guards:
+    -- recordingRoundActive tracks whether the current recording belongs to a
+    -- real game round, so a round-end event can auto-save it exactly once.
+    local recordingRoundActive = false
+    local activeRecordingMacroName = nil
+    local autoPlaySavedMacroName = nil
+
+    -- This stays true only after Macro has actually run during the current
+    -- round. Re-enabling Play Macro in that same round forces a clean Restart.
+    local macroExecutedCurrentRound = false
+    local observedGameplayRound = false
+
     local replicaClientModule = nil
 
     -- Resolve ReplicaClient lazily and defensively. Some game revisions/executors
@@ -2202,6 +2214,63 @@ function Macro.Init(Shared, UI)
     end
 
 
+    local function saveRecordingAndStop(autoRoundEnd)
+        local macroName = activeRecordingMacroName or Config.CurrentMacroName
+
+        if not macroName or macroName == "" then
+            return false, nil
+        end
+
+        -- Stop accepting new remote actions immediately. Already queued workers
+        -- are allowed to finish their enrichment before serialization.
+        Config.RecordMacro = false
+        activeRecordingMacroName = nil
+        recordingRoundActive = false
+
+        recordBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+        recordBtn.Text = "🔴 Record Macro"
+
+        local saveDeadline = os.clock() + 13
+        while pendingRecordWorkers > 0 and os.clock() < saveDeadline do
+            task.wait(0.05)
+        end
+
+        finalizeRecordedActionLinks()
+
+        local macroObject = savedMacros[macroName]
+        if not macroObject then
+            macroObject = { actions = {} }
+            savedMacros[macroName] = macroObject
+        end
+
+        macroObject.actions = recordedActions
+        saveMacrosToFile()
+
+        if Config.CurrentMacroName == "" then
+            Config.CurrentMacroName = macroName
+        end
+
+        refreshMacroList()
+
+        if autoRoundEnd then
+            showTopNotification("Your macro was saved.", 3)
+            autoPlaySavedMacroName = macroName
+            macroDebugLog(
+                ("[RECORD AUTO-SAVE] macro=%s | actions=%d | round ended"):format(
+                    tostring(macroName),
+                    #recordedActions
+                )
+            )
+        else
+            showTopNotification(
+                "Macro saved to file (" .. #recordedActions .. " actions)!",
+                3
+            )
+        end
+
+        return true, macroName
+    end
+
     createBtn.Activated:Connect(function()
         local name = nameInput.Text -- تم التصحيح هنا وإزالة .Test الخاطئة
         if name ~= "" then
@@ -2228,6 +2297,15 @@ function Macro.Init(Shared, UI)
         Config.RecordMacro = not Config.RecordMacro
         if Config.RecordMacro then
             installRecordingHook()
+            activeRecordingMacroName = Config.CurrentMacroName
+            autoPlaySavedMacroName = nil
+
+            local initialWave, _, initialState = Shared.getWaveInfo()
+            recordingRoundActive =
+                initialState == "InProgress"
+                and tonumber(initialWave) ~= nil
+                and tonumber(initialWave) > 0
+
             recordedActions = {}
             recordStartTime = os.clock()
             recordActionSequence = 0
@@ -2240,26 +2318,39 @@ function Macro.Init(Shared, UI)
             recordBtn.Text = "🔴 Recording..."
             showTopNotification("Recording started...", 3)
         else
-            recordBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-            recordBtn.Text = "🔴 Record Macro"
-
-            -- Remote recording/enrichment runs in small worker tasks.
-            -- Wait for them to finish before serializing, otherwise the last
-            -- Upgrade may be saved before its Yen cost is attached.
-            local saveDeadline = os.clock() + 13
-            while pendingRecordWorkers > 0 and os.clock() < saveDeadline do
-                task.wait(0.05)
-            end
-
-            finalizeRecordedActionLinks()
-
-            if savedMacros[Config.CurrentMacroName] then
-                savedMacros[Config.CurrentMacroName].actions = recordedActions
-                saveMacrosToFile()
-                showTopNotification("Macro saved to file (" .. #recordedActions .. " actions)!", 3)
-            end
+            saveRecordingAndStop(false)
         end
     end)
+
+    local function restartCurrentMatchForMacro()
+        local replicaSignal = Shared.ReplicaSignal
+        local getActiveId = Shared.getActiveGameReplicaId
+
+        if not replicaSignal
+            or type(getActiveId) ~= "function" then
+            return false, "Game restart remote is unavailable"
+        end
+
+        local replicaId = getActiveId()
+        if not replicaId then
+            return false, "Active game replica not found"
+        end
+
+        local ok, err = pcall(function()
+            replicaSignal:FireServer(replicaId, "Restart")
+        end)
+
+        if ok then
+            macroDebugLog(
+                ("[PLAY RESTART] Restart requested | gameReplica=%s"):format(
+                    tostring(replicaId)
+                )
+            )
+            return true
+        end
+
+        return false, tostring(err)
+    end
 
     playBtn.Activated:Connect(function()
         if Config.CurrentMacroName == "" or not savedMacros[Config.CurrentMacroName] then
@@ -2579,11 +2670,60 @@ function Macro.Init(Shared, UI)
                 local initialSnapshot = getGameSnapshot()
                 macroDebugLog("[PLAY INITIAL SNAPSHOT] " .. snapshotText(initialSnapshot))
 
-                -- If a real round is already active (Wave > 0), do not send a
-                -- duplicate Start. Otherwise Start is mandatory before Actions.
+                -- If this Macro has already executed during the current round,
+                -- re-enabling Play Macro means the user wants a clean run. Restart
+                -- the match first so old placement/upgrade state cannot leak into
+                -- the next Macro execution.
                 local alreadyActive = isGameplayActive(initialSnapshot)
                 local initialStartConfirmed = false
+                local restartRequired =
+                    alreadyActive and macroExecutedCurrentRound == true
 
+                if restartRequired then
+                    macroStatusLabel.Text = "Restarting match..."
+                    local restartOk, restartErr = restartCurrentMatchForMacro()
+
+                    if not restartOk then
+                        macroDebugLog(
+                            "[PLAY RESTART] Failed -> " .. tostring(restartErr)
+                        )
+                        macroStatusLabel.Text = "Restart failed"
+                        Config.PlayMacro = false
+                        isPlayingMacro = false
+                        Shared.isPlayingMacro = false
+                        playBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+                        playBtn.Text = "▶ Play Macro"
+                        return
+                    end
+
+                    showTopNotification("Match restarted for a smoother macro run.", 3)
+
+                    -- Wait for the server to move the match out of real gameplay
+                    -- before asking Start again. Do not send Start into the old round.
+                    local restartDeadline = os.clock() + 12
+                    while Config.PlayMacro
+                        and os.clock() < restartDeadline do
+                        local afterRestart = getGameSnapshot()
+
+                        if not isGameplayActive(afterRestart) then
+                            break
+                        end
+
+                        task.wait(0.15)
+                    end
+
+                    initialSnapshot = getGameSnapshot()
+                    alreadyActive = isGameplayActive(initialSnapshot)
+                    macroExecutedCurrentRound = false
+
+                    macroDebugLog(
+                        "[PLAY RESTART] Restart settled -> "
+                            .. snapshotText(initialSnapshot)
+                    )
+                end
+
+                -- If a real round is already active, it is safe to run Actions.
+                -- Otherwise Start is mandatory before Actions.
                 if alreadyActive then
                     initialStartConfirmed = true
                     macroDebugLog(
@@ -2628,6 +2768,7 @@ function Macro.Init(Shared, UI)
                             waitingForReplayTransition = false
                             sawReplayTransition = false
                             macroStatusLabel.Text = "Starting macro..."
+                            macroExecutedCurrentRound = true
                             macroDebugLog("[ROUND START] Real gameplay detected -> running Actions")
 
                             task.spawn(function()
@@ -2669,6 +2810,7 @@ function Macro.Init(Shared, UI)
                             isPlayingMacro = false
                             macroRunId += 1
                             Shared.isPlayingMacro = false
+                            macroExecutedCurrentRound = false
                             waitingForReplayTransition = true
                             sawReplayTransition = false
 
@@ -2744,6 +2886,93 @@ function Macro.Init(Shared, UI)
             playBtn.Text = "▶ Play Macro"
             macroStatusLabel.Text = "Stopped"
             macroDebugLog("[PLAY STOP] User stopped Play Macro")
+        end
+    end)
+
+    -------------------------------------------------
+    -- RECORDING / ROUND LIFECYCLE MONITOR
+    -------------------------------------------------
+    task.spawn(function()
+        while true do
+            task.wait(0.25)
+
+            pcall(function()
+                local wave, _, state = Shared.getWaveInfo()
+                local numericWave = tonumber(wave)
+                local gameplayActive =
+                    state == "InProgress"
+                    and numericWave ~= nil
+                    and numericWave > 0
+
+                -- Track real gameplay independently of Play Macro. This makes
+                -- "Play again" know whether it is still the same match even if
+                -- the user stopped Macro before the round itself ended.
+                if gameplayActive then
+                    if not observedGameplayRound then
+                        observedGameplayRound = true
+                        macroExecutedCurrentRound = false
+                    end
+
+                    if Config.RecordMacro then
+                        recordingRoundActive = true
+                    end
+                else
+                    observedGameplayRound = false
+
+                    -- A recording that was active during real gameplay is now
+                    -- finished by the round boundary. Save it exactly once.
+                    if Config.RecordMacro and recordingRoundActive then
+                        local saved, macroName = saveRecordingAndStop(true)
+                        if saved then
+                            autoPlaySavedMacroName = macroName
+                        end
+                    end
+
+                    -- No active round = no same-round restart requirement.
+                    macroExecutedCurrentRound = false
+                end
+
+                -- Auto-resume the just-saved Macro for the next round.
+                -- With Auto Replay/Next, arm Play Macro as soon as the game has
+                -- returned to the pre-start state so Macro itself can press Start.
+                local autoMacroName = autoPlaySavedMacroName
+                if autoMacroName
+                    and not Config.RecordMacro
+                    and not Config.PlayMacro
+                    and savedMacros[autoMacroName] then
+
+                    local stateNow = state
+                    local waveNow = numericWave
+                    local transitionPending = Shared.gameTransitionPending == true
+
+                    local replayPreStart =
+                        (Config.AutoReplay or Config.AutoNext)
+                        and stateNow == "InProgress"
+                        and (waveNow == nil or waveNow <= 0)
+                        and not transitionPending
+
+                    local nextRoundAlreadyActive = gameplayActive
+
+                    if replayPreStart or nextRoundAlreadyActive then
+                        Config.CurrentMacroName = autoMacroName
+                        refreshMacroList()
+                        autoPlaySavedMacroName = nil
+
+                        macroDebugLog(
+                            ("[RECORD AUTO-PLAY] macro=%s | reason=%s"):format(
+                                tostring(autoMacroName),
+                                replayPreStart and "pre-start after replay/next" or "next round active"
+                            )
+                        )
+
+                        task.defer(function()
+                            if playBtn and playBtn.Parent and not Config.PlayMacro then
+                                playBtn:Activate()
+                            end
+                        end)
+                    end
+                end
+            end)
         end
     end)
 
