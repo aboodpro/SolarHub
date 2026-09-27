@@ -1522,6 +1522,9 @@ function Macro.Init(Shared, UI)
         isPlayingMacro = true
         local playbackStartTime = os.clock()
         Shared.isPlayingMacro = true
+        -- The macro has now actually begun execution in this round. This flag
+        -- is used only for the same-round manual Play-again restart guard.
+        macroExecutedCurrentRound = true
 
         local lastTime = 0
         local playPlacementCount = 0
