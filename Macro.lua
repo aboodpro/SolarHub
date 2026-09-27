@@ -2642,7 +2642,7 @@ function Macro.Init(Shared, UI)
                         -- after the transition flag has already cleared. Release the
                         -- completed-round wait here, then explicitly request Start.
                         if not cycleStarted and not gameplayActive then
-                            if waitingForReplayTransition and sawReplayTransition
+                            if waitingForReplayTransition
                                 and not transitionPending then
                                 waitingForReplayTransition = false
                                 sawReplayTransition = false
