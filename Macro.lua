@@ -364,6 +364,101 @@ function Macro.Init(Shared, UI)
         return foundCount
     end
 
+    -- Ghost-aware placement cost helpers.
+    local function readPositiveNumber(value)
+        if type(value) == "number" and value > 0 then return value end
+        local n = tonumber(value)
+        return n and n > 0 and n or nil
+    end
+
+    local function findNearbyPlacementCost(placementCFrame, radius)
+        if typeof(placementCFrame) ~= "CFrame" then return nil end
+        local pos = placementCFrame.Position
+        local maxDistance = radius or 8
+
+        local ok, result = pcall(function()
+            local bestCost, bestDistance = nil, math.huge
+
+            for _, inst in ipairs(workspace:GetDescendants()) do
+                if inst:IsA("Model") then
+                    local root = inst:FindFirstChild("HumanoidRootPart") or inst.PrimaryPart
+                    if root then
+                        local distance = (root.Position - pos).Magnitude
+                        if distance <= maxDistance and distance < bestDistance then
+                            for _, key in ipairs({"Cost","Price","YenCost","PlacementCost","DeployCost","SummonCost"}) do
+                                local cost = readPositiveNumber(inst:GetAttribute(key))
+                                if cost then
+                                    bestCost, bestDistance = cost, distance
+                                    break
+                                end
+                            end
+
+                            if not bestCost then
+                                for _, child in ipairs(inst:GetDescendants()) do
+                                    local name = child.Name:lower()
+                                    if (name == "cost" or name == "price"
+                                        or name == "yencost" or name == "placementcost"
+                                        or name == "deploycost" or name == "summoncost")
+                                        and (child:IsA("NumberValue")
+                                            or child:IsA("IntValue")
+                                            or child:IsA("StringValue")) then
+                                        local cost = readPositiveNumber(child.Value)
+                                        if cost then
+                                            bestCost, bestDistance = cost, distance
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            return bestCost
+        end)
+
+        return ok and result or nil
+    end
+
+    local function waitForRecordedPlacementPayment(beforeIds, placementCFrame, yenBefore, timeoutSeconds)
+        if typeof(placementCFrame) ~= "CFrame" then return nil end
+        local deadline = os.clock() + (timeoutSeconds or 8)
+
+        while os.clock() < deadline do
+            local candidates = getOwnedGameUnitReplicas()
+
+            for id, replica in pairs(candidates) do
+                if not beforeIds[id] and replica and replica.Data
+                    and typeof(replica.Data.CFrame) == "CFrame"
+                    and (replica.Data.CFrame.Position - placementCFrame.Position).Magnitude <= 2 then
+
+                    local yenNow = getCurrentYen()
+                    if yenBefore ~= nil and yenNow ~= nil then
+                        local spent = yenBefore - yenNow
+                        if spent > 0 then return spent end
+                    end
+
+                    local paymentDeadline = os.clock() + 1
+                    while os.clock() < paymentDeadline do
+                        task.wait(0.05)
+                        yenNow = getCurrentYen()
+                        if yenBefore ~= nil and yenNow ~= nil then
+                            local spent = yenBefore - yenNow
+                            if spent > 0 then return spent end
+                        end
+                    end
+
+                    return nil
+                end
+            end
+
+            task.wait(0.1)
+        end
+
+        return nil
+    end
+
     -- Install the recording hook only when the user actually starts recording.
     -- This keeps Macro initialization from installing a global __namecall hook
     -- before the Joiner has finished its own game-start work.
@@ -389,6 +484,7 @@ function Macro.Init(Shared, UI)
 
                 local yenBefore = nil
                 local replicaActionBefore = nil
+                local placementBeforeIds = nil
 
                 if isRemoteCall and Config.RecordMacro then
                     pcall(function()
@@ -397,6 +493,10 @@ function Macro.Init(Shared, UI)
                             if replicaActionBefore == "UnitUpgrade"
                                 or replicaActionBefore == "UnitPlace" then
                                 yenBefore = getCurrentYen()
+                            end
+
+                            if replicaActionBefore == "UnitPlace" then
+                                placementBeforeIds = snapshotOwnedGameUnits()
                             end
                         end
                     end)
@@ -505,17 +605,43 @@ function Macro.Init(Shared, UI)
                                 end
 
                                 if actionDesc == "UnitPlace" then
-                                    -- Placement identity is finalized after all
-                                    -- async recording workers finish. Do not assign
-                                    -- placementOrder from worker completion timing.
+                                    -- Placement identity is finalized after all async
+                                    -- recording workers finish.
                                     actionEntry.recordedUnitId = packedArgs[3]
 
                                     if packedArgs[4] ~= nil then
                                         recordedPlacementCFrames[actionSequence] = packedArgs[4]
                                     end
 
-                                elseif actionDesc == "UnitUpgrade"
-                                    or actionDesc == "UnitPlace" then
+                                    -- A normal placement spends Yen immediately.
+                                    -- A ghost placement does not. Learn its real cost
+                                    -- from the unit model or from the later payment.
+                                    local modelCost = findNearbyPlacementCost(packedArgs[4], 8)
+                                    if modelCost then
+                                        actionEntry.yenCost = modelCost
+                                    elseif placementBeforeIds
+                                        and typeof(packedArgs[4]) == "CFrame" then
+                                        local observedCost =
+                                            waitForRecordedPlacementPayment(
+                                                placementBeforeIds,
+                                                packedArgs[4],
+                                                yenBefore,
+                                                8
+                                            )
+                                        if observedCost then
+                                            actionEntry.yenCost = observedCost
+                                        end
+                                    end
+
+                                    macroDebugLog(
+                                        ("RECORD COST #%d | type=UnitPlace | cost=%s | source=%s"):format(
+                                            actionSequence,
+                                            tostring(actionEntry.yenCost),
+                                            modelCost and "Model" or "Payment"
+                                        )
+                                    )
+
+                                elseif actionDesc == "UnitUpgrade" then
                                     -- linkedPlacementOrder is finalized after all
                                     -- recording workers finish. Do not derive it
                                     -- from async worker completion order here.
@@ -2105,7 +2231,7 @@ function Macro.Init(Shared, UI)
             -- Remote recording/enrichment runs in small worker tasks.
             -- Wait for them to finish before serializing, otherwise the last
             -- Upgrade may be saved before its Yen cost is attached.
-            local saveDeadline = os.clock() + 5
+            local saveDeadline = os.clock() + 10
             while pendingRecordWorkers > 0 and os.clock() < saveDeadline do
                 task.wait(0.05)
             end
