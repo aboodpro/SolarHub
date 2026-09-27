@@ -394,7 +394,8 @@ function Macro.Init(Shared, UI)
                     pcall(function()
                         if selfRef.Name == "ReplicaSignal" then
                             replicaActionBefore = getReplicaSignalAction(packedArgs)
-                            if replicaActionBefore == "UnitUpgrade" then
+                            if replicaActionBefore == "UnitUpgrade"
+                                or replicaActionBefore == "UnitPlace" then
                                 yenBefore = getCurrentYen()
                             end
                         end
@@ -513,7 +514,8 @@ function Macro.Init(Shared, UI)
                                         recordedPlacementCFrames[actionSequence] = packedArgs[4]
                                     end
 
-                                elseif actionDesc == "UnitUpgrade" then
+                                elseif actionDesc == "UnitUpgrade"
+                                    or actionDesc == "UnitPlace" then
                                     -- linkedPlacementOrder is finalized after all
                                     -- recording workers finish. Do not derive it
                                     -- from async worker completion order here.
@@ -539,11 +541,26 @@ function Macro.Init(Shared, UI)
                                             end
                                         end
 
-                                        print(("[Macro Record] Upgrade cost=%s | Yen %s -> %s"):format(
+                                        local label = actionDesc == "UnitPlace"
+                                            and "Placement"
+                                            or "Upgrade"
+
+                                        print(("[Macro Record] %s cost=%s | Yen %s -> %s"):format(
+                                            label,
                                             tostring(actionEntry.yenCost),
                                             tostring(yenBefore),
                                             tostring(yenAfter)
                                         ))
+
+                                        macroDebugLog(
+                                            ("RECORD COST #%d | type=%s | cost=%s | Yen %s -> %s"):format(
+                                                actionSequence,
+                                                tostring(actionDesc),
+                                                tostring(actionEntry.yenCost),
+                                                tostring(yenBefore),
+                                                tostring(yenAfter)
+                                            )
+                                        )
                                     end)
 
                                 elseif actionDesc == "UnitAutoUpgrade" then
@@ -1412,6 +1429,16 @@ function Macro.Init(Shared, UI)
                 if delta > 0 then effectiveYenCost = delta end
             end
 
+            if action.actionType == "UnitPlace"
+                and not effectiveYenCost
+                and not ignoreTiming then
+                macroDebugLog(
+                    ("[PLACE READYNESS] action=%d has no recorded Yen cost; using placement verification only"):format(
+                        actionIndex
+                    )
+                )
+            end
+
             -- Timing is a minimum schedule only. Once the action is due,
             -- resource readiness decides when it actually executes.
             if not ignoreTiming then
@@ -1429,9 +1456,12 @@ function Macro.Init(Shared, UI)
             end
             lastTime = tonumber(action.time) or lastTime
 
-            -- Placement/upgrade readiness is independent from the recorded
-            -- timestamp. This prevents a late playback from getting stuck.
-            if action.actionType == "UnitUpgrade" and effectiveYenCost then
+            -- Timing is a minimum schedule. Once the timestamp is reached,
+            -- paid actions still wait for the required Yen instead of sending a
+            -- premature request that the game can keep as a ghost placement.
+            if (action.actionType == "UnitUpgrade"
+                or action.actionType == "UnitPlace")
+                and effectiveYenCost then
                 local waitStartedAt = os.clock()
                 local lastSampleYen = getCurrentYen()
                 local lastSampleAt = os.clock()
@@ -1459,8 +1489,11 @@ function Macro.Init(Shared, UI)
                         etaText = ("%.1fs"):format(missing / estimatedRate)
                     end
 
-                    macroStatusLabel.Text = ("[%d/%d] Upgrade | Missing: %s Yen | Timer: %.1fs | ETA: %s"):format(
-                        actionIndex, totalActions, tostring(missing),
+                    local readinessLabel =
+                        action.actionType == "UnitPlace" and "Place" or "Upgrade"
+
+                    macroStatusLabel.Text = ("[%d/%d] %s | Missing: %s Yen | Timer: %.1fs | ETA: %s"):format(
+                        actionIndex, totalActions, readinessLabel, tostring(missing),
                         now - waitStartedAt, etaText
                     )
 
