@@ -2437,19 +2437,15 @@ function Macro.Init(Shared, UI)
                 end
 
                 local function isRealRoundStarted(before, current)
-                    if not current then
-                        return false, "no snapshot"
-                    end
-
-                    if before and before.State ~= current.State
-                        and current.State == "InProgress" then
-                        return true, "CurrentGameState changed to InProgress"
+                    if not current or not isGameplayActive(current) then
+                        return false, "round is not active"
                     end
 
                     local beforeWave = before and tonumber(before.Wave) or nil
                     local currentWave = tonumber(current.Wave)
 
-                    if currentWave ~= nil and beforeWave ~= nil
+                    if currentWave ~= nil
+                        and beforeWave ~= nil
                         and currentWave > beforeWave then
                         return true, ("Wave changed %s -> %s"):format(
                             tostring(beforeWave),
@@ -2457,16 +2453,17 @@ function Macro.Init(Shared, UI)
                         )
                     end
 
-                    if current.State == "InProgress"
-                        and currentWave ~= nil
-                        and currentWave > 0
-                        and (beforeWave == nil or beforeWave <= 0) then
-                        return true, ("Wave became %s while state is InProgress"):format(
+                    if currentWave ~= nil and currentWave > 0 then
+                        return true, ("Wave is active at %s"):format(
                             tostring(currentWave)
                         )
                     end
 
-                    return false, "no confirmed transition"
+                    if current.Active == true then
+                        return true, "Active=true"
+                    end
+
+                    return false, "round is not active"
                 end
 
                 local function requestRoundStart()
@@ -2578,15 +2575,6 @@ function Macro.Init(Shared, UI)
                 local sawReplayTransition = false
                 local lastState = nil
 
-                local cycleStarted = false
-                local waitingForReplayTransition = false
-                local sawReplayTransition = false
-                local lastState = nil
-                local sawCompletedRound = false
-                local startCooldown = 0
-                local postRoundGraceUntil = 0
-                local lastState = nil
-
                 macroStatusLabel.Text = "Checking game before Start..."
                 local initialSnapshot = getGameSnapshot()
                 macroDebugLog("[PLAY INITIAL SNAPSHOT] " .. snapshotText(initialSnapshot))
@@ -2648,20 +2636,31 @@ function Macro.Init(Shared, UI)
                         end
                     elseif state == "InProgress" then
                         -- InProgress + Wave 0/Active=false is the pre-start lobby.
-                        -- Never execute placement Actions here; request Start unless
-                        -- the Game automation is already waiting on a Replay/Next.
-                        if not cycleStarted
-                            and not transitionPending
-                            and not waitingForReplayTransition then
+                        -- Never execute placement Actions here.
+                        --
+                        -- After Replay/Next, the game often returns to this state
+                        -- after the transition flag has already cleared. Release the
+                        -- completed-round wait here, then explicitly request Start.
+                        if not cycleStarted and not gameplayActive then
+                            if waitingForReplayTransition and sawReplayTransition
+                                and not transitionPending then
+                                waitingForReplayTransition = false
+                                sawReplayTransition = false
+                                macroDebugLog(
+                                    "[NEXT ROUND] Replay/Next finished -> pre-start lobby detected"
+                                )
+                            end
 
-                            macroStatusLabel.Text = "Waiting for Start..."
-                            macroDebugLog(
-                                "[ROUND WAIT] InProgress but round not started -> requesting Start"
-                            )
+                            if not transitionPending and not waitingForReplayTransition then
+                                macroStatusLabel.Text = "Waiting for Start..."
+                                macroDebugLog(
+                                    "[ROUND WAIT] Pre-start lobby detected -> requesting Start"
+                                )
 
-                            local startOk = requestRoundStart()
-                            if startOk then
-                                macroDebugLog("[ROUND WAIT] Start confirmed")
+                                local startOk = requestRoundStart()
+                                if startOk then
+                                    macroDebugLog("[ROUND WAIT] Start confirmed")
+                                end
                             end
                         end
                     else
