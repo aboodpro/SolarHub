@@ -1497,6 +1497,16 @@ function Macro.Init(Shared, UI)
                     local beforeIds = {}
                     if action.actionType == "UnitPlace" then
                         beforeIds = snapshotOwnedGameUnits()
+
+                        -- Keep the first-attempt baseline for this placement.
+                        -- A unit that existed before this placement action began
+                        -- can never be used as proof that this action succeeded.
+                        if attempt == 1 then
+                            action._placementBaselineIds = {}
+                            for baselineId in pairs(beforeIds) do
+                                action._placementBaselineIds[baselineId] = true
+                            end
+                        end
                     end
 
                     local args = { table.unpack(action.args, 1, action.args.n) }
@@ -1680,14 +1690,22 @@ function Macro.Init(Shared, UI)
                         local placementAlreadyMapped = false
 
                         if action.actionType == "UnitPlace" then
-                            -- Before retrying a placement, check whether the previous
-                            -- attempt actually created the unit. This prevents duplicate
-                            -- placements when replica detection was delayed.
+                            -- Before retrying a placement, check whether a previous
+                            -- attempt actually created the unit. Only a replica that was
+                            -- not present at the first attempt can satisfy this shortcut.
+                            -- This protects against delayed replication without allowing
+                            -- an unrelated/pre-existing unit to count as success.
                             local excludedReplicaIds = {}
                             local currentPlacementOrder = action._playbackPlacementOrder
 
+                            -- A replica from before this placement action started
+                            -- cannot prove that the placement succeeded.
+                            for baselineId in pairs(action._placementBaselineIds or {}) do
+                                excludedReplicaIds[tostring(baselineId)] = true
+                            end
+
                             -- A live replica already assigned to another placement
-                            -- can never satisfy this placement action.
+                            -- can never satisfy this placement action either.
                             for assignedOrder, assignedReplicaId
                                 in pairs(playbackUnitReplicaIds) do
                                 if assignedOrder ~= currentPlacementOrder
