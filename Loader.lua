@@ -4,7 +4,7 @@
 -- to become available, then fetches/compiles all modules, and only after that
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
-local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
+local BASE_URL = "https://bitter-bonus-bb8e.gamerabood26.workers.dev/raw/"
 local CACHE_BUST = tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
 
 -------------------------------------------------
