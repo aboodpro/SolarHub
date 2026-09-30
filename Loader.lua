@@ -564,14 +564,30 @@ task.spawn(function()
         return result, nil
     end
 
-    for _, fileName in ipairs({
-        "Shared.lua",
-        "UI.lua",
-        "Joiner.lua",
-        "Macro.lua",
-        "Webhook.lua",
-        "Arcane.lua",
-    }) do
+    local moduleLoadOrder
+
+    if allowedGame.Name == "Arcane Odyssey" then
+        moduleLoadOrder = {
+            "Shared.lua",
+            "UI.lua",
+            "Arcane.lua",
+        }
+    else
+        moduleLoadOrder = {
+            "Shared.lua",
+            "UI.lua",
+            "Joiner.lua",
+            "Macro.lua",
+            "Webhook.lua",
+        }
+    end
+
+    debugLog(
+        "Module load order: "
+            .. table.concat(moduleLoadOrder, ", ")
+    )
+
+    for _, fileName in ipairs(moduleLoadOrder) do
         setLoadingStatus("Loading " .. fileName .. "...")
         print("[Loader] Fetching " .. fileName .. "...")
 
@@ -585,6 +601,8 @@ task.spawn(function()
         if not source then
             setLoadingStatus(fileName .. " load error")
             warn(fetchError)
+            debugLog(fetchError)
+            showDebugUI()
             return
         end
 
@@ -620,21 +638,16 @@ task.spawn(function()
 
     local compiled = {}
 
-    for _, fileName in ipairs({
-        "Shared.lua",
-        "UI.lua",
-        "Joiner.lua",
-        "Macro.lua",
-        "Webhook.lua",
-        "Arcane.lua",
-    }) do
+    for _, fileName in ipairs(moduleLoadOrder) do
         local label = fileName:gsub("%.lua$", "")
         local chunk, compileError = compile(fileName)
 
         if not chunk then
             setLoadingStatus(label .. " compile error")
             warn(compileError)
+            debugLog(compileError)
             moduleSources = nil
+            showDebugUI()
             return
         end
 
