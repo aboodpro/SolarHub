@@ -5,8 +5,15 @@
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local CACHE_BUST = tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
-local LOADER_VERSION = "2026-09-30-ARCANE-2"
+local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
+local LOADER_VERSION = "2026-09-30-ARCANE-3"
+local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
+
+pcall(function()
+    if type(getgenv) == "function" then
+        getgenv().SolarHubLoaderSession = SESSION_ID
+    end
+end)
 
 
 -------------------------------------------------
@@ -55,6 +62,7 @@ local function getDebugText()
         "GameId (UniverseId): " .. tostring(game.GameId),
         "JobId: " .. tostring(game.JobId),
         "GameLoaded: " .. tostring(game:IsLoaded()),
+        "SessionId: " .. tostring(SESSION_ID),
     }
 
     local ok, info = pcall(function()
@@ -461,6 +469,22 @@ task.spawn(function()
     
     local PREP_MIN_SECONDS = 4
     local PREP_TIMEOUT_SECONDS = 25
+
+    local function isCurrentSession()
+        if type(getgenv) ~= "function" then
+            return true
+        end
+
+        local ok, current = pcall(function()
+            return getgenv().SolarHubLoaderSession
+        end)
+
+        return not ok or current == nil or current == SESSION_ID
+    end
+
+    if not isCurrentSession() then
+        return
+    end
     local prepStartedAt = os.clock()
     
     print("[Loader] Preparing SolarHub...")
@@ -551,6 +575,11 @@ task.spawn(function()
         setLoadingStatus("Loading " .. fileName .. "...")
         print("[Loader] Fetching " .. fileName .. "...")
 
+        if not isCurrentSession() then
+            debugLog("Loader session superseded; stopping old run.")
+            return
+        end
+
         local source, fetchError = fetchModule(fileName)
 
         if not source then
@@ -617,6 +646,12 @@ task.spawn(function()
     -------------------------------------------------
     -- LOAD / INIT
     -------------------------------------------------
+
+    if not isCurrentSession() then
+        debugLog("Loader session superseded before initialization.")
+        return
+    end
+
     
     local function runModule(label, fn)
         local ok, result = xpcall(fn, function(err)
