@@ -146,7 +146,13 @@ function UI.Init(Shared)
 
     local tabs, tabButtons = {}, {}
     local tabErrors = {}
-    local tabNames = { "Lobby", "Joiner", "Game", "Auto Play", "Macro", "Webhook", "Misc" }
+    local tabNames
+
+    if Shared.IsArcaneOdyssey == true then
+        tabNames = { "Misc" }
+    else
+        tabNames = { "Lobby", "Joiner", "Game", "Auto Play", "Macro", "Webhook", "Misc" }
+    end
 
     for _, name in ipairs(tabNames) do
         local tabContainer = Instance.new("ScrollingFrame")
