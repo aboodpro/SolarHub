@@ -4,16 +4,8 @@
 -- to become available, then fetches/compiles all modules, and only after that
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
--- Module sources are served separately by the SolarHub Cloudflare Worker.
--- The public loader endpoint is the only URL clients need to know.
-local MODULE_ENDPOINTS = {
-    ["Shared.lua"] = "/m/1",
-    ["UI.lua"] = "/m/2",
-    ["Joiner.lua"] = "/m/3",
-    ["Macro.lua"] = "/m/4",
-    ["Webhook.lua"] = "/m/5",
-    ["Arcane.lua"] = "/m/6",
-}
+local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
+local CACHE_BUST = tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
 -------------------------------------------------
 -- ALLOWED GAMES
 -------------------------------------------------
@@ -280,16 +272,11 @@ task.spawn(function()
     
     -------------------------------------------------
     -- COLLECT
-    -- Cloudflare serves each module through a short-lived, signed endpoint.
+    -- Fetch each module directly from the public GitHub repository.
     local moduleSources = {}
 
     local function fetchModule(fileName)
-        local endpoint = MODULE_ENDPOINTS[fileName]
-        if not endpoint then
-            return nil, "[Loader] Missing module endpoint: " .. fileName
-        end
-
-        local url = "https://bitter-bonus-bb8e.gamerabood26.workers.dev" .. endpoint
+        local url = BASE_URL .. fileName .. "?v=" .. CACHE_BUST
 
         local ok, result = pcall(function()
             return game:HttpGet(url)
