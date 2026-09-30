@@ -6,6 +6,7 @@
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local CACHE_BUST = tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
+local LOADER_VERSION = "2026-09-30-ARCANE-2"
 
 
 -------------------------------------------------
@@ -250,13 +251,14 @@ local ALLOWED_GAMES = {
 -------------------------------------------------
 
 local function getAllowedGame()
-    local currentGameId = game.GameId
-    local currentPlaceId = game.PlaceId
+    local currentGameId = tonumber(game.GameId)
+    local currentPlaceId = tonumber(game.PlaceId)
 
     for _, entry in ipairs(ALLOWED_GAMES) do
-        if currentGameId == entry.GameId
-            or (entry.PlaceIds and entry.PlaceIds[currentPlaceId] == true) then
+        local entryGameId = tonumber(entry.GameId)
 
+        -- A nil PlaceIds means the whole Roblox universe is supported.
+        if entryGameId and currentGameId == entryGameId then
             if entry.PlaceIds == nil then
                 return entry
             end
@@ -264,8 +266,11 @@ local function getAllowedGame()
             if entry.PlaceIds[currentPlaceId] == true then
                 return entry
             end
+        end
 
-            return nil
+        -- Place-specific fallback.
+        if entry.PlaceIds and entry.PlaceIds[currentPlaceId] == true then
+            return entry
         end
     end
 
@@ -275,6 +280,7 @@ end
 local allowedGame = getAllowedGame()
 
 if not allowedGame then
+    debugLog("Loader version: " .. LOADER_VERSION)
     debugLog("SolarHub is not supported in this game/place.")
     debugLog("GameId (UniverseId): " .. tostring(game.GameId))
     debugLog("PlaceId: " .. tostring(game.PlaceId))
@@ -296,7 +302,8 @@ if not allowedGame then
     return
 end
 
-debugLog("Supported game detected: " .. tostring(allowedGame.Name))
+debugLog("Loader version: " .. LOADER_VERSION)
+    debugLog("Supported game detected: " .. tostring(allowedGame.Name))
 debugLog("GameId (UniverseId): " .. tostring(game.GameId))
 debugLog("PlaceId: " .. tostring(game.PlaceId))
 
