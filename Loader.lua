@@ -4,7 +4,7 @@
 -- to become available, then fetches/compiles all modules, and only after that
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
--- Module sources are injected by the SolarHub Cloudflare Worker.
+-- Module sources are served separately by the SolarHub Cloudflare Worker.
 -- The public loader endpoint is the only URL clients need to know.
 local MODULE_ENDPOINTS = {
     ["Shared.lua"] = "/m/1",
@@ -272,7 +272,7 @@ task.spawn(function()
     
     -------------------------------------------------
     -- COLLECT
-    -- Cloudflare keeps the module files private and serves them one at a time.
+    -- Cloudflare serves each module through a short-lived, signed endpoint.
     local moduleSources = {}
 
     local function fetchModule(fileName)
