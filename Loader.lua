@@ -239,9 +239,9 @@ local ALLOWED_GAMES = {
     {
         Name = "Arcane Odyssey",
         GameId = 1180269832,
-        PlaceIds = {
-            [3272915504] = true,
-        },
+        -- Arcane Odyssey uses multiple places inside the same universe.
+        -- Match the Universe/GameId so all supported Arcane places are allowed.
+        PlaceIds = nil,
     },
 }
 
