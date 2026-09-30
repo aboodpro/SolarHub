@@ -568,7 +568,6 @@ task.spawn(function()
 
     if allowedGame.Name == "Arcane Odyssey" then
         moduleLoadOrder = {
-            "Shared.lua",
             "UI.lua",
             "Arcane.lua",
         }
@@ -681,26 +680,58 @@ task.spawn(function()
         return result
     end
     
-    setLoadingStatus("Starting SolarHub...")
-    print("[Loader] Loading Shared...")
-    local Shared = runModule("Shared", function()
-        return compiled.Shared()
-    end)
-    if not Shared then return end
-    
+    local Shared
+
+    -- Arcane Odyssey has a separate lightweight client context.
+    -- Do not initialize the Anime Expeditions Shared module here.
+    if allowedGame.Name == "Arcane Odyssey" then
+        setLoadingStatus("Starting Arcane Odyssey...")
+        print("[Loader] Building Arcane context...")
+
+        local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
+        Shared = {
+            Players = Players,
+            UserInputService = game:GetService("UserInputService"),
+            HttpService = game:GetService("HttpService"),
+            RunService = game:GetService("RunService"),
+            ReplicatedStorage = game:GetService("ReplicatedStorage"),
+            Lighting = game:GetService("Lighting"),
+            player = player,
+            playerGui = player:WaitForChild("PlayerGui"),
+            Config = {
+                ArcaneBossESP = false,
+            },
+            IsArcaneOdyssey = true,
+        }
+    else
+        setLoadingStatus("Starting SolarHub...")
+        print("[Loader] Loading Shared...")
+        Shared = runModule("Shared", function()
+            return compiled.Shared()
+        end)
+
+        if not Shared then
+            return
+        end
+    end
+
     setLoadingStatus("Building interface...")
     print("[Loader] Loading UI...")
     local UI = runModule("UI.Init", function()
         local UIModule = compiled.UI()
         return UIModule.Init(Shared)
     end)
-    if not UI then return end
 
-    -- Arcane Odyssey uses its own feature module. Do not initialize
-    -- Anime Expeditions Joiner/Macro/Webhook systems in Arcane.
+    if not UI then
+        return
+    end
+
+    -- Arcane Odyssey uses only its dedicated feature module.
     if allowedGame.Name == "Arcane Odyssey" then
         setLoadingStatus("Starting Arcane Odyssey...")
         print("[Loader] Loading Arcane...")
+
         local Arcane = runModule("Arcane.Init", function()
             local ArcaneModule = compiled.Arcane()
             return ArcaneModule.Init(Shared, UI)
