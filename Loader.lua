@@ -12,6 +12,7 @@ local MODULE_ENDPOINTS = {
     ["Joiner.lua"] = "/m/3",
     ["Macro.lua"] = "/m/4",
     ["Webhook.lua"] = "/m/5",
+    ["Arcane.lua"] = "/m/6",
 }
 -------------------------------------------------
 -- ALLOWED GAMES
@@ -23,6 +24,13 @@ local ALLOWED_GAMES = {
         GameId = 7613921865,
         PlaceIds = {
             [84515722934860] = true,
+        },
+    },
+    {
+        Name = "Arcane Odyssey",
+        GameId = 1180269832,
+        PlaceIds = {
+            [3272915504] = true,
         },
     },
 }
@@ -304,6 +312,7 @@ task.spawn(function()
         "Joiner.lua",
         "Macro.lua",
         "Webhook.lua",
+        "Arcane.lua",
     }) do
         setLoadingStatus("Loading " .. fileName .. "...")
         print("[Loader] Fetching " .. fileName .. "...")
@@ -354,6 +363,7 @@ task.spawn(function()
         "Joiner.lua",
         "Macro.lua",
         "Webhook.lua",
+        "Arcane.lua",
     }) do
         local label = fileName:gsub("%.lua$", "")
         local chunk, compileError = compile(fileName)
@@ -403,6 +413,26 @@ task.spawn(function()
         return UIModule.Init(Shared)
     end)
     if not UI then return end
+
+    -- Arcane Odyssey uses its own feature module. Do not initialize
+    -- Anime Expeditions Joiner/Macro/Webhook systems in Arcane.
+    if allowedGame.Name == "Arcane Odyssey" then
+        setLoadingStatus("Starting Arcane Odyssey...")
+        print("[Loader] Loading Arcane...")
+        local Arcane = runModule("Arcane.Init", function()
+            local ArcaneModule = compiled.Arcane()
+            return ArcaneModule.Init(Shared, UI)
+        end)
+
+        if Arcane then
+            setLoadingStatus("SolarHub ready")
+        else
+            setLoadingStatus("Arcane failed to initialize")
+        end
+
+        task.spawn(finishLoadingScreen)
+        return
+    end
     
     setLoadingStatus("Connecting game systems...")
     print("[Loader] Loading Joiner...")
