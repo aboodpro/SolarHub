@@ -6,6 +6,224 @@
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local CACHE_BUST = tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
+
+
+-------------------------------------------------
+-- DEBUG / DIAGNOSTICS
+-------------------------------------------------
+
+local DEBUG_LINES = {}
+local MAX_DEBUG_LINES = 250
+
+local function debugLog(message)
+    local line = "[Loader] " .. tostring(message)
+    table.insert(DEBUG_LINES, line)
+
+    if #DEBUG_LINES > MAX_DEBUG_LINES then
+        table.remove(DEBUG_LINES, 1)
+    end
+
+    print(line)
+end
+
+pcall(function()
+    local LogService = game:GetService("LogService")
+
+    LogService.MessageOut:Connect(function(message, messageType)
+        if messageType == Enum.MessageType.MessageWarning
+            or messageType == Enum.MessageType.MessageError then
+
+            if tostring(message):find("[Loader]", 1, true)
+                or tostring(message):find("SolarHub", 1, true) then
+
+                table.insert(DEBUG_LINES, tostring(message))
+
+                if #DEBUG_LINES > MAX_DEBUG_LINES then
+                    table.remove(DEBUG_LINES, 1)
+                end
+            end
+        end
+    end)
+end)
+
+local function getDebugText()
+    local lines = {
+        "SolarHub Debug",
+        "==============================",
+        "PlaceId: " .. tostring(game.PlaceId),
+        "GameId (UniverseId): " .. tostring(game.GameId),
+        "JobId: " .. tostring(game.JobId),
+        "GameLoaded: " .. tostring(game:IsLoaded()),
+    }
+
+    local ok, info = pcall(function()
+        return game:GetService("MarketplaceService"):GetProductInfo(
+            game.PlaceId,
+            Enum.InfoType.Asset
+        )
+    end)
+
+    if ok and info then
+        table.insert(lines, "PlaceName: " .. tostring(info.Name))
+    else
+        table.insert(lines, "PlaceName: <unavailable>")
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, "Logs:")
+    table.insert(lines, "------------------------------")
+
+    if #DEBUG_LINES == 0 then
+        table.insert(lines, "<no loader logs captured>")
+    else
+        for _, line in ipairs(DEBUG_LINES) do
+            table.insert(lines, line)
+        end
+    end
+
+    return table.concat(lines, "\n")
+end
+
+local function showDebugUI()
+    local Players = game:GetService("Players")
+    local player = Players.LocalPlayer
+
+    if not player then
+        player = Players.PlayerAdded:Wait()
+    end
+
+    local playerGui = player:WaitForChild("PlayerGui")
+
+    pcall(function()
+        local old = playerGui:FindFirstChild("SolarHubDebug")
+        if old then
+            old:Destroy()
+        end
+    end)
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "SolarHubDebug"
+    gui.ResetOnSpawn = false
+    gui.DisplayOrder = 2147483647
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = playerGui
+
+    local toggle = Instance.new("TextButton")
+    toggle.Name = "DebugToggle"
+    toggle.AnchorPoint = Vector2.new(1, 0)
+    toggle.Position = UDim2.new(1, -20, 0, 20)
+    toggle.Size = UDim2.fromOffset(90, 36)
+    toggle.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+    toggle.BorderSizePixel = 0
+    toggle.Text = "DEBUG"
+    toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggle.Font = Enum.Font.GothamBold
+    toggle.TextSize = 12
+    toggle.Parent = gui
+    Instance.new("UICorner", toggle).CornerRadius = UDim.new(0, 8)
+
+    local panel = Instance.new("Frame")
+    panel.Name = "DebugPanel"
+    panel.AnchorPoint = Vector2.new(0.5, 0.5)
+    panel.Position = UDim2.fromScale(0.5, 0.5)
+    panel.Size = UDim2.fromOffset(760, 520)
+    panel.BackgroundColor3 = Color3.fromRGB(15, 15, 19)
+    panel.BorderSizePixel = 0
+    panel.Visible = true
+    panel.Parent = gui
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+
+    local title = Instance.new("TextLabel")
+    title.BackgroundTransparency = 1
+    title.Position = UDim2.fromOffset(16, 10)
+    title.Size = UDim2.new(1, -210, 0, 34)
+    title.Text = "SolarHub Debug"
+    title.TextColor3 = Color3.fromRGB(245, 245, 250)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 18
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = panel
+
+    local copy = Instance.new("TextButton")
+    copy.Size = UDim2.fromOffset(70, 30)
+    copy.Position = UDim2.new(1, -150, 0, 12)
+    copy.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    copy.BorderSizePixel = 0
+    copy.Text = "COPY"
+    copy.TextColor3 = Color3.fromRGB(255, 255, 255)
+    copy.Font = Enum.Font.GothamBold
+    copy.TextSize = 10
+    copy.Parent = panel
+    Instance.new("UICorner", copy).CornerRadius = UDim.new(0, 7)
+
+    local close = Instance.new("TextButton")
+    close.Size = UDim2.fromOffset(60, 30)
+    close.Position = UDim2.new(1, -72, 0, 12)
+    close.BackgroundColor3 = Color3.fromRGB(70, 35, 35)
+    close.BorderSizePixel = 0
+    close.Text = "X"
+    close.TextColor3 = Color3.fromRGB(255, 255, 255)
+    close.Font = Enum.Font.GothamBold
+    close.TextSize = 12
+    close.Parent = panel
+    Instance.new("UICorner", close).CornerRadius = UDim.new(0, 7)
+
+    local box = Instance.new("TextBox")
+    box.Position = UDim2.fromOffset(14, 54)
+    box.Size = UDim2.new(1, -28, 1, -68)
+    box.BackgroundColor3 = Color3.fromRGB(8, 8, 11)
+    box.BorderSizePixel = 0
+    box.ClearTextOnFocus = false
+    box.MultiLine = true
+    box.TextEditable = false
+    box.TextWrapped = false
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    box.TextYAlignment = Enum.TextYAlignment.Top
+    box.Font = Enum.Font.Code
+    box.TextSize = 12
+    box.TextColor3 = Color3.fromRGB(225, 225, 230)
+    box.Text = getDebugText()
+    box.Parent = panel
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+
+    local function refresh()
+        box.Text = getDebugText()
+    end
+
+    toggle.Activated:Connect(function()
+        refresh()
+        panel.Visible = not panel.Visible
+    end)
+
+    close.Activated:Connect(function()
+        panel.Visible = false
+    end)
+
+    copy.Activated:Connect(function()
+        refresh()
+
+        local success = false
+
+        if type(setclipboard) == "function" then
+            success = pcall(function()
+                setclipboard(box.Text)
+            end)
+        elseif type(toclipboard) == "function" then
+            success = pcall(function()
+                toclipboard(box.Text)
+            end)
+        end
+
+        copy.Text = success and "COPIED" or "COPY FAIL"
+
+        task.delay(1.2, function()
+            if copy and copy.Parent then
+                copy.Text = "COPY"
+            end
+        end)
+    end)
+end
+
 -------------------------------------------------
 -- ALLOWED GAMES
 -------------------------------------------------
@@ -57,11 +275,30 @@ end
 local allowedGame = getAllowedGame()
 
 if not allowedGame then
-    warn("[Loader] SolarHub is not supported in this game/place.")
-    warn("[Loader] GameId: " .. tostring(game.GameId))
-    warn("[Loader] PlaceId: " .. tostring(game.PlaceId))
+    debugLog("SolarHub is not supported in this game/place.")
+    debugLog("GameId (UniverseId): " .. tostring(game.GameId))
+    debugLog("PlaceId: " .. tostring(game.PlaceId))
+
+    local ok, info = pcall(function()
+        return game:GetService("MarketplaceService"):GetProductInfo(
+            game.PlaceId,
+            Enum.InfoType.Asset
+        )
+    end)
+
+    if ok and info then
+        debugLog("PlaceName: " .. tostring(info.Name))
+    else
+        debugLog("PlaceName: <unavailable>")
+    end
+
+    showDebugUI()
     return
 end
+
+debugLog("Supported game detected: " .. tostring(allowedGame.Name))
+debugLog("GameId (UniverseId): " .. tostring(game.GameId))
+debugLog("PlaceId: " .. tostring(game.PlaceId))
 
 -------------------------------------------------
 -- PROFESSIONAL LOADING SCREEN
@@ -278,11 +515,14 @@ task.spawn(function()
     local function fetchModule(fileName)
         local url = BASE_URL .. fileName .. "?v=" .. CACHE_BUST
 
+        debugLog("Fetching " .. fileName .. " from GitHub")
+
         local ok, result = pcall(function()
             return game:HttpGet(url)
         end)
 
         if not ok then
+            debugLog("Failed to fetch " .. fileName .. ": " .. tostring(result))
             return nil, "[Loader] Failed to fetch " .. fileName .. ": " .. tostring(result)
         end
 
