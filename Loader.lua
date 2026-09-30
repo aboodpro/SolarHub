@@ -467,8 +467,8 @@ task.spawn(function()
     -- PREPARATION
     -------------------------------------------------
     
-    local PREP_MIN_SECONDS = 4
-    local PREP_TIMEOUT_SECONDS = 25
+    local PREP_MIN_SECONDS = allowedGame.Name == "Arcane Odyssey" and 0.5 or 4
+    local PREP_TIMEOUT_SECONDS = allowedGame.Name == "Arcane Odyssey" and 5 or 25
 
     local function isCurrentSession()
         if type(getgenv) ~= "function" then
@@ -511,12 +511,20 @@ task.spawn(function()
         pcall(function()
             loaded = game:IsLoaded()
         end)
-    
+
         local player = game:GetService("Players").LocalPlayer
         local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
+
+        -- Arcane Odyssey does not need the Anime Expeditions RemoteEvents/ReplicaClient.
+        if allowedGame.Name == "Arcane Odyssey" then
+            return loaded
+                and player ~= nil
+                and playerGui ~= nil
+        end
+
         local remoteEvents = getRemoteEvents()
         local replicaClient = getReplicaClientModule()
-    
+
         return loaded
             and player ~= nil
             and playerGui ~= nil
