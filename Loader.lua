@@ -4,8 +4,15 @@
 -- to become available, then fetches/compiles all modules, and only after that
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
-local BASE_URL = "https://bitter-bonus-bb8e.gamerabood26.workers.dev/raw/"
-local CACHE_BUST = tostring(os.time()) .. "_" .. tostring(math.random(100000, 999999))
+-- Module sources are injected by the SolarHub Cloudflare Worker.
+-- The public loader endpoint is the only URL clients need to know.
+local EMBEDDED_MODULES = {
+    ["Shared.lua"] = "__SOLARHUB_SHARED__",
+    ["UI.lua"] = "__SOLARHUB_UI__",
+    ["Joiner.lua"] = "__SOLARHUB_JOINER__",
+    ["Macro.lua"] = "__SOLARHUB_MACRO__",
+    ["Webhook.lua"] = "__SOLARHUB_WEBHOOK__",
+}
 
 -------------------------------------------------
 -- ALLOWED GAMES
@@ -268,23 +275,8 @@ task.spawn(function()
     -- COLLECT
     -------------------------------------------------
     
-    local function fetchSource(fileName)
-        local ok, result = pcall(function()
-            local url = BASE_URL .. fileName .. "?solarhub_version=" .. CACHE_BUST
-            return game:HttpGet(url)
-        end)
-    
-        if not ok then
-            error("[Loader] FAILED to fetch " .. fileName .. ": " .. tostring(result))
-        end
-    
-        if type(result) ~= "string" or result == "" then
-            error("[Loader] FAILED to fetch " .. fileName .. ": empty response")
-        end
-    
-        return result
-    end
-    
+    -- Cloudflare injects the private module sources into these placeholders
+    -- before returning Loader.lua to the client.
     local moduleSources = {}
     
     for _, fileName in ipairs({
@@ -295,8 +287,16 @@ task.spawn(function()
         "Webhook.lua",
     }) do
         setLoadingStatus("Loading " .. fileName .. "...")
-        print("[Loader] Collecting " .. fileName .. "...")
-        moduleSources[fileName] = fetchSource(fileName)
+        print("[Loader] Loading embedded " .. fileName .. "...")
+        local source = EMBEDDED_MODULES[fileName]
+    
+        if type(source) ~= "string"
+            or source == ""
+            or source:sub(1, 2) == "__" then
+            error("[Loader] FAILED to receive embedded " .. fileName)
+        end
+    
+        moduleSources[fileName] = source
     end
     
     -------------------------------------------------
