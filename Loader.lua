@@ -6,14 +6,13 @@
 
 -- Module sources are injected by the SolarHub Cloudflare Worker.
 -- The public loader endpoint is the only URL clients need to know.
-local EMBEDDED_MODULES = {
-    ["Shared.lua"] = "__SOLARHUB_SHARED__",
-    ["UI.lua"] = "__SOLARHUB_UI__",
-    ["Joiner.lua"] = "__SOLARHUB_JOINER__",
-    ["Macro.lua"] = "__SOLARHUB_MACRO__",
-    ["Webhook.lua"] = "__SOLARHUB_WEBHOOK__",
+local MODULE_ENDPOINTS = {
+    ["Shared.lua"] = "/m/1",
+    ["UI.lua"] = "/m/2",
+    ["Joiner.lua"] = "/m/3",
+    ["Macro.lua"] = "/m/4",
+    ["Webhook.lua"] = "/m/5",
 }
-
 -------------------------------------------------
 -- ALLOWED GAMES
 -------------------------------------------------
@@ -273,12 +272,32 @@ task.spawn(function()
     
     -------------------------------------------------
     -- COLLECT
-    -------------------------------------------------
-    
-    -- Cloudflare injects the private module sources into these placeholders
-    -- before returning Loader.lua to the client.
+    -- Cloudflare keeps the module files private and serves them one at a time.
     local moduleSources = {}
-    
+
+    local function fetchModule(fileName)
+        local endpoint = MODULE_ENDPOINTS[fileName]
+        if not endpoint then
+            return nil, "[Loader] Missing module endpoint: " .. fileName
+        end
+
+        local url = "https://bitter-bonus-bb8e.gamerabood26.workers.dev" .. endpoint
+
+        local ok, result = pcall(function()
+            return game:HttpGet(url)
+        end)
+
+        if not ok then
+            return nil, "[Loader] Failed to fetch " .. fileName .. ": " .. tostring(result)
+        end
+
+        if type(result) ~= "string" or result == "" then
+            return nil, "[Loader] Empty response for " .. fileName
+        end
+
+        return result, nil
+    end
+
     for _, fileName in ipairs({
         "Shared.lua",
         "UI.lua",
@@ -287,18 +306,19 @@ task.spawn(function()
         "Webhook.lua",
     }) do
         setLoadingStatus("Loading " .. fileName .. "...")
-        print("[Loader] Loading embedded " .. fileName .. "...")
-        local source = EMBEDDED_MODULES[fileName]
-    
-        if type(source) ~= "string"
-            or source == ""
-            or source:sub(1, 2) == "__" then
-            error("[Loader] FAILED to receive embedded " .. fileName)
+        print("[Loader] Fetching " .. fileName .. "...")
+
+        local source, fetchError = fetchModule(fileName)
+
+        if not source then
+            setLoadingStatus(fileName .. " load error")
+            warn(fetchError)
+            return
         end
-    
+
         moduleSources[fileName] = source
     end
-    
+
     -------------------------------------------------
     -- COMPILE / PREPARE
     -------------------------------------------------
