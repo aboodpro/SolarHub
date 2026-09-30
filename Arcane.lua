@@ -6,7 +6,7 @@ local Arcane = {}
 -------------------------------------------------
 
 local BOSS_NAMES = {
-    -- Story bosses
+    -- Bronze Sea / story
     "Shura",
     "Iris",
     "Lord Elius",
@@ -14,9 +14,12 @@ local BOSS_NAMES = {
     "Lady Carina",
     "King Calvus",
     "King Calvus IV",
+
+    -- Nimbus / story
     "Prince Revon",
     "Captain Maria",
     "Prince Allanon",
+    "Allanon",
     "Jarl Ivar",
 
     -- Side bosses
@@ -25,9 +28,10 @@ local BOSS_NAMES = {
     "Ormolu",
     "Hallbjorn",
     "King Caesar",
-    "Leviathan",
 
-    -- Other boss / strong boss encounters
+    -- Sea / other boss encounters
+    "Leviathan",
+    "Kraken",
     "Commodore Kai",
     "Architect Merlot",
     "Alpha",
@@ -36,7 +40,7 @@ local BOSS_NAMES = {
 }
 
 local function normalizeName(value)
-    return tostring(value):lower():gsub("[^%w]+", "")
+    return tostring(value or ""):lower():gsub("[^%w]+", "")
 end
 
 local NORMALIZED_BOSSES = {}
@@ -78,13 +82,19 @@ local function findBossNameFromValue(value)
 end
 
 local function getBossDisplayName(model)
-    -- Name is the fastest/common path.
     local byName = findBossNameFromValue(model.Name)
     if byName then
         return byName
     end
 
-    -- Some game revisions expose a title/display attribute instead.
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        local byHumanoidDisplayName = findBossNameFromValue(humanoid.DisplayName)
+        if byHumanoidDisplayName then
+            return byHumanoidDisplayName
+        end
+    end
+
     for _, attributeName in ipairs({
         "BossName",
         "DisplayName",
@@ -99,6 +109,32 @@ local function getBossDisplayName(model)
     end
 
     return nil
+end
+
+local function hasBossTag(model)
+    local CollectionService = game:GetService("CollectionService")
+
+    local ok, tags = pcall(function()
+        return CollectionService:GetTags(model)
+    end)
+
+    if not ok or type(tags) ~= "table" then
+        return false
+    end
+
+    for _, tag in ipairs(tags) do
+        local normalized = normalizeName(tag)
+
+        if normalized == "boss"
+            or normalized == "bossnpc"
+            or normalized == "bossmodel"
+            or normalized:find("boss", 1, true) then
+
+            return true
+        end
+    end
+
+    return false
 end
 
 local function hasBossMarker(model)
@@ -119,12 +155,25 @@ local function hasBossMarker(model)
         end
     end
 
+    if hasBossTag(model) then
+        return true
+    end
+
     local parent = model.Parent
-    if parent and parent:IsA("Folder") then
-        local parentName = normalizeName(parent.Name)
-        if parentName == "bosses" or parentName == "boss" then
-            return true
+
+    while parent and parent ~= workspace do
+        if parent:IsA("Folder") then
+            local parentName = normalizeName(parent.Name)
+
+            if parentName == "bosses"
+                or parentName == "boss"
+                or parentName:find("boss", 1, true) then
+
+                return true
+            end
         end
+
+        parent = parent.Parent
     end
 
     return false
@@ -157,6 +206,355 @@ local function getBossInfo(model)
 end
 
 -------------------------------------------------
+-- DEBUG SCANNER
+-------------------------------------------------
+
+local DEBUG_KEYWORDS = {
+    "boss",
+    "enemy",
+    "npc",
+    "mob",
+    "elite",
+    "miniboss",
+    "spawn",
+    "ai",
+    "health",
+}
+
+local function containsKeyword(value)
+    local normalized = normalizeName(value)
+
+    for _, keyword in ipairs(DEBUG_KEYWORDS) do
+        if normalized:find(keyword, 1, true) then
+            return keyword
+        end
+    end
+
+    return nil
+end
+
+local function getAttributeSummary(instance)
+    local ok, attributes = pcall(function()
+        return instance:GetAttributes()
+    end)
+
+    if not ok or type(attributes) ~= "table" then
+        return ""
+    end
+
+    local parts = {}
+
+    for key, value in pairs(attributes) do
+        local keyLower = tostring(key):lower()
+
+        if keyLower:find("boss", 1, true)
+            or keyLower:find("name", 1, true)
+            or keyLower:find("type", 1, true)
+            or keyLower:find("enemy", 1, true)
+            or keyLower:find("npc", 1, true) then
+
+            table.insert(parts, ("%s=%s"):format(
+                tostring(key),
+                tostring(value)
+            ))
+        end
+    end
+
+    table.sort(parts)
+
+    return table.concat(parts, ", ")
+end
+
+local function appendLimited(list, value, limit)
+    if #list < limit then
+        table.insert(list, value)
+        return true
+    end
+
+    return false
+end
+
+local function runDebugScan(setText)
+    task.spawn(function()
+        setText("Scanning Arcane client objects...\nThis is a one-time scan.")
+
+        local results = {
+            knownBosses = {},
+            bossMarkers = {},
+            suspiciousModels = {},
+            highHpModels = {},
+            bossFolders = {},
+            scripts = {},
+            remotes = {},
+            humanoidCount = 0,
+            modelCount = 0,
+            scannedCount = 0,
+        }
+
+        local seenKnown = {}
+        local seenMarker = {}
+        local seenSuspicious = {}
+        local seenHighHp = {}
+
+        local containers = {
+            workspace,
+            game:GetService("ReplicatedStorage"),
+            game:GetService("ReplicatedFirst"),
+        }
+
+        for _, container in ipairs(containers) do
+            local descendants = container:GetDescendants()
+
+            for _, instance in ipairs(descendants) do
+                results.scannedCount += 1
+
+                if instance:IsA("Model") then
+                    results.modelCount += 1
+
+                    local humanoid = instance:FindFirstChildOfClass("Humanoid")
+
+                    if humanoid then
+                        results.humanoidCount += 1
+
+                        local info = getBossInfo(instance)
+
+                        if info and not seenKnown[instance] then
+                            seenKnown[instance] = true
+
+                            appendLimited(
+                                results.knownBosses,
+                                ("%s | HP %d/%d | %s"):format(
+                                    tostring(info.name),
+                                    math.floor(humanoid.Health),
+                                    math.floor(humanoid.MaxHealth),
+                                    instance:GetFullName()
+                                ),
+                                100
+                            )
+                        end
+
+                        if hasBossMarker(instance) and not seenMarker[instance] then
+                            seenMarker[instance] = true
+
+                            appendLimited(
+                                results.bossMarkers,
+                                ("%s | attrs: %s | %s"):format(
+                                    instance.Name,
+                                    getAttributeSummary(instance),
+                                    instance:GetFullName()
+                                ),
+                                100
+                            )
+                        end
+
+                        local keyword = containsKeyword(instance.Name)
+
+                        if keyword and not seenSuspicious[instance] then
+                            seenSuspicious[instance] = true
+
+                            appendLimited(
+                                results.suspiciousModels,
+                                ("%s | keyword=%s | HP %d/%d | %s"):format(
+                                    instance.Name,
+                                    keyword,
+                                    math.floor(humanoid.Health),
+                                    math.floor(humanoid.MaxHealth),
+                                    instance:GetFullName()
+                                ),
+                                150
+                            )
+                        end
+
+                        if humanoid.MaxHealth >= 1000 and not seenHighHp[instance] then
+                            seenHighHp[instance] = true
+
+                            appendLimited(
+                                results.highHpModels,
+                                ("%s | HP %d/%d | %s"):format(
+                                    instance.Name,
+                                    math.floor(humanoid.Health),
+                                    math.floor(humanoid.MaxHealth),
+                                    instance:GetFullName()
+                                ),
+                                60
+                            )
+                        end
+                    end
+                end
+
+                if instance:IsA("Folder") then
+                    local keyword = containsKeyword(instance.Name)
+
+                    if keyword and (
+                        normalizeName(instance.Name) == "boss"
+                        or normalizeName(instance.Name) == "bosses"
+                        or keyword == "boss"
+                    ) then
+                        appendLimited(
+                            results.bossFolders,
+                            instance:GetFullName(),
+                            80
+                        )
+                    end
+                end
+
+                if instance:IsA("ModuleScript")
+                    or instance:IsA("LocalScript")
+                    or instance:IsA("Script") then
+
+                    local keyword = containsKeyword(instance.Name)
+
+                    if keyword then
+                        appendLimited(
+                            results.scripts,
+                            ("%s | keyword=%s"):format(
+                                instance:GetFullName(),
+                                keyword
+                            ),
+                            120
+                        )
+                    end
+                end
+
+                if instance:IsA("RemoteEvent")
+                    or instance:IsA("RemoteFunction") then
+
+                    local keyword = containsKeyword(instance.Name)
+
+                    if keyword then
+                        appendLimited(
+                            results.remotes,
+                            ("%s | %s | keyword=%s"):format(
+                                instance:GetFullName(),
+                                instance.ClassName,
+                                keyword
+                            ),
+                            120
+                        )
+                    end
+                end
+
+                if results.scannedCount % 250 == 0 then
+                    setText(("Scanning... %d objects"):format(results.scannedCount))
+                    task.wait()
+                end
+            end
+        end
+
+        table.sort(results.highHpModels, function(a, b)
+            local aHp = tonumber(a:match("HP %d+/(%d+)")) or 0
+            local bHp = tonumber(b:match("HP %d+/(%d+)")) or 0
+            return aHp > bHp
+        end)
+
+        local lines = {
+            "ARCANE BOSS DEBUG",
+            "==============================",
+            ("Scanned objects: %d"):format(results.scannedCount),
+            ("Models: %d"):format(results.modelCount),
+            ("Models with Humanoid: %d"):format(results.humanoidCount),
+            "",
+            ("KNOWN BOSS DETECTIONS (%d):"):format(#results.knownBosses),
+        }
+
+        if #results.knownBosses == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.knownBosses) do
+                table.insert(lines, line)
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, ("BOSS MARKERS / TAGS / FOLDERS (%d):"):format(#results.bossMarkers))
+
+        if #results.bossMarkers == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.bossMarkers) do
+                table.insert(lines, line)
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, ("SUSPICIOUS HUMANOIDS (%d):"):format(#results.suspiciousModels))
+
+        if #results.suspiciousModels == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.suspiciousModels) do
+                table.insert(lines, line)
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, ("HIGH HP HUMANOIDS (>=1000) (%d):"):format(#results.highHpModels))
+
+        if #results.highHpModels == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.highHpModels) do
+                table.insert(lines, line)
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, ("BOSS FOLDERS (%d):"):format(#results.bossFolders))
+
+        if #results.bossFolders == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.bossFolders) do
+                table.insert(lines, line)
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, ("SCRIPTS / MODULES MATCHING BOSS/NPC/AI (%d):"):format(#results.scripts))
+
+        if #results.scripts == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.scripts) do
+                table.insert(lines, line)
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, ("REMOTES MATCHING BOSS/NPC/AI (%d):"):format(#results.remotes))
+
+        if #results.remotes == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.remotes) do
+                table.insert(lines, line)
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, "NOTE:")
+        table.insert(lines, "Client-side scans can only see objects replicated to the client.")
+        table.insert(lines, "ServerStorage / ServerScriptService server-only contents will not appear here.")
+
+        local finalText = table.concat(lines, "\n")
+        setText(finalText)
+
+        if type(setclipboard) == "function" then
+            pcall(function()
+                setclipboard(finalText)
+            end)
+        elseif type(toclipboard) == "function" then
+            pcall(function()
+                toclipboard(finalText)
+            end)
+        end
+
+        print("[Arcane] Boss debug scan finished.")
+        print(finalText)
+    end)
+end
+
+-------------------------------------------------
 -- ESP
 -------------------------------------------------
 
@@ -166,13 +564,13 @@ function Arcane.Init(Shared, UI)
     local tabButtons = UI.tabButtons or {}
 
     Config.ArcaneBossESP = Config.ArcaneBossESP == true
+    Config.ArcaneBossDebug = Config.ArcaneBossDebug == true
 
     local miscTab = tabs["Misc"]
     if not miscTab then
         error("[Arcane] Misc tab is missing.")
     end
 
-    -- Arcane only needs the Misc tab.
     for name, tab in pairs(tabs) do
         tab.Visible = (name == "Misc")
         tab.CanvasPosition = Vector2.zero
@@ -185,7 +583,7 @@ function Arcane.Init(Shared, UI)
     local section = UI.createSection(
         miscTab,
         "Arcane Odyssey",
-        120
+        330
     )
 
     UI.createToggle(
@@ -195,6 +593,115 @@ function Arcane.Init(Shared, UI)
         "ArcaneBossESP",
         32
     )
+
+    UI.createToggle(
+        section,
+        "Boss Debug",
+        "Shows detection information and discovery results.",
+        "ArcaneBossDebug",
+        80
+    )
+
+    local scanButton = Instance.new("TextButton")
+    scanButton.Size = UDim2.new(1, -16, 0, 34)
+    scanButton.Position = UDim2.fromOffset(8, 124)
+    scanButton.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
+    scanButton.BorderSizePixel = 0
+    scanButton.Text = "SCAN BOSS STRUCTURE"
+    scanButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+    scanButton.Font = Enum.Font.GothamBold
+    scanButton.TextSize = 10
+    scanButton.Parent = section
+    Instance.new("UICorner", scanButton).CornerRadius = UDim.new(0, 8)
+
+    local copyButton = Instance.new("TextButton")
+    copyButton.Size = UDim2.fromOffset(70, 24)
+    copyButton.Position = UDim2.new(1, -78, 0, 166)
+    copyButton.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    copyButton.BorderSizePixel = 0
+    copyButton.Text = "COPY"
+    copyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    copyButton.Font = Enum.Font.GothamBold
+    copyButton.TextSize = 9
+    copyButton.Parent = section
+    Instance.new("UICorner", copyButton).CornerRadius = UDim.new(0, 6)
+
+    local debugBox = Instance.new("TextBox")
+    debugBox.Position = UDim2.fromOffset(8, 195)
+    debugBox.Size = UDim2.new(1, -16, 0, 125)
+    debugBox.BackgroundColor3 = Color3.fromRGB(8, 8, 11)
+    debugBox.BorderSizePixel = 0
+    debugBox.ClearTextOnFocus = false
+    debugBox.MultiLine = true
+    debugBox.TextEditable = false
+    debugBox.TextWrapped = false
+    debugBox.TextXAlignment = Enum.TextXAlignment.Left
+    debugBox.TextYAlignment = Enum.TextYAlignment.Top
+    debugBox.Font = Enum.Font.Code
+    debugBox.TextSize = 9
+    debugBox.TextColor3 = Color3.fromRGB(220, 220, 225)
+    debugBox.Text = "Ready. Press SCAN BOSS STRUCTURE."
+    debugBox.Parent = section
+    Instance.new("UICorner", debugBox).CornerRadius = UDim.new(0, 7)
+
+    local lastScanText = debugBox.Text
+
+    local function setDebugText(text)
+        lastScanText = tostring(text)
+        debugBox.Text = lastScanText
+    end
+
+    scanButton.Activated:Connect(function()
+        if scanButton.Text == "SCANNING..." then
+            return
+        end
+
+        scanButton.Text = "SCANNING..."
+        runDebugScan(setDebugText)
+
+        task.delay(0.2, function()
+            while scanButton and scanButton.Parent and debugBox.Text:find("Scanning", 1, true) do
+                task.wait(0.2)
+            end
+
+            if scanButton and scanButton.Parent then
+                scanButton.Text = "SCAN BOSS STRUCTURE"
+            end
+        end)
+    end)
+
+    copyButton.Activated:Connect(function()
+        local success = false
+
+        if type(setclipboard) == "function" then
+            success = pcall(function()
+                setclipboard(lastScanText)
+            end)
+        elseif type(toclipboard) == "function" then
+            success = pcall(function()
+                toclipboard(lastScanText)
+            end)
+        end
+
+        copyButton.Text = success and "COPIED" or "COPY FAIL"
+
+        task.delay(1.2, function()
+            if copyButton and copyButton.Parent then
+                copyButton.Text = "COPY"
+            end
+        end)
+    end)
+
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -90, 0, 24)
+    statusLabel.Position = UDim2.fromOffset(8, 166)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "ESP: waiting for boss models..."
+    statusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.TextSize = 9
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.Parent = section
 
     local espObjects = {}
     local candidateModels = {}
@@ -288,8 +795,6 @@ function Arcane.Init(Shared, UI)
         end
     end
 
-    -- Watch only newly-created models instead of repeatedly scanning the entire
-    -- workspace. This is much cheaper while the player is moving/fighting.
     workspace.DescendantAdded:Connect(function(instance)
         local model = instance:IsA("Model")
             and instance
@@ -298,7 +803,6 @@ function Arcane.Init(Shared, UI)
         if model then
             inspectModel(model)
 
-            -- A boss may gain its Humanoid/root a moment after the Model appears.
             task.delay(0.15, function()
                 if model and model.Parent then
                     inspectModel(model)
@@ -313,7 +817,6 @@ function Arcane.Init(Shared, UI)
         end
     end)
 
-    -- One initial scan, processed in small batches to avoid a frame hitch.
     task.spawn(function()
         local descendants = workspace:GetDescendants()
         local processed = 0
@@ -331,10 +834,11 @@ function Arcane.Init(Shared, UI)
         end
     end)
 
-    -- Low-frequency validation instead of a full workspace scan.
     task.spawn(function()
         while true do
             task.wait(2)
+
+            local detected = 0
 
             if Config.ArcaneBossESP then
                 for model in pairs(candidateModels) do
@@ -344,15 +848,31 @@ function Arcane.Init(Shared, UI)
                         createESP(model)
                     end
                 end
+
+                for model in pairs(espObjects) do
+                    if model.Parent then
+                        detected += 1
+                    end
+                end
             else
                 for model in pairs(espObjects) do
                     destroyESP(model)
                 end
             end
+
+            statusLabel.Text = ("ESP: %d detected | Candidates: %d"):format(
+                detected,
+                (function()
+                    local count = 0
+                    for _ in pairs(candidateModels) do
+                        count += 1
+                    end
+                    return count
+                end)()
+            )
         end
     end)
 
-    -- Lightweight UI updates only for currently detected bosses.
     task.spawn(function()
         while true do
             task.wait(0.25)
