@@ -56,6 +56,7 @@ local Config = {
     StageFinished = false,
     WalkAround = true,
     DisableAutoTeleportAFKChamber = true,
+    ArcaneBossESP = false,
 }
 Shared.Config = Config
 
