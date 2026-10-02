@@ -127,6 +127,11 @@ end
 
 refreshBossTemplateRegistry()
 
+local function isBossTemplateName(value)
+    local normalized = normalizeName(value)
+    return BOSS_TEMPLATE_NAMES[normalized] ~= nil
+end
+
 -------------------------------------------------
 -- HELPERS
 -------------------------------------------------
@@ -715,6 +720,79 @@ function Arcane.Init(Shared, UI)
         button.Visible = (name == "Misc")
     end
 
+    -------------------------------------------------
+    -- BOSS RESPAWN NOTIFICATIONS
+    -------------------------------------------------
+
+    local bossNotificationGui = Instance.new("ScreenGui")
+    bossNotificationGui.Name = "SolarArcaneBossNotifications"
+    bossNotificationGui.ResetOnSpawn = false
+    bossNotificationGui.DisplayOrder = 999998
+    bossNotificationGui.IgnoreGuiInset = true
+    bossNotificationGui.Parent = Shared.playerGui
+
+    local notificationHolder = Instance.new("Frame")
+    notificationHolder.Name = "Holder"
+    notificationHolder.AnchorPoint = Vector2.new(1, 0)
+    notificationHolder.Position = UDim2.new(1, -18, 0, 18)
+    notificationHolder.Size = UDim2.fromOffset(330, 260)
+    notificationHolder.BackgroundTransparency = 1
+    notificationHolder.Parent = bossNotificationGui
+
+    local notificationLayout = Instance.new("UIListLayout")
+    notificationLayout.FillDirection = Enum.FillDirection.Vertical
+    notificationLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    notificationLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+    notificationLayout.Padding = UDim.new(0, 8)
+    notificationLayout.Parent = notificationHolder
+
+    local function showBossSpawnNotification(bossName)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.fromOffset(320, 62)
+        frame.BackgroundColor3 = Color3.fromRGB(20, 20, 27)
+        frame.BackgroundTransparency = 0.05
+        frame.BorderSizePixel = 0
+        frame.Parent = notificationHolder
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 9)
+        corner.Parent = frame
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(220, 140, 40)
+        stroke.Thickness = 1
+        stroke.Transparency = 0.15
+        stroke.Parent = frame
+
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(1, -18, 0, 22)
+        title.Position = UDim2.fromOffset(9, 6)
+        title.BackgroundTransparency = 1
+        title.Text = "⚔ BOSS RESPAWNED"
+        title.TextColor3 = Color3.fromRGB(220, 140, 40)
+        title.Font = Enum.Font.GothamBold
+        title.TextSize = 11
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Parent = frame
+
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Size = UDim2.new(1, -18, 0, 22)
+        nameLabel.Position = UDim2.fromOffset(9, 29)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Text = tostring(bossName) .. " has spawned."
+        nameLabel.TextColor3 = Color3.fromRGB(240, 240, 245)
+        nameLabel.Font = Enum.Font.GothamBold
+        nameLabel.TextSize = 10
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        nameLabel.Parent = frame
+
+        task.delay(4, function()
+            if frame and frame.Parent then
+                frame:Destroy()
+            end
+        end)
+    end
+
     local section = UI.createSection(
         miscTab,
         "Arcane Odyssey",
@@ -841,6 +919,13 @@ function Arcane.Init(Shared, UI)
     local espObjects = {}
     local candidateModels = {}
 
+    -- Bosses that were observed alive, then disappeared.
+    -- Used to distinguish a real respawn from a boss that was already
+    -- present when SolarHub started.
+    local activeBossModels = {}
+    local deadBosses = {}
+    local initializedBossState = false
+
     local function destroyESP(model)
         local data = espObjects[model]
 
@@ -863,6 +948,16 @@ function Arcane.Init(Shared, UI)
 
     local function removeModel(model)
         candidateModels[model] = nil
+
+        local bossName = getBossDisplayName(model)
+        if bossName then
+            activeBossModels[model] = nil
+
+            if initializedBossState then
+                deadBosses[normalizeName(bossName)] = bossName
+            end
+        end
+
         destroyESP(model)
     end
 
@@ -924,10 +1019,25 @@ function Arcane.Init(Shared, UI)
             return
         end
 
-        -- Only track character-like models. Do not keep every decorative
-        -- Model in the candidate table.
-        if not model:FindFirstChildOfClass("Humanoid") then
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if not humanoid then
             return
+        end
+
+        local bossName, detectionType = getBossDisplayName(model)
+
+        if bossName and isBossTemplateName(model.Name) then
+            local key = normalizeName(bossName)
+
+            if initializedBossState
+                and deadBosses[key]
+                and not activeBossModels[model] then
+
+                showBossSpawnNotification(bossName)
+                deadBosses[key] = nil
+            end
+
+            activeBossModels[model] = true
         end
 
         candidateModels[model] = true
@@ -935,6 +1045,21 @@ function Arcane.Init(Shared, UI)
         if Config.ArcaneBossESP then
             createESP(model)
         end
+    end
+
+    local replicatedStorage = game:GetService("ReplicatedStorage")
+    local rs = replicatedStorage:FindFirstChild("RS")
+    local objectsFolder = rs and rs:FindFirstChild("Objects")
+    local spawningEnemies = objectsFolder and objectsFolder:FindFirstChild("SpawningEnemies")
+
+    if spawningEnemies then
+        spawningEnemies.ChildAdded:Connect(function()
+            task.defer(refreshBossTemplateRegistry)
+        end)
+
+        spawningEnemies.ChildRemoved:Connect(function()
+            task.defer(refreshBossTemplateRegistry)
+        end)
     end
 
     workspace.DescendantAdded:Connect(function(instance)
@@ -974,6 +1099,11 @@ function Arcane.Init(Shared, UI)
                 task.wait()
             end
         end
+
+        -- Everything seen during the initial scan is considered already alive.
+        task.delay(0.25, function()
+            initializedBossState = true
+        end)
     end)
 
     task.spawn(function()
@@ -981,6 +1111,12 @@ function Arcane.Init(Shared, UI)
             task.wait(2)
 
             refreshBossTemplateRegistry()
+
+            for model in pairs(activeBossModels) do
+                if not model.Parent then
+                    activeBossModels[model] = nil
+                end
+            end
 
             local detected = 0
 
