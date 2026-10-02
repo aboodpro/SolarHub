@@ -1857,6 +1857,8 @@ function Arcane.Init(Shared, UI)
 
     local chestESPObjects = {}
     local chestCandidates = {}
+    local openedChests = {}
+    local chestPromptHooks = {}
 
     local sideQuestESPObjects = {}
     local sideQuestCandidates = {}
@@ -1975,6 +1977,136 @@ function Arcane.Init(Shared, UI)
 
     local localChestTagObjects = {}
 
+    local function markChestOpened(chest)
+        if not chest then
+            return
+        end
+
+        openedChests[chest] = true
+        chestCandidates[chest] = nil
+
+        destroyChestESP(chest)
+    end
+
+    local function hookChestOpenPrompt(chest)
+        if not chest or chestPromptHooks[chest] then
+            return
+        end
+
+        if not chest:IsA("Model") then
+            return
+        end
+
+        local prompts = {}
+
+        for _, descendant in ipairs(chest:GetDescendants()) do
+            if descendant:IsA("ProximityPrompt") then
+                table.insert(prompts, descendant)
+            end
+        end
+
+        if #prompts == 0 then
+            return
+        end
+
+        local connections = {}
+
+        for _, prompt in ipairs(prompts) do
+            connections[#connections + 1] = prompt.Triggered:Connect(function(player)
+                if player == Shared.player or player == nil then
+                    markChestOpened(chest)
+                end
+            end)
+        end
+
+        chestPromptHooks[chest] = connections
+    end
+
+    local function unhookChestOpenPrompt(chest)
+        local connections = chestPromptHooks[chest]
+
+        if not connections then
+            return
+        end
+
+        for _, connection in ipairs(connections) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
+
+        chestPromptHooks[chest] = nil
+    end
+
+    local function hasChestOpenedMarker(chest)
+        if not chest then
+            return false
+        end
+
+        -- Attribute markers, if the game sets one.
+        local okAttrs, attrs = pcall(function()
+            return chest:GetAttributes()
+        end)
+
+        if okAttrs and type(attrs) == "table" then
+            for key, value in pairs(attrs) do
+                local normalizedKey = normalizeChestText(key)
+
+                if (normalizedKey == "opened"
+                    or normalizedKey == "open"
+                    or normalizedKey == "isopen"
+                    or normalizedKey == "chestopened"
+                    or normalizedKey == "openedchest")
+                    and value == true then
+                    return true
+                end
+            end
+        end
+
+        -- Common replicated Value markers.
+        for _, descendant in ipairs(chest:GetDescendants()) do
+            local normalizedName = normalizeChestText(descendant.Name)
+
+            if descendant:IsA("BoolValue")
+                and (normalizedName == "opened"
+                    or normalizedName == "open"
+                    or normalizedName == "isopen"
+                    or normalizedName == "chestopened"
+                    or normalizedName == "openedchest")
+                and descendant.Value == true then
+                return true
+            end
+
+            if descendant:IsA("BoolValue")
+                and normalizedName == "chestobj"
+                and descendant.Value == true then
+                return true
+            end
+        end
+
+        -- If the chest's own interaction prompt is disabled, it is no longer
+        -- an interactable unopened chest.
+        local promptFound = false
+
+        for _, descendant in ipairs(chest:GetDescendants()) do
+            if descendant:IsA("ProximityPrompt") then
+                promptFound = true
+
+                if descendant.Enabled then
+                    return false
+                end
+            end
+        end
+
+        -- No prompt + an existing chest candidate is useful as a fallback
+        -- after the interaction object has been removed.
+        if promptFound == false then
+            return true
+        end
+
+        return false
+    end
+
     local function inspectChest(target)
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
@@ -1999,9 +2131,15 @@ function Arcane.Init(Shared, UI)
             return
         end
 
+        if openedChests[chest] or hasChestOpenedMarker(chest) then
+            markChestOpened(chest)
+            return
+        end
+
         localChestTagObjects[chest] = true
         chestCandidates[chest] = true
 
+        hookChestOpenPrompt(chest)
         createChestESP(chest)
     end
 
@@ -2539,6 +2677,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         if instance:IsA("Model") then
             removeModel(instance)
             chestCandidates[instance] = nil
+            openedChests[instance] = nil
+            unhookChestOpenPrompt(instance)
             destroyChestESP(instance)
             sideQuestCandidates[instance] = nil
             destroySideQuestESP(instance)
@@ -2734,13 +2874,18 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                         chestCandidates[target] = nil
                         destroyChestESP(target)
                     else
-                        local chestType = getChestTypeFast(target) or getChestType(target)
-
-                        if isChestFilterEnabled(Config, chestType) then
-                            createChestESP(target)
+                        if openedChests[target] or hasChestOpenedMarker(target) then
+                            markChestOpened(target)
                         else
-                            chestCandidates[target] = nil
-                            destroyChestESP(target)
+                            local chestType = getChestTypeFast(target) or getChestType(target)
+
+                            if isChestFilterEnabled(Config, chestType) then
+                                hookChestOpenPrompt(target)
+                                createChestESP(target)
+                            else
+                                chestCandidates[target] = nil
+                                destroyChestESP(target)
+                            end
                         end
                     end
                 end
@@ -2750,6 +2895,12 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
                 for target in pairs(chestESPObjects) do
                     destroyChestESP(target)
+                end
+
+                table.clear(openedChests)
+
+                for chest in pairs(chestPromptHooks) do
+                    unhookChestOpenPrompt(chest)
                 end
             end
         end
