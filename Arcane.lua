@@ -87,7 +87,30 @@ local function refreshBossTemplateRegistry()
     table.clear(BOSS_TEMPLATE_NAMES)
     table.clear(MINIBOSS_TEMPLATE_NAMES)
 
-    local replicatedStorage = game:GetService("ReplicatedStorage")
+        local function scanSelectedChests()
+        if not Config.ArcaneChestESP
+            or not hasAnyChestFilterEnabled(Config) then
+            return
+        end
+
+        local collectionService = game:GetService("CollectionService")
+        local seen = {}
+
+        for _, tag in ipairs({
+            "Chests",
+            "Prompt_Chest",
+            "BuriedChests",
+        }) do
+            for _, object in ipairs(collectionService:GetTagged(tag)) do
+                if not seen[object] then
+                    seen[object] = true
+                    inspectChest(object)
+                end
+            end
+        end
+    end
+
+local replicatedStorage = game:GetService("ReplicatedStorage")
     local rs = replicatedStorage:FindFirstChild("RS")
     local objects = rs and rs:FindFirstChild("Objects")
     local spawningEnemies = objects and objects:FindFirstChild("SpawningEnemies")
@@ -2120,6 +2143,7 @@ function Arcane.Init(Shared, UI)
     end
 
     local sideQuestVirtualESPObjects = {}
+    local sideQuestTemplatesScanned = false
 
     local function destroySideQuestVirtualESP(key)
         local data = sideQuestVirtualESPObjects[key]
@@ -2237,16 +2261,27 @@ function Arcane.Init(Shared, UI)
     end
 
     local function scanSideQuestTemplateSources()
+        if not Config.ArcaneSideQuestESP
+            or sideQuestTemplatesScanned then
+            return
+        end
+
+        sideQuestTemplatesScanned = true
+
         local replicatedStorage = game:GetService("ReplicatedStorage")
         local rs = replicatedStorage:FindFirstChild("RS")
         local objects = rs and rs:FindFirstChild("Objects")
 
-        local function scanFolder(folder)
+        local function scanFolder(folder, recursive)
             if not folder then
                 return
             end
 
-            for _, model in ipairs(folder:GetChildren()) do
+            local source = recursive
+                and folder:GetDescendants()
+                or folder:GetChildren()
+
+            for _, model in ipairs(source) do
                 if model:IsA("Model")
                     and model:FindFirstChildOfClass("Humanoid") then
                     createSideQuestVirtualESP(model)
@@ -2254,11 +2289,8 @@ function Arcane.Init(Shared, UI)
             end
         end
 
-        -- Most static NPC templates.
-        scanFolder(objects)
-
-        -- Explicitly includes the NPC/quest-heavy unload folder.
-        scanFolder(rs and rs:FindFirstChild("UnloadEnemies"))
+        scanFolder(objects, true)
+        scanFolder(rs and rs:FindFirstChild("UnloadEnemies"), false)
     end
 
 
@@ -2445,22 +2477,6 @@ function Arcane.Init(Shared, UI)
             end
         end
 
-        -- Chest scanning is completely skipped when every chest type is OFF.
-        if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
-            local collectionService = game:GetService("CollectionService")
-
-            local chestTags = {
-                "Chests",
-                "Prompt_Chest",
-                "BuriedChests",
-            }
-
-            for _, tag in ipairs(chestTags) do
-                for _, object in ipairs(collectionService:GetTagged(tag)) do
-                    inspectChest(object)
-                end
-            end
-        end
 
         local replicatedStorage = game:GetService("ReplicatedStorage")
         local rs = replicatedStorage:FindFirstChild("RS")
@@ -2468,7 +2484,7 @@ function Arcane.Init(Shared, UI)
         if rs then
             local unloadEnemies = rs:FindFirstChild("UnloadEnemies")
 
-            if unloadEnemies then
+            if unloadEnemies and Config.ArcaneSideQuestESP then
                 -- These are lightweight child-level NPC definitions with real
                 -- world positions (NPCHitbox / SpawnPart).
                 for _, model in ipairs(unloadEnemies:GetChildren()) do
@@ -2541,7 +2557,14 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     task.spawn(function()
         scanTargetedWorldSources()
-        scanSideQuestTemplateSources()
+
+        if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
+            scanSelectedChests()
+        end
+
+        if Config.ArcaneSideQuestESP then
+            scanSideQuestTemplateSources()
+        end
 
         -- Everything seen during the initial scan is considered already alive.
         task.delay(0.25, function()
@@ -2550,6 +2573,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end)
 
     local lastChestFilterSignature = nil
+    local lastChestESPEnabled = Config.ArcaneChestESP == true
 
     local function getChestFilterSignature()
         local parts = {}
@@ -2572,20 +2596,34 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
             local currentChestFilterSignature = getChestFilterSignature()
             local chestFilterChanged = currentChestFilterSignature ~= lastChestFilterSignature
+            local chestESPChanged = Config.ArcaneChestESP ~= lastChestESPEnabled
+
             lastChestFilterSignature = currentChestFilterSignature
+            lastChestESPEnabled = Config.ArcaneChestESP == true
 
             if Config.ArcaneBossESP
-                or Config.ArcaneSideQuestESP
-                or (chestFilterChanged
-                    and Config.ArcaneChestESP
-                    and hasAnyChestFilterEnabled(Config)) then
+                or Config.ArcaneSideQuestESP then
                 pcall(scanTargetedWorldSources)
+            end
+
+            -- Chest scanning is isolated from NPC/Boss scanning.
+            -- It happens only when the selected filter or Chest ESP state changes.
+            if chestFilterChanged or chestESPChanged then
+                if Config.ArcaneChestESP
+                    and hasAnyChestFilterEnabled(Config) then
+                    pcall(scanSelectedChests)
+                else
+                    table.clear(chestCandidates)
+
+                    for target in pairs(chestESPObjects) do
+                        destroyChestESP(target)
+                    end
+                end
             end
 
             if Config.ArcaneSideQuestESP then
                 pcall(scanSideQuestTemplateSources)
-            end
-        end
+            end        end
     end)
 
     task.spawn(function()
@@ -2672,6 +2710,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                     end
                 end
             else
+                sideQuestTemplatesScanned = false
+
                 for model in pairs(sideQuestESPObjects) do
                     destroySideQuestESP(model)
                 end
