@@ -781,6 +781,22 @@ local function hasSideQuestMarker(model)
         end
     end
 
+    -- Arcane NPC templates can store the quest marker as:
+    -- Model.Attributes.Quest (IntValue), rather than an Attribute.
+    local attributesFolder = model:FindFirstChild("Attributes")
+    if attributesFolder and attributesFolder:FindFirstChild("Quest") then
+        return true
+    end
+
+    local questValue = model:FindFirstChild("Quest")
+    if questValue
+        and (questValue:IsA("IntValue")
+            or questValue:IsA("NumberValue")
+            or questValue:IsA("StringValue")
+            or questValue:IsA("BoolValue")) then
+        return true
+    end
+
     return false
 end
 
@@ -923,206 +939,117 @@ end
 
 local function runDebugScan(setText)
     task.spawn(function()
-        setText("Scanning Arcane client objects...\nThis is a one-time scan.")
+        setText("Scanning targeted Arcane world structures...\nThis avoids freezing on the full Workspace.")
 
         local results = {
-            knownBosses = {},
-            bossMarkers = {},
-            suspiciousModels = {},
-            highHpModels = {},
-            bossFolders = {},
-            scripts = {},
+            activeNPCs = {},
+            sideQuestNPCs = {},
+            activeBosses = {},
+            bossTemplates = {},
+            activeChests = {},
+            spawnLocations = {},
+            questObjects = {},
             remotes = {},
-            humanoidCount = 0,
-            modelCount = 0,
-            scannedCount = 0,
+            scripts = {},
         }
 
-        local seenKnown = {}
-        local seenMarker = {}
-        local seenSuspicious = {}
-        local seenHighHp = {}
-
-        local containers = {
-            workspace,
-            game:GetService("ReplicatedStorage"),
-            game:GetService("ReplicatedFirst"),
-        }
-
-        for _, container in ipairs(containers) do
-            local descendants = container:GetDescendants()
-
-            for _, instance in ipairs(descendants) do
-                results.scannedCount += 1
-
-                if instance:IsA("Model") then
-                    results.modelCount += 1
-
-                    local humanoid = instance:FindFirstChildOfClass("Humanoid")
-
-                    if humanoid then
-                        results.humanoidCount += 1
-
-                        local info = getBossInfo(instance)
-
-                        if info and not seenKnown[instance] then
-                            seenKnown[instance] = true
-
-                            appendLimited(
-                                results.knownBosses,
-                                ("%s | HP %d/%d | %s"):format(
-                                    tostring(info.name),
-                                    math.floor(humanoid.Health),
-                                    math.floor(humanoid.MaxHealth),
-                                    instance:GetFullName()
-                                ),
-                                100
-                            )
-                        end
-
-                        if hasBossMarker(instance) and not seenMarker[instance] then
-                            seenMarker[instance] = true
-
-                            appendLimited(
-                                results.bossMarkers,
-                                ("%s | attrs: %s | %s"):format(
-                                    instance.Name,
-                                    getAttributeSummary(instance),
-                                    instance:GetFullName()
-                                ),
-                                100
-                            )
-                        end
-
-                        local keyword = containsKeyword(instance.Name)
-
-                        if keyword and not seenSuspicious[instance] then
-                            seenSuspicious[instance] = true
-
-                            appendLimited(
-                                results.suspiciousModels,
-                                ("%s | keyword=%s | HP %d/%d | %s"):format(
-                                    instance.Name,
-                                    keyword,
-                                    math.floor(humanoid.Health),
-                                    math.floor(humanoid.MaxHealth),
-                                    instance:GetFullName()
-                                ),
-                                150
-                            )
-                        end
-
-                        if humanoid.MaxHealth >= 1000 and not seenHighHp[instance] then
-                            seenHighHp[instance] = true
-
-                            appendLimited(
-                                results.highHpModels,
-                                ("%s | HP %d/%d | %s"):format(
-                                    instance.Name,
-                                    math.floor(humanoid.Health),
-                                    math.floor(humanoid.MaxHealth),
-                                    instance:GetFullName()
-                                ),
-                                60
-                            )
-                        end
-                    end
-                end
-
-                if instance:IsA("Folder") then
-                    local keyword = containsKeyword(instance.Name)
-
-                    if keyword and (
-                        normalizeName(instance.Name) == "boss"
-                        or normalizeName(instance.Name) == "bosses"
-                        or keyword == "boss"
-                    ) then
-                        appendLimited(
-                            results.bossFolders,
-                            instance:GetFullName(),
-                            80
-                        )
-                    end
-                end
-
-                if instance:IsA("ModuleScript")
-                    or instance:IsA("LocalScript")
-                    or instance:IsA("Script") then
-
-                    local keyword = containsKeyword(instance.Name)
-
-                    if keyword then
-                        appendLimited(
-                            results.scripts,
-                            ("%s | keyword=%s"):format(
-                                instance:GetFullName(),
-                                keyword
-                            ),
-                            120
-                        )
-                    end
-                end
-
-                if instance:IsA("RemoteEvent")
-                    or instance:IsA("RemoteFunction") then
-
-                    local keyword = containsKeyword(instance.Name)
-
-                    if keyword then
-                        appendLimited(
-                            results.remotes,
-                            ("%s | %s | keyword=%s"):format(
-                                instance:GetFullName(),
-                                instance.ClassName,
-                                keyword
-                            ),
-                            120
-                        )
-                    end
-                end
-
-                if results.scannedCount % 250 == 0 then
-                    setText(("Scanning... %d objects"):format(results.scannedCount))
-                    task.wait()
-                end
+        local function addLimited(list, value, limit)
+            if #list < limit then
+                table.insert(list, value)
             end
         end
 
-        -- Explicit Arcane boss-template discovery.
-        local bossTemplateCount, minibossTemplateCount = refreshBossTemplateRegistry()
-        results.bossTemplateCount = bossTemplateCount
-        results.minibossTemplateCount = minibossTemplateCount
-        results.bossTemplates = {}
+        local function inspectNPCModel(model, sourceName)
+            if not model:IsA("Model") then
+                return
+            end
+
+            local humanoid = model:FindFirstChildOfClass("Humanoid")
+            if not humanoid then
+                return
+            end
+
+            local root = getRoot(model)
+            local position = root and root.Position
+            local questInfo = getSideQuestNPCInfo(model)
+
+            local line = ("%s | %s | %s"):format(
+                model.Name,
+                sourceName,
+                position
+                    and ("POS %.0f %.0f %.0f"):format(
+                        position.X, position.Y, position.Z
+                    )
+                    or "NO POS"
+            )
+
+            addLimited(results.activeNPCs, line, 150)
+
+            if questInfo then
+                local questLine = ("%s | %s | %s"):format(
+                    questInfo.name,
+                    questInfo.detectionType,
+                    model:GetFullName()
+                )
+
+                addLimited(results.sideQuestNPCs, questLine, 150)
+            end
+        end
+
+        local npcFolder = workspace:FindFirstChild("NPCs")
+        if npcFolder then
+            for _, model in ipairs(npcFolder:GetChildren()) do
+                inspectNPCModel(model, "Workspace.NPCs")
+            end
+        end
+
+        local enemiesFolder = workspace:FindFirstChild("Enemies")
+        if enemiesFolder then
+            for _, model in ipairs(enemiesFolder:GetChildren()) do
+                inspectNPCModel(model, "Workspace.Enemies")
+            end
+        end
 
         local replicatedStorage = game:GetService("ReplicatedStorage")
         local rs = replicatedStorage:FindFirstChild("RS")
+
         local objects = rs and rs:FindFirstChild("Objects")
+
         local spawningEnemies = objects and objects:FindFirstChild("SpawningEnemies")
-
         if spawningEnemies then
-            for _, child in ipairs(spawningEnemies:GetChildren()) do
-                local bossValue = child:FindFirstChild("Boss")
-                local minibossValue = child:FindFirstChild("Miniboss")
-
-                if bossValue and bossValue:IsA("BoolValue") then
-                    appendLimited(
-                        results.bossTemplates,
-                        ("BOSS TEMPLATE | %s | Boss.Value=%s | %s"):format(
-                            child.Name,
-                            tostring(bossValue.Value),
-                            child:GetFullName()
-                        ),
-                        150
-                    )
+            for _, model in ipairs(spawningEnemies:GetChildren()) do
+                local humanoid = model:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    local bossInfo = getBossInfo(model)
+                    if bossInfo then
+                        addLimited(
+                            results.bossTemplates,
+                            ("%s | %s | %s"):format(
+                                model.Name,
+                                bossInfo.bossClass,
+                                model:GetFullName()
+                            ),
+                            150
+                        )
+                    end
                 end
+            end
+        end
 
-                if minibossValue and minibossValue:IsA("BoolValue") then
-                    appendLimited(
+        local bossFigures = objects and objects:FindFirstChild("BossFigures")
+        if bossFigures then
+            for _, model in ipairs(bossFigures:GetChildren()) do
+                local bossValue = model:FindFirstChild("Boss")
+                local minibossValue = model:FindFirstChild("Miniboss")
+
+                if bossValue or minibossValue then
+                    addLimited(
                         results.bossTemplates,
-                        ("MINIBOSS TEMPLATE | %s | Miniboss.Value=%s | %s"):format(
-                            child.Name,
-                            tostring(minibossValue.Value),
-                            child:GetFullName()
+                        ("%s | Boss=%s | Mini=%s | %s"):format(
+                            model.Name,
+                            tostring(bossValue and bossValue.Value),
+                            tostring(minibossValue and minibossValue.Value),
+                            model:GetFullName()
                         ),
                         150
                     )
@@ -1130,88 +1057,258 @@ local function runDebugScan(setText)
             end
         end
 
-        table.sort(results.highHpModels, function(a, b)
-            local aHp = tonumber(a:match("HP %d+/(%d+)")) or 0
-            local bHp = tonumber(b:match("HP %d+/(%d+)")) or 0
-            return aHp > bHp
-        end)
+        if enemiesFolder then
+            for _, model in ipairs(enemiesFolder:GetChildren()) do
+                local bossInfo = model:IsA("Model") and getBossInfo(model)
+                if bossInfo then
+                    local root = bossInfo.root
+                    local hp = bossInfo.humanoid
+
+                    addLimited(
+                        results.activeBosses,
+                        ("%s | %s | HP %d/%d | POS %.0f %.0f %.0f"):format(
+                            bossInfo.name,
+                            bossInfo.bossClass,
+                            math.floor(hp.Health),
+                            math.floor(hp.MaxHealth),
+                            root.Position.X,
+                            root.Position.Y,
+                            root.Position.Z
+                        ),
+                        100
+                    )
+                end
+            end
+        end
+
+        local collectionService = game:GetService("CollectionService")
+
+        local function addTaggedChests(tag)
+            local tagged = collectionService:GetTagged(tag)
+
+            for _, object in ipairs(tagged) do
+                local chest = getChestTarget(object)
+
+                if chest then
+                    local root = getChestRoot(chest)
+                    if root then
+                        addLimited(
+                            results.activeChests,
+                            ("%s | %s | POS %.0f %.0f %.0f | %s"):format(
+                                chest.Name,
+                                getChestType(chest) or "OTHER",
+                                root.Position.X,
+                                root.Position.Y,
+                                root.Position.Z,
+                                chest:GetFullName()
+                            ),
+                            200
+                        )
+                    end
+                end
+            end
+        end
+
+        addTaggedChests("Chests")
+        addTaggedChests("Prompt_Chest")
+        addTaggedChests("BuriedChests")
+
+        local map = workspace:FindFirstChild("Map")
+
+        if map then
+            local seaContent = map:FindFirstChild("SeaContent")
+            local npcLocations = seaContent and seaContent:FindFirstChild("NPCLocations")
+
+            if npcLocations then
+                for _, object in ipairs(npcLocations:GetDescendants()) do
+                    if object:IsA("BasePart") then
+                        addLimited(
+                            results.spawnLocations,
+                            ("%s | POS %.0f %.0f %.0f | %s"):format(
+                                object.Name,
+                                object.Position.X,
+                                object.Position.Y,
+                                object.Position.Z,
+                                object:GetFullName()
+                            ),
+                            200
+                        )
+                    end
+                end
+            end
+
+            local questObjects = map:FindFirstChild("QuestObjects")
+            if questObjects then
+                for _, object in ipairs(questObjects:GetChildren()) do
+                    addLimited(
+                        results.questObjects,
+                        object:GetFullName(),
+                        120
+                    )
+                end
+            end
+        end
+
+        if rs then
+            local remotesFolder = rs:FindFirstChild("Remotes")
+            if remotesFolder then
+                for _, instance in ipairs(remotesFolder:GetDescendants()) do
+                    if instance:IsA("RemoteEvent")
+                        or instance:IsA("RemoteFunction") then
+
+                        local keyword = containsKeyword(instance.Name)
+
+                        if keyword
+                            or normalizeName(instance.Name):find("fish", 1, true)
+                            or normalizeName(instance.Name):find("chest", 1, true)
+                            or normalizeName(instance.Name):find("quest", 1, true) then
+
+                            addLimited(
+                                results.remotes,
+                                ("%s | %s"):format(
+                                    instance.ClassName,
+                                    instance:GetFullName()
+                                ),
+                                200
+                            )
+                        end
+                    end
+                end
+            end
+
+            local modulesFolder = rs:FindFirstChild("Modules")
+            if modulesFolder then
+                for _, instance in ipairs(modulesFolder:GetDescendants()) do
+                    if instance:IsA("ModuleScript") then
+                        local n = normalizeName(instance.Name)
+
+                        if n:find("npc", 1, true)
+                            or n:find("boss", 1, true)
+                            or n:find("enemy", 1, true)
+                            or n:find("quest", 1, true)
+                            or n:find("fish", 1, true) then
+
+                            addLimited(
+                                results.scripts,
+                                instance:GetFullName(),
+                                200
+                            )
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Directly inspect quest-capable NPC templates. This includes models
+        -- that are not currently streamed into Workspace.
+        local function scanQuestModelFolder(folder)
+            if not folder then
+                return
+            end
+
+            for _, model in ipairs(folder:GetChildren()) do
+                if model:IsA("Model") and model:FindFirstChildOfClass("Humanoid") then
+                    local info = getSideQuestNPCInfo(model)
+
+                    if info then
+                        addLimited(
+                            results.sideQuestNPCs,
+                            ("%s | TEMPLATE %s | POS=%s | %s"):format(
+                                info.name,
+                                info.detectionType,
+                                (getRoot(model)
+                                    and tostring(getRoot(model).Position)
+                                    or "NO POS"),
+                                model:GetFullName()
+                            ),
+                            150
+                        )
+                    end
+                end
+            end
+        end
+
+        scanQuestModelFolder(objects)
+        scanQuestModelFolder(rs and rs:FindFirstChild("UnloadEnemies"))
 
         local lines = {
-            "ARCANE BOSS DEBUG",
+            "SOLARHUB ARCANE TARGETED DEBUG",
             "==============================",
-            ("Scanned objects: %d"):format(results.scannedCount),
-            ("Models: %d"):format(results.modelCount),
-            ("Models with Humanoid: %d"):format(results.humanoidCount),
+            "This scanner only checks Arcane's relevant folders/tags.",
             "",
-            ("KNOWN BOSS DETECTIONS (%d):"):format(#results.knownBosses),
+            ("ACTIVE NPC MODELS (%d):"):format(#results.activeNPCs),
         }
 
-        if #results.knownBosses == 0 then
+        if #results.activeNPCs == 0 then
             table.insert(lines, "<none>")
         else
-            for _, line in ipairs(results.knownBosses) do
+            for _, line in ipairs(results.activeNPCs) do
                 table.insert(lines, line)
             end
         end
 
         table.insert(lines, "")
-        table.insert(lines, ("BOSS MARKERS / TAGS / FOLDERS (%d):"):format(#results.bossMarkers))
-
-        if #results.bossMarkers == 0 then
+        table.insert(lines, ("SIDE QUEST NPC CANDIDATES (%d):"):format(#results.sideQuestNPCs))
+        if #results.sideQuestNPCs == 0 then
             table.insert(lines, "<none>")
         else
-            for _, line in ipairs(results.bossMarkers) do
+            for _, line in ipairs(results.sideQuestNPCs) do
                 table.insert(lines, line)
             end
         end
 
         table.insert(lines, "")
-        table.insert(lines, ("SUSPICIOUS HUMANOIDS (%d):"):format(#results.suspiciousModels))
-
-        if #results.suspiciousModels == 0 then
+        table.insert(lines, ("ACTIVE BOSSES (%d):"):format(#results.activeBosses))
+        if #results.activeBosses == 0 then
             table.insert(lines, "<none>")
         else
-            for _, line in ipairs(results.suspiciousModels) do
+            for _, line in ipairs(results.activeBosses) do
                 table.insert(lines, line)
             end
         end
 
         table.insert(lines, "")
-        table.insert(lines, ("HIGH HP HUMANOIDS (>=1000) (%d):"):format(#results.highHpModels))
-
-        if #results.highHpModels == 0 then
+        table.insert(lines, ("BOSS TEMPLATES (%d):"):format(#results.bossTemplates))
+        if #results.bossTemplates == 0 then
             table.insert(lines, "<none>")
         else
-            for _, line in ipairs(results.highHpModels) do
+            for _, line in ipairs(results.bossTemplates) do
                 table.insert(lines, line)
             end
         end
 
         table.insert(lines, "")
-        table.insert(lines, ("BOSS FOLDERS (%d):"):format(#results.bossFolders))
-
-        if #results.bossFolders == 0 then
+        table.insert(lines, ("ACTIVE/TAGGED CHESTS (%d):"):format(#results.activeChests))
+        if #results.activeChests == 0 then
             table.insert(lines, "<none>")
         else
-            for _, line in ipairs(results.bossFolders) do
+            for _, line in ipairs(results.activeChests) do
                 table.insert(lines, line)
             end
         end
 
         table.insert(lines, "")
-        table.insert(lines, ("SCRIPTS / MODULES MATCHING BOSS/NPC/AI (%d):"):format(#results.scripts))
-
-        if #results.scripts == 0 then
+        table.insert(lines, ("NPC LOCATION / SPAWN PARTS (%d):"):format(#results.spawnLocations))
+        if #results.spawnLocations == 0 then
             table.insert(lines, "<none>")
         else
-            for _, line in ipairs(results.scripts) do
+            for _, line in ipairs(results.spawnLocations) do
                 table.insert(lines, line)
             end
         end
 
         table.insert(lines, "")
-        table.insert(lines, ("REMOTES MATCHING BOSS/NPC/AI (%d):"):format(#results.remotes))
+        table.insert(lines, ("QUEST OBJECTS (%d):"):format(#results.questObjects))
+        if #results.questObjects == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.questObjects) do
+                table.insert(lines, line)
+            end
+        end
 
+        table.insert(lines, "")
+        table.insert(lines, ("RELEVANT REMOTES (%d):"):format(#results.remotes))
         if #results.remotes == 0 then
             table.insert(lines, "<none>")
         else
@@ -1221,19 +1318,19 @@ local function runDebugScan(setText)
         end
 
         table.insert(lines, "")
-        table.insert(lines, ("BOSS TEMPLATES FROM SpawningEnemies (%d):"):format(#(results.bossTemplates or {})))
-        if #(results.bossTemplates or {}) == 0 then
+        table.insert(lines, ("RELEVANT MODULES (%d):"):format(#results.scripts))
+        if #results.scripts == 0 then
             table.insert(lines, "<none>")
         else
-            for _, line in ipairs(results.bossTemplates) do
+            for _, line in ipairs(results.scripts) do
                 table.insert(lines, line)
             end
         end
 
         table.insert(lines, "")
         table.insert(lines, "NOTE:")
-        table.insert(lines, "Client-side scans can only see objects replicated to the client.")
-        table.insert(lines, "ServerStorage / ServerScriptService server-only contents will not appear here.")
+        table.insert(lines, "Live ESP still depends on objects being present/renderable on the client.")
+        table.insert(lines, "Replicated NPC templates can provide static world positions for virtual markers.")
 
         local finalText = table.concat(lines, "\n")
         setText(finalText)
@@ -1248,7 +1345,7 @@ local function runDebugScan(setText)
             end)
         end
 
-        print("[Arcane] Boss debug scan finished.")
+        print("[Arcane] Targeted debug scan finished.")
         print(finalText)
     end)
 end
@@ -1959,6 +2056,149 @@ function Arcane.Init(Shared, UI)
         end
     end
 
+    local sideQuestVirtualESPObjects = {}
+
+    local function destroySideQuestVirtualESP(key)
+        local data = sideQuestVirtualESPObjects[key]
+
+        if not data then
+            return
+        end
+
+        if data.highlight then
+            pcall(function()
+                data.highlight:Destroy()
+            end)
+        end
+
+        if data.billboard then
+            pcall(function()
+                data.billboard:Destroy()
+            end)
+        end
+
+        if data.anchor then
+            pcall(function()
+                data.anchor:Destroy()
+            end)
+        end
+
+        sideQuestVirtualESPObjects[key] = nil
+    end
+
+    local function createSideQuestVirtualESP(model)
+        if not Config.ArcaneSideQuestESP then
+            return
+        end
+
+        if not model
+            or not model:IsA("Model")
+            or model:IsDescendantOf(workspace) then
+            return
+        end
+
+        local info = getSideQuestNPCInfo(model)
+        local root = getRoot(model)
+
+        if not info or not root then
+            return
+        end
+
+        local position = root.Position
+
+        -- Ignore obvious staging positions. Real Arcane templates use
+        -- actual world coordinates, while utility figures often sit near 0,0,0.
+        if math.abs(position.X) < 5
+            and math.abs(position.Y) < 5
+            and math.abs(position.Z) < 5 then
+            return
+        end
+
+        local key = model:GetFullName()
+
+        if sideQuestVirtualESPObjects[key] then
+            return
+        end
+
+        local anchor = Instance.new("Part")
+        anchor.Name = "SolarSideQuestVirtualAnchor"
+        anchor.Anchored = true
+        anchor.CanCollide = false
+        anchor.CanTouch = false
+        anchor.CanQuery = false
+        anchor.Transparency = 1
+        anchor.Size = Vector3.new(1, 1, 1)
+        anchor.CFrame = CFrame.new(position)
+        anchor.Parent = workspace
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "SolarSideQuestVirtualESPInfo"
+        billboard.Adornee = anchor
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = 0
+        billboard.Size = UDim2.fromOffset(300, 34)
+        billboard.StudsOffset = Vector3.new(0, 3.8, 0)
+        billboard.Parent = Shared.playerGui
+
+        local label = Instance.new("TextLabel")
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.Font = Enum.Font.GothamBold
+        label.TextColor3 = Color3.fromRGB(220, 140, 40)
+        label.TextStrokeTransparency = 0.15
+        label.TextSize = 11
+        label.Text = "SIDE QUEST NPC | "
+            .. tostring(info.name)
+            .. " | STUDS: ?"
+        label.Parent = billboard
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "SolarSideQuestVirtualHighlight"
+        highlight.Adornee = anchor
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = Color3.fromRGB(220, 140, 40)
+        highlight.OutlineColor = Color3.fromRGB(220, 140, 40)
+        highlight.FillTransparency = 0.84
+        highlight.OutlineTransparency = 0
+        highlight.Parent = workspace
+
+        sideQuestVirtualESPObjects[key] = {
+            source = model,
+            anchor = anchor,
+            billboard = billboard,
+            label = label,
+            highlight = highlight,
+            position = position,
+            name = info.name,
+        }
+    end
+
+    local function scanSideQuestTemplateSources()
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local rs = replicatedStorage:FindFirstChild("RS")
+        local objects = rs and rs:FindFirstChild("Objects")
+
+        local function scanFolder(folder)
+            if not folder then
+                return
+            end
+
+            for _, model in ipairs(folder:GetChildren()) do
+                if model:IsA("Model")
+                    and model:FindFirstChildOfClass("Humanoid") then
+                    createSideQuestVirtualESP(model)
+                end
+            end
+        end
+
+        -- Most static NPC templates.
+        scanFolder(objects)
+
+        -- Explicitly includes the NPC/quest-heavy unload folder.
+        scanFolder(rs and rs:FindFirstChild("UnloadEnemies"))
+    end
+
+
     local function markBossDead(model, bossName)
         if not initializedBossState then
             return
@@ -2122,50 +2362,59 @@ function Arcane.Init(Shared, UI)
     end
 
     -------------------------------------------------
-    -- FULL-WORLD SOURCE RESCAN
+    -- TARGETED WORLD RESCAN
     -------------------------------------------------
-    -- Arcane keeps some NPCs in RS.UnloadEnemies with real world
-    -- positions, while the live map uses Workspace.Map/NPCs/Enemies.
-    -- Keep rescanning these containers so ESP is not dependent on
-    -- which object happened to trigger DescendantAdded.
-    local function scanFullWorldSources()
-        local sources = {
-            workspace:FindFirstChild("Map"),
-            workspace:FindFirstChild("NPCs"),
-            workspace:FindFirstChild("Enemies"),
+    -- Do not call Workspace.Map:GetDescendants() repeatedly.
+    -- That can walk a very large streamed map and freeze the client.
+    local function scanTargetedWorldSources()
+        local npcFolder = workspace:FindFirstChild("NPCs")
+        if npcFolder then
+            for _, model in ipairs(npcFolder:GetChildren()) do
+                inspectModel(model)
+                inspectSideQuestModel(model)
+            end
+        end
+
+        local enemiesFolder = workspace:FindFirstChild("Enemies")
+        if enemiesFolder then
+            for _, model in ipairs(enemiesFolder:GetChildren()) do
+                inspectModel(model)
+            end
+        end
+
+        local collectionService = game:GetService("CollectionService")
+
+        local chestTags = {
+            "Chests",
+            "Prompt_Chest",
+            "BuriedChests",
         }
+
+        for _, tag in ipairs(chestTags) do
+            for _, object in ipairs(collectionService:GetTagged(tag)) do
+                inspectChest(object)
+            end
+        end
 
         local replicatedStorage = game:GetService("ReplicatedStorage")
         local rs = replicatedStorage:FindFirstChild("RS")
 
         if rs then
-            table.insert(sources, rs:FindFirstChild("UnloadEnemies"))
-        end
+            local unloadEnemies = rs:FindFirstChild("UnloadEnemies")
 
-        for _, container in ipairs(sources) do
-            if container then
-                local descendants = container:GetDescendants()
-
-                for _, instance in ipairs(descendants) do
-                    if instance:IsA("Model") then
-                        inspectModel(instance)
-                        inspectChest(instance)
-                        inspectSideQuestModel(instance)
-                    elseif instance:IsA("BasePart") then
-                        local normalized = normalizeName(instance.Name)
-
-                        if normalized:find("chest", 1, true)
-                            or normalized:find("treasure", 1, true)
-                            or normalized:find("sealed", 1, true) then
-                            inspectChest(instance)
-                        end
+            if unloadEnemies then
+                -- These are lightweight child-level NPC definitions with real
+                -- world positions (NPCHitbox / SpawnPart).
+                for _, model in ipairs(unloadEnemies:GetChildren()) do
+                    if model:IsA("Model") then
+                        inspectSideQuestModel(model)
                     end
                 end
             end
         end
     end
 
-    local replicatedStorage = game:GetService("ReplicatedStorage")
+local replicatedStorage = game:GetService("ReplicatedStorage")
     local rs = replicatedStorage:FindFirstChild("RS")
     local objectsFolder = rs and rs:FindFirstChild("Objects")
     local spawningEnemies = objectsFolder and objectsFolder:FindFirstChild("SpawningEnemies")
@@ -2225,26 +2474,8 @@ function Arcane.Init(Shared, UI)
     end)
 
     task.spawn(function()
-        local descendants = workspace:GetDescendants()
-        local processed = 0
-
-        for _, instance in ipairs(descendants) do
-            if instance:IsA("Model") then
-                inspectModel(instance)
-                inspectChest(instance)
-                inspectSideQuestModel(instance)
-            elseif instance:IsA("BasePart") then
-                if normalizeName(instance.Name):find("chest", 1, true) then
-                    inspectChest(instance)
-                end
-            end
-
-            processed += 1
-
-            if processed % 200 == 0 then
-                task.wait()
-            end
-        end
+        scanTargetedWorldSources()
+        scanSideQuestTemplateSources()
 
         -- Everything seen during the initial scan is considered already alive.
         task.delay(0.25, function()
@@ -2252,7 +2483,7 @@ function Arcane.Init(Shared, UI)
         end)
     end)
 
-    -- Keep a targeted full-world scan running. This is intentionally
+    -- Keep a lightweight targeted world scan running. This is intentionally
     -- separate from the 2-second status/lifecycle loop so detection
     -- continues even when Arcane adds/rebuilds streamed objects.
     task.spawn(function()
@@ -2262,7 +2493,8 @@ function Arcane.Init(Shared, UI)
             if Config.ArcaneBossESP
                 or Config.ArcaneChestESP
                 or Config.ArcaneSideQuestESP then
-                pcall(scanFullWorldSources)
+                pcall(scanTargetedWorldSources)
+                pcall(scanSideQuestTemplateSources)
             end
         end
     end)
@@ -2354,6 +2586,10 @@ function Arcane.Init(Shared, UI)
                 for model in pairs(sideQuestESPObjects) do
                     destroySideQuestESP(model)
                 end
+
+                for key in pairs(sideQuestVirtualESPObjects) do
+                    destroySideQuestVirtualESP(key)
+                end
             end
         end
     end)
@@ -2376,6 +2612,53 @@ function Arcane.Init(Shared, UI)
             else
                 for target in pairs(chestESPObjects) do
                     destroyChestESP(target)
+                end
+            end
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            task.wait(0.25)
+
+            if Config.ArcaneSideQuestESP then
+                local character = Shared.player.Character
+                local playerRoot = character
+                    and character:FindFirstChild("HumanoidRootPart")
+
+                for key, data in pairs(sideQuestVirtualESPObjects) do
+                    if not data.anchor
+                        or not data.anchor.Parent
+                        or not data.source
+                        or not data.source.Parent then
+                        destroySideQuestVirtualESP(key)
+                    else
+                        local sourceRoot = getRoot(data.source)
+
+                        if sourceRoot then
+                            local position = sourceRoot.Position
+
+                            if (position - data.position).Magnitude > 0.5 then
+                                data.position = position
+                                data.anchor.CFrame = CFrame.new(position)
+                            end
+
+                            local distanceText = "STUDS: ?"
+
+                            if playerRoot then
+                                distanceText = ("STUDS: %d"):format(
+                                    math.floor(
+                                        (playerRoot.Position - position).Magnitude
+                                    )
+                                )
+                            end
+
+                            data.label.Text = "SIDE QUEST NPC | "
+                                .. tostring(data.name)
+                                .. " | "
+                                .. distanceText
+                        end
+                    end
                 end
             end
         end
