@@ -696,6 +696,161 @@ end
 
 
 -------------------------------------------------
+-- ARCANE SIDE QUEST NPC DISCOVERY
+-------------------------------------------------
+
+local SIDE_QUEST_NPC_NAMES = {
+    "Audbjorg",
+    "Asfrith",
+    "Dotta",
+    "Hundi",
+    "Jomar",
+    "Gisli",
+    "Edward Kenton",
+    "Ewan Avery",
+    "Enizor",
+    "Maya",
+    "Caleb Banks",
+    "Jasmine Lynn",
+    "Ellie Bowen",
+    "Adam Walters",
+    "Mayor Tilly",
+    "Tilly",
+    "Captain Elliot",
+    "Jay Rogers",
+    "Amulius Augur",
+    "Mamercus Lurco",
+    "Ingvild",
+    "Leto",
+    "Souvella",
+    "Isabel Slater",
+}
+
+local NORMALIZED_SIDE_QUEST_NPCS = {}
+
+for _, name in ipairs(SIDE_QUEST_NPC_NAMES) do
+    NORMALIZED_SIDE_QUEST_NPCS[normalizeName(name)] = name
+end
+
+local function hasSideQuestMarker(model)
+    local collectionService = game:GetService("CollectionService")
+
+    local okTags, tags = pcall(function()
+        return collectionService:GetTags(model)
+    end)
+
+    if okTags and type(tags) == "table" then
+        for _, tag in ipairs(tags) do
+            local normalized = normalizeName(tag)
+
+            if normalized:find("quest", 1, true)
+                or normalized:find("mission", 1, true)
+                or normalized:find("sidequest", 1, true) then
+                return true
+            end
+        end
+    end
+
+    local okAttrs, attrs = pcall(function()
+        return model:GetAttributes()
+    end)
+
+    if okAttrs and type(attrs) == "table" then
+        for key, value in pairs(attrs) do
+            local k = normalizeChestText(key)
+            local v = normalizeChestText(value)
+
+            if k:find("quest", 1, true)
+                or k:find("mission", 1, true)
+                or k:find("sidequest", 1, true)
+                or v:find("quest", 1, true)
+                or v:find("mission", 1, true)
+                or v:find("sidequest", 1, true) then
+                return true
+            end
+        end
+    end
+
+    for _, child in ipairs(model:GetChildren()) do
+        local name = normalizeChestText(child.Name)
+
+        if name:find("quest", 1, true)
+            or name:find("mission", 1, true)
+            or name:find("exclamation", 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function getSideQuestPrompt(model)
+    local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+    if not prompt then
+        return nil
+    end
+
+    local action = normalizeChestText(prompt.ActionText)
+    local object = normalizeChestText(prompt.ObjectText)
+    local promptName = normalizeChestText(prompt.Name)
+
+    if action:find("quest", 1, true)
+        or action:find("mission", 1, true)
+        or object:find("quest", 1, true)
+        or object:find("mission", 1, true)
+        or promptName:find("quest", 1, true)
+        or promptName:find("mission", 1, true) then
+        return prompt
+    end
+
+    return nil
+end
+
+local function getSideQuestNPCInfo(model)
+    if not model
+        or not model:IsA("Model")
+        or not model.Parent then
+        return nil
+    end
+
+    if not model:FindFirstChildOfClass("Humanoid") then
+        return nil
+    end
+
+    if model == Shared.player.Character then
+        return nil
+    end
+
+    local knownName = NORMALIZED_SIDE_QUEST_NPCS[normalizeName(model.Name)]
+
+    if knownName then
+        return {
+            name = knownName,
+            detectionType = "Known NPC",
+        }
+    end
+
+    if hasSideQuestMarker(model) then
+        return {
+            name = model.Name,
+            detectionType = "Quest marker",
+        }
+    end
+
+    if getSideQuestPrompt(model) then
+        return {
+            name = model.Name,
+            detectionType = "Quest prompt",
+        }
+    end
+
+    return nil
+end
+
+
+
+-------------------------------------------------
 -- DEBUG SCANNER
 -------------------------------------------------
 
@@ -1108,6 +1263,8 @@ function Arcane.Init(Shared, UI)
     Config.ArcaneBossESP = Config.ArcaneBossESP == true
     Config.ArcaneBossDebug = Config.ArcaneBossDebug == true
     Config.ArcaneChestESP = Config.ArcaneChestESP == true
+    Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
+    Config.ArcaneAutoFishing = Config.ArcaneAutoFishing == true
 
     if type(Config.ArcaneChestFilter) ~= "table" then
         Config.ArcaneChestFilter = {}
@@ -1524,11 +1681,64 @@ function Arcane.Init(Shared, UI)
     end)
 
 
+    -------------------------------------------------
+    -- SIDE QUEST NPC ESP
+    -------------------------------------------------
+
+    local sideQuestSection = UI.createSection(
+        miscTab,
+        "Side Quest NPC",
+        100
+    )
+
+    UI.createToggle(
+        sideQuestSection,
+        "Side Quest NPC ESP",
+        "Shows side quest NPCs with name and distance.",
+        "ArcaneSideQuestESP",
+        32
+    )
+
+    -------------------------------------------------
+    -- AUTO FISHING
+    -------------------------------------------------
+
+    local fishingSection = UI.createSection(
+        miscTab,
+        "Auto Fishing",
+        120
+    )
+
+    UI.createToggle(
+        fishingSection,
+        "Auto Fishing",
+        "Auto equips the rod, casts, reels, and recasts.",
+        "ArcaneAutoFishing",
+        32
+    )
+
+    local fishingStatusLabel = Instance.new("TextLabel")
+    fishingStatusLabel.Size = UDim2.new(1, -16, 0, 20)
+    fishingStatusLabel.Position = UDim2.fromOffset(8, 78)
+    fishingStatusLabel.BackgroundTransparency = 1
+    fishingStatusLabel.Text = "Status: OFF | Put cursor over water first."
+    fishingStatusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
+    fishingStatusLabel.Font = Enum.Font.Gotham
+    fishingStatusLabel.TextSize = 8
+    fishingStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    fishingStatusLabel.Parent = fishingSection
+
+
     local espObjects = {}
     local candidateModels = {}
 
     local chestESPObjects = {}
     local chestCandidates = {}
+
+    local sideQuestESPObjects = {}
+    local sideQuestCandidates = {}
+
+    local autoFishingBusy = false
 
     -- Boss lifecycle state is tracked by boss name, not by spawn position.
     -- This means a boss can die at Point A and respawn at Point B.
@@ -1649,6 +1859,99 @@ function Arcane.Init(Shared, UI)
 
         if Config.ArcaneChestESP then
             createChestESP(chest)
+        end
+    end
+
+
+    local function destroySideQuestESP(model)
+        local data = sideQuestESPObjects[model]
+
+        if data then
+            if data.highlight then
+                pcall(function()
+                    data.highlight:Destroy()
+                end)
+            end
+
+            if data.billboard then
+                pcall(function()
+                    data.billboard:Destroy()
+                end)
+            end
+
+            sideQuestESPObjects[model] = nil
+        end
+    end
+
+    local function createSideQuestESP(model)
+        if not Config.ArcaneSideQuestESP then
+            return
+        end
+
+        if sideQuestESPObjects[model] then
+            return
+        end
+
+        local info = getSideQuestNPCInfo(model)
+
+        if not info then
+            return
+        end
+
+        local root = getRoot(model)
+
+        if not root then
+            return
+        end
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "SolarSideQuestESP"
+        highlight.Adornee = model
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = Color3.fromRGB(220, 140, 40)
+        highlight.OutlineColor = Color3.fromRGB(220, 140, 40)
+        highlight.FillTransparency = 0.84
+        highlight.OutlineTransparency = 0
+        highlight.Parent = model
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "SolarSideQuestESPInfo"
+        billboard.Adornee = root
+        billboard.AlwaysOnTop = true
+        billboard.Size = UDim2.fromOffset(300, 34)
+        billboard.StudsOffset = Vector3.new(0, 3.8, 0)
+        billboard.Parent = Shared.playerGui
+
+        local label = Instance.new("TextLabel")
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.Font = Enum.Font.GothamBold
+        label.TextColor3 = Color3.fromRGB(220, 140, 40)
+        label.TextStrokeTransparency = 0.15
+        label.TextSize = 11
+        label.Text = "SIDE QUEST NPC | " .. tostring(info.name) .. " | STUDS: ?"
+        label.Parent = billboard
+
+        sideQuestESPObjects[model] = {
+            highlight = highlight,
+            billboard = billboard,
+            label = label,
+        }
+    end
+
+    local function inspectSideQuestModel(model)
+        if not model or not model.Parent or not model:IsA("Model") then
+            return
+        end
+
+        if not getSideQuestNPCInfo(model) then
+            return
+        end
+
+        sideQuestCandidates[model] = true
+
+        if Config.ArcaneSideQuestESP then
+            createSideQuestESP(model)
         end
     end
 
@@ -1836,11 +2139,13 @@ function Arcane.Init(Shared, UI)
         if model then
             inspectModel(model)
             inspectChest(model)
+            inspectSideQuestModel(model)
 
             task.delay(0.15, function()
                 if model and model.Parent then
                     inspectModel(model)
                     inspectChest(model)
+                    inspectSideQuestModel(model)
                 end
             end)
         end
@@ -1856,6 +2161,8 @@ function Arcane.Init(Shared, UI)
             removeModel(instance)
             chestCandidates[instance] = nil
             destroyChestESP(instance)
+            sideQuestCandidates[instance] = nil
+            destroySideQuestESP(instance)
         end
 
         if instance:IsA("BasePart") then
@@ -1876,6 +2183,7 @@ function Arcane.Init(Shared, UI)
             if instance:IsA("Model") then
                 inspectModel(instance)
                 inspectChest(instance)
+                inspectSideQuestModel(instance)
             elseif instance:IsA("BasePart") then
                 if normalizeName(instance.Name):find("chest", 1, true) then
                     inspectChest(instance)
@@ -1945,13 +2253,46 @@ function Arcane.Init(Shared, UI)
                 end
             end
 
-            statusLabel.Text = ("Boss: %d | Chests: %d"):format(
+            local sideQuestDetected = 0
+
+            if Config.ArcaneSideQuestESP then
+                for model in pairs(sideQuestESPObjects) do
+                    if model.Parent then
+                        sideQuestDetected += 1
+                    end
+                end
+            end
+
+            statusLabel.Text = ("Boss: %d | Chests: %d | Side NPC: %d"):format(
                 detected,
-                chestDetected
+                chestDetected,
+                sideQuestDetected
             )
         end
     end)
 
+
+
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+
+            if Config.ArcaneSideQuestESP then
+                for model in pairs(sideQuestCandidates) do
+                    if not model.Parent then
+                        sideQuestCandidates[model] = nil
+                        destroySideQuestESP(model)
+                    else
+                        createSideQuestESP(model)
+                    end
+                end
+            else
+                for model in pairs(sideQuestESPObjects) do
+                    destroySideQuestESP(model)
+                end
+            end
+        end
+    end)
 
     task.spawn(function()
         while true do
@@ -2067,6 +2408,256 @@ function Arcane.Init(Shared, UI)
                         .. distanceText
                 end
             end
+        end
+    end)
+
+
+    task.spawn(function()
+        while true do
+            task.wait(0.25)
+
+            if Config.ArcaneSideQuestESP then
+                local character = Shared.player.Character
+                local playerRoot = character
+                    and character:FindFirstChild("HumanoidRootPart")
+
+                if playerRoot then
+                    for model, data in pairs(sideQuestESPObjects) do
+                        local root = getRoot(model)
+                        local info = getSideQuestNPCInfo(model)
+
+                        if not model.Parent or not root or not info then
+                            destroySideQuestESP(model)
+                        else
+                            data.label.Text = "SIDE QUEST NPC | "
+                                .. tostring(info.name)
+                                .. " | STUDS: "
+                                .. tostring(math.floor(
+                                    (playerRoot.Position - root.Position).Magnitude
+                                ))
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+
+    -------------------------------------------------
+    -- AUTO FISHING
+    -------------------------------------------------
+
+    local function findFishingRod()
+        local character = Shared.player.Character
+
+        local function isFishingRod(tool)
+            if not tool:IsA("Tool") then
+                return false
+            end
+
+            local name = normalizeName(tool.Name)
+
+            return name:find("fishingrod", 1, true) ~= nil
+                or name == "rod"
+                or name:find("woodenrod", 1, true) ~= nil
+                or name:find("bronzerod", 1, true) ~= nil
+                or name:find("collectorsrod", 1, true) ~= nil
+                or name:find("fishmongersrod", 1, true) ~= nil
+        end
+
+        if character then
+            for _, child in ipairs(character:GetChildren()) do
+                if isFishingRod(child) then
+                    return child
+                end
+            end
+        end
+
+        local backpack = Shared.player:FindFirstChildOfClass("Backpack")
+
+        if backpack then
+            for _, child in ipairs(backpack:GetChildren()) do
+                if isFishingRod(child) then
+                    return child
+                end
+            end
+        end
+
+        return nil
+    end
+
+    local function equipFishingRod()
+        local rod = findFishingRod()
+
+        if not rod then
+            return nil
+        end
+
+        local character = Shared.player.Character
+        local humanoid = character
+            and character:FindFirstChildOfClass("Humanoid")
+
+        if humanoid and rod.Parent ~= character then
+            pcall(function()
+                humanoid:EquipTool(rod)
+            end)
+            task.wait(0.2)
+        end
+
+        return rod
+    end
+
+    local function clickMouse1()
+        if type(mouse1click) == "function" then
+            local ok = pcall(function()
+                mouse1click()
+            end)
+
+            if ok then
+                return true
+            end
+        end
+
+        local camera = workspace.CurrentCamera
+        local virtualInputManager = game:GetService("VirtualInputManager")
+
+        if not camera or not virtualInputManager then
+            return false
+        end
+
+        local viewport = camera.ViewportSize
+        local x = math.floor(viewport.X * 0.5)
+        local y = math.floor(viewport.Y * 0.5)
+
+        local okDown = pcall(function()
+            virtualInputManager:SendMouseButtonEvent(
+                x, y, 0, true, game, 0
+            )
+        end)
+
+        local okUp = pcall(function()
+            virtualInputManager:SendMouseButtonEvent(
+                x, y, 0, false, game, 0
+            )
+        end)
+
+        return okDown and okUp
+    end
+
+    local function detectFishingResult()
+        local camera = workspace.CurrentCamera
+        local guiService = game:GetService("GuiService")
+
+        if not camera or not guiService then
+            return false
+        end
+
+        local viewport = camera.ViewportSize
+        local x = math.floor(viewport.X * 0.5)
+        local y = math.floor(viewport.Y * 0.5)
+
+        local ok, objects = pcall(function()
+            return guiService:GetGuiObjectsAtPosition(x, y)
+        end)
+
+        if not ok or type(objects) ~= "table" then
+            return false
+        end
+
+        local keywords = {
+            "fish",
+            "junk",
+            "treasure",
+            "sunken",
+        }
+
+        for _, object in ipairs(objects) do
+            local name = normalizeName(object.Name)
+            local text = ""
+
+            if object:IsA("TextLabel")
+                or object:IsA("TextButton") then
+                text = normalizeName(object.Text)
+            end
+
+            for _, keyword in ipairs(keywords) do
+                if name:find(keyword, 1, true)
+                    or text:find(keyword, 1, true) then
+                    return true
+                end
+            end
+        end
+
+        return false
+    end
+
+    task.spawn(function()
+        while true do
+            task.wait(0.25)
+
+            if not Config.ArcaneAutoFishing then
+                fishingStatusLabel.Text = "Status: OFF | Put cursor over water first."
+                autoFishingBusy = false
+                continue
+            end
+
+            if autoFishingBusy then
+                continue
+            end
+
+            autoFishingBusy = true
+
+            local rod = equipFishingRod()
+
+            if not rod then
+                fishingStatusLabel.Text = "Status: Fishing Rod not found."
+                autoFishingBusy = false
+                task.wait(2)
+                continue
+            end
+
+            fishingStatusLabel.Text = "Status: Casting..."
+
+            -- Cursor position determines where the cast lands.
+            clickMouse1()
+            task.wait(0.75)
+
+            fishingStatusLabel.Text = "Status: Waiting / Reeling..."
+
+            local started = os.clock()
+            local catchDetected = false
+
+            while Config.ArcaneAutoFishing
+                and os.clock() - started < 72 do
+
+                clickMouse1()
+
+                if detectFishingResult() then
+                    catchDetected = true
+                    break
+                end
+
+                task.wait(0.065)
+            end
+
+            if catchDetected then
+                fishingStatusLabel.Text = "Status: Catch detected — recasting..."
+            else
+                fishingStatusLabel.Text = "Status: Recasting..."
+            end
+
+            task.wait(0.5)
+
+            if Config.ArcaneAutoFishing then
+                local equippedRod = equipFishingRod()
+
+                if equippedRod then
+                    clickMouse1()
+                end
+            end
+
+            task.wait(0.5)
+            autoFishingBusy = false
         end
     end)
 
