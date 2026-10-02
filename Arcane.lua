@@ -818,7 +818,9 @@ local function getSideQuestNPCInfo(model)
         return nil
     end
 
-    if model == Shared.player.Character then
+    local localPlayer = game:GetService("Players").LocalPlayer
+
+    if localPlayer and model == localPlayer.Character then
         return nil
     end
 
