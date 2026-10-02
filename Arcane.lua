@@ -2597,69 +2597,11 @@ function Arcane.Init(Shared, UI)
         while true do
             task.wait(0.25)
 
-            if not Config.ArcaneAutoFishing then
-                fishingStatusLabel.Text = "Status: OFF | Put cursor over water first."
-                autoFishingBusy = false
-                continue
-            end
-
-            if autoFishingBusy then
-                continue
-            end
-
-            autoFishingBusy = true
-
-            local rod = equipFishingRod()
-
-            if not rod then
-                fishingStatusLabel.Text = "Status: Fishing Rod not found."
-                autoFishingBusy = false
-                task.wait(2)
-                continue
-            end
-
-            fishingStatusLabel.Text = "Status: Casting..."
-
-            -- Cursor position determines where the cast lands.
-            clickMouse1()
-            task.wait(0.75)
-
-            fishingStatusLabel.Text = "Status: Waiting / Reeling..."
-
-            local started = os.clock()
-            local catchDetected = false
-
-            while Config.ArcaneAutoFishing
-                and os.clock() - started < 72 do
-
-                clickMouse1()
-
-                if detectFishingResult() then
-                    catchDetected = true
-                    break
-                end
-
-                task.wait(0.065)
-            end
-
-            if catchDetected then
-                fishingStatusLabel.Text = "Status: Catch detected — recasting..."
-            else
-                fishingStatusLabel.Text = "Status: Recasting..."
-            end
-
-            task.wait(0.5)
-
             if Config.ArcaneAutoFishing then
-                local equippedRod = equipFishingRod()
-
-                if equippedRod then
-                    clickMouse1()
-                end
+                fishingStatusLabel.Text = "Status: Waiting for fishing remotes..."
+            else
+                fishingStatusLabel.Text = "Status: OFF | Waiting for fishing remotes."
             end
-
-            task.wait(0.5)
-            autoFishingBusy = false
         end
     end)
 
