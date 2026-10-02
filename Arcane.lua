@@ -1742,50 +1742,6 @@ function Arcane.Init(Shared, UI)
 
     local autoFishingBusy = false
 
-    -------------------------------------------------
-    -- FULL-WORLD SOURCE RESCAN
-    -------------------------------------------------
-    -- Arcane keeps some NPCs in RS.UnloadEnemies with real world
-    -- positions, while the live map uses Workspace.Map/NPCs/Enemies.
-    -- Keep rescanning these containers so ESP is not dependent on
-    -- which object happened to trigger DescendantAdded.
-    local function scanFullWorldSources()
-        local sources = {
-            workspace:FindFirstChild("Map"),
-            workspace:FindFirstChild("NPCs"),
-            workspace:FindFirstChild("Enemies"),
-        }
-
-        local replicatedStorage = game:GetService("ReplicatedStorage")
-        local rs = replicatedStorage:FindFirstChild("RS")
-
-        if rs then
-            table.insert(sources, rs:FindFirstChild("UnloadEnemies"))
-        end
-
-        for _, container in ipairs(sources) do
-            if container then
-                local descendants = container:GetDescendants()
-
-                for _, instance in ipairs(descendants) do
-                    if instance:IsA("Model") then
-                        inspectModel(instance)
-                        inspectChest(instance)
-                        inspectSideQuestModel(instance)
-                    elseif instance:IsA("BasePart") then
-                        local normalized = normalizeName(instance.Name)
-
-                        if normalized:find("chest", 1, true)
-                            or normalized:find("treasure", 1, true)
-                            or normalized:find("sealed", 1, true) then
-                            inspectChest(instance)
-                        end
-                    end
-                end
-            end
-        end
-    end
-
     -- Boss lifecycle state is tracked by boss name, not by spawn position.
     -- This means a boss can die at Point A and respawn at Point B.
     local bossStates = {}
@@ -2162,6 +2118,50 @@ function Arcane.Init(Shared, UI)
 
         if Config.ArcaneBossESP then
             createESP(model)
+        end
+    end
+
+    -------------------------------------------------
+    -- FULL-WORLD SOURCE RESCAN
+    -------------------------------------------------
+    -- Arcane keeps some NPCs in RS.UnloadEnemies with real world
+    -- positions, while the live map uses Workspace.Map/NPCs/Enemies.
+    -- Keep rescanning these containers so ESP is not dependent on
+    -- which object happened to trigger DescendantAdded.
+    local function scanFullWorldSources()
+        local sources = {
+            workspace:FindFirstChild("Map"),
+            workspace:FindFirstChild("NPCs"),
+            workspace:FindFirstChild("Enemies"),
+        }
+
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local rs = replicatedStorage:FindFirstChild("RS")
+
+        if rs then
+            table.insert(sources, rs:FindFirstChild("UnloadEnemies"))
+        end
+
+        for _, container in ipairs(sources) do
+            if container then
+                local descendants = container:GetDescendants()
+
+                for _, instance in ipairs(descendants) do
+                    if instance:IsA("Model") then
+                        inspectModel(instance)
+                        inspectChest(instance)
+                        inspectSideQuestModel(instance)
+                    elseif instance:IsA("BasePart") then
+                        local normalized = normalizeName(instance.Name)
+
+                        if normalized:find("chest", 1, true)
+                            or normalized:find("treasure", 1, true)
+                            or normalized:find("sealed", 1, true) then
+                            inspectChest(instance)
+                        end
+                    end
+                end
+            end
         end
     end
 
