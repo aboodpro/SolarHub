@@ -364,151 +364,249 @@ local function getBossInfo(model)
     }
 end
 
+
 -------------------------------------------------
--- CHEST / SIDE QUEST NPC DISCOVERY
+-- ARCANE CHEST TYPES / FILTER REGISTRY
 -------------------------------------------------
 
-local SIDE_QUEST_NPC_NAMES = {
-    "Asfrith",
-    "Dotta",
-    "Audbjorg",
-    "Hundi",
-    "Jomar",
-    "Gisli",
-    "Edward Kenton",
-    "Ewan Avery",
-    "Enizor",
-    "Maya",
-    "Caleb Banks",
-    "Jasmine Lynn",
-    "Ellie Bowen",
-    "Adam Walters",
-    "Mayor Tilly",
-    "Tilly",
-    "Captain Elliot",
-    "Jay Rogers",
-    "Amulius Augur",
-    "Mamercus Lurco",
-    "Ingvild",
-    "Leto",
-    "Souvella",
-    "Isabel Slater",
+local CHEST_TYPE_ORDER = {
+    "COMMON",
+    "UNCOMMON",
+    "RARE",
+    "MYSTIC",
+    "LEGENDARY",
+    "PRIVATE_STORAGE",
+    "SKY",
+    "STEEL",
+    "BRONZE_SEALED",
+    "NIMBUS_SEALED",
+    "DARK_SEALED",
+    "OTHER",
 }
 
-local NORMALIZED_SIDE_QUEST_NPCS = {}
+local CHEST_DISPLAY_NAMES = {
+    COMMON = "Common Chest",
+    UNCOMMON = "Uncommon Chest",
+    RARE = "Rare Chest",
+    MYSTIC = "Mystic Chest",
+    LEGENDARY = "Legendary Chest",
+    PRIVATE_STORAGE = "Private Storage Chest",
+    SKY = "Sky Chest",
+    STEEL = "Steel Chest",
+    BRONZE_SEALED = "Bronze Sealed Chest",
+    NIMBUS_SEALED = "Nimbus Sealed Chest",
+    DARK_SEALED = "Dark Sealed Chest",
+    OTHER = "Other Chest",
+}
 
-for _, name in ipairs(SIDE_QUEST_NPC_NAMES) do
-    NORMALIZED_SIDE_QUEST_NPCS[normalizeName(name)] = name
+local CHEST_COLORS = {
+    COMMON = Color3.fromRGB(175, 175, 185),
+    UNCOMMON = Color3.fromRGB(255, 220, 70),
+    RARE = Color3.fromRGB(70, 150, 255),
+    MYSTIC = Color3.fromRGB(255, 70, 70),
+    LEGENDARY = Color3.fromRGB(70, 220, 105),
+    PRIVATE_STORAGE = Color3.fromRGB(175, 175, 185),
+    SKY = Color3.fromRGB(175, 175, 185),
+    STEEL = Color3.fromRGB(175, 175, 185),
+    BRONZE_SEALED = Color3.fromRGB(175, 175, 185),
+    NIMBUS_SEALED = Color3.fromRGB(175, 175, 185),
+    DARK_SEALED = Color3.fromRGB(175, 175, 185),
+    OTHER = Color3.fromRGB(175, 175, 185),
+}
+
+local function normalizeChestText(value)
+    return tostring(value or ""):lower():gsub("[^%w]+", "")
 end
 
-local function questMarker(model)
-    local collectionService = game:GetService("CollectionService")
+local function classifyChestText(value)
+    local text = normalizeChestText(value)
 
+    if text == "" then
+        return nil
+    end
+
+    if text:find("darksealed", 1, true) then
+        return "DARK_SEALED"
+    end
+
+    if text:find("nimbussealed", 1, true) then
+        return "NIMBUS_SEALED"
+    end
+
+    if text:find("bronze", 1, true) and text:find("sealed", 1, true) then
+        return "BRONZE_SEALED"
+    end
+
+    if text:find("privatestorage", 1, true) then
+        return "PRIVATE_STORAGE"
+    end
+
+    if text:find("sky", 1, true) and text:find("chest", 1, true) then
+        return "SKY"
+    end
+
+    if text:find("steel", 1, true) and text:find("chest", 1, true) then
+        return "STEEL"
+    end
+
+    if text:find("legendary", 1, true) then
+        return "LEGENDARY"
+    end
+
+    if text:find("mystic", 1, true) then
+        return "MYSTIC"
+    end
+
+    if text:find("rare", 1, true) then
+        return "RARE"
+    end
+
+    if text:find("uncommon", 1, true)
+        or text:find("silver", 1, true) then
+        return "UNCOMMON"
+    end
+
+    if text:find("common", 1, true)
+        and not text:find("uncommon", 1, true) then
+        return "COMMON"
+    end
+
+    if (text:find("gold", 1, true) or text:find("golden", 1, true))
+        and text:find("chest", 1, true) then
+        return "RARE"
+    end
+
+    return nil
+end
+
+local function collectChestTextSources(target)
+    local sources = {}
+
+    if not target then
+        return sources
+    end
+
+    table.insert(sources, target.Name)
+
+    local function addValue(value)
+        local valueType = typeof(value)
+
+        if valueType == "string"
+            or valueType == "number"
+            or valueType == "boolean" then
+            table.insert(sources, tostring(value))
+        end
+    end
+
+    local model = target:IsA("Model")
+        and target
+        or target:FindFirstAncestorOfClass("Model")
+
+    if model then
+        local okAttrs, attrs = pcall(function()
+            return model:GetAttributes()
+        end)
+
+        if okAttrs and type(attrs) == "table" then
+            for key, value in pairs(attrs) do
+                table.insert(sources, tostring(key))
+                addValue(value)
+            end
+        end
+
+        for _, child in ipairs(model:GetDescendants()) do
+            if child:IsA("StringValue")
+                or child:IsA("IntValue")
+                or child:IsA("NumberValue") then
+                table.insert(sources, child.Name)
+                addValue(child.Value)
+            elseif child:IsA("ProximityPrompt") then
+                table.insert(sources, child.Name)
+                addValue(child.ActionText)
+                addValue(child.ObjectText)
+            end
+        end
+    end
+
+    return sources
+end
+
+local function getChestType(target)
+    if not target or not target.Parent then
+        return nil
+    end
+
+    for _, source in ipairs(collectChestTextSources(target)) do
+        local chestType = classifyChestText(source)
+
+        if chestType then
+            return chestType
+        end
+    end
+
+    return "OTHER"
+end
+
+local function isChestFilterEnabled(Config, chestType)
+    local filter = Config.ArcaneChestFilter
+
+    if type(filter) ~= "table" then
+        return true
+    end
+
+    return filter[chestType] == true
+end
+
+local function looksLikeChestModel(model)
+    if not model or not model:IsA("Model") then
+        return false
+    end
+
+    local normalized = normalizeName(model.Name)
+
+    if normalized:find("chest", 1, true)
+        or normalized:find("treasure", 1, true)
+        or normalized:find("sealed", 1, true) then
+        return true
+    end
+
+    local collectionService = game:GetService("CollectionService")
     local okTags, tags = pcall(function()
         return collectionService:GetTags(model)
     end)
 
     if okTags and type(tags) == "table" then
         for _, tag in ipairs(tags) do
-            local normalized = normalizeName(tag)
+            local tagName = normalizeName(tag)
 
-            if normalized:find("sidequest", 1, true)
-                or normalized:find("questgiver", 1, true)
-                or normalized:find("questnpc", 1, true) then
-                return "Tag:" .. tostring(tag)
+            if tagName:find("chest", 1, true)
+                or tagName:find("treasure", 1, true) then
+                return true
             end
         end
     end
 
-    local okAttrs, attrs = pcall(function()
-        return model:GetAttributes()
-    end)
+    for _, child in ipairs(model:GetChildren()) do
+        local childName = normalizeName(child.Name)
 
-    if okAttrs and type(attrs) == "table" then
-        for key, value in pairs(attrs) do
-            local k = normalizeName(key)
-            local v = normalizeName(value)
-
-            if k:find("sidequest", 1, true)
-                or k:find("questgiver", 1, true)
-                or k:find("questnpc", 1, true)
-                or v:find("sidequest", 1, true)
-                or v:find("questgiver", 1, true) then
-                return "Attribute:" .. tostring(key)
-            end
+        if childName == "chest"
+            or childName == "chestmodel"
+            or childName == "treasurechest"
+            or childName == "sealedchest" then
+            return true
         end
-    end
 
-    return nil
-end
-
-local function hasQuestPrompt(model)
-    for _, child in ipairs(model:GetDescendants()) do
         if child:IsA("ProximityPrompt") then
-            local action = normalizeName(child.ActionText)
-            local object = normalizeName(child.ObjectText)
-            local name = normalizeName(child.Name)
+            local promptText = normalizeChestText(child.ObjectText)
 
-            if action:find("quest", 1, true)
-                or action:find("mission", 1, true)
-                or object:find("quest", 1, true)
-                or object:find("mission", 1, true)
-                or name:find("quest", 1, true) then
+            if promptText:find("chest", 1, true)
+                or promptText:find("treasure", 1, true) then
                 return true
             end
         end
     end
 
     return false
-end
-
-local function getSideQuestNPCInfo(model)
-    if not model or not model:IsA("Model") or not model.Parent then
-        return nil
-    end
-
-    if not model:FindFirstChildOfClass("Humanoid") then
-        return nil
-    end
-
-    if Players:GetPlayerFromCharacter(model) then
-        return nil
-    end
-
-    if model.Parent and normalizeName(model.Parent.Name) == "enemies" then
-        return nil
-    end
-
-    if getBossClass(model) then
-        return nil
-    end
-
-    local known = NORMALIZED_SIDE_QUEST_NPCS[normalizeName(model.Name)]
-
-    if known then
-        return {
-            name = known,
-            detectionType = "KnownSideQuestNPC",
-        }
-    end
-
-    local marker = questMarker(model)
-
-    if marker then
-        return {
-            name = model.Name,
-            detectionType = marker,
-        }
-    end
-
-    if hasQuestPrompt(model) then
-        return {
-            name = model.Name,
-            detectionType = "QuestPrompt",
-        }
-    end
-
-    return nil
 end
 
 local function getChestTarget(object)
@@ -520,36 +618,16 @@ local function getChestTarget(object)
         and object
         or object:FindFirstAncestorOfClass("Model")
 
-    if model then
-        local normalized = normalizeName(model.Name)
-
-        if normalized:find("chest", 1, true)
-            or normalized:find("treasure", 1, true)
-            or normalized:find("sealedchest", 1, true) then
-            return model
-        end
-
-        local okTags, tags = pcall(function()
-            return game:GetService("CollectionService"):GetTags(model)
-        end)
-
-        if okTags and type(tags) == "table" then
-            for _, tag in ipairs(tags) do
-                local t = normalizeName(tag)
-
-                if t:find("chest", 1, true)
-                    or t:find("treasure", 1, true) then
-                    return model
-                end
-            end
-        end
+    if model and looksLikeChestModel(model) then
+        return model
     end
 
     if object:IsA("BasePart") then
         local normalized = normalizeName(object.Name)
 
         if normalized:find("chest", 1, true)
-            or normalized:find("treasure", 1, true) then
+            or normalized:find("treasure", 1, true)
+            or normalized:find("sealedchest", 1, true) then
             return object
         end
     end
@@ -568,6 +646,7 @@ local function getChestRoot(target)
 
     return nil
 end
+
 
 -------------------------------------------------
 -- DEBUG SCANNER
@@ -982,7 +1061,16 @@ function Arcane.Init(Shared, UI)
     Config.ArcaneBossESP = Config.ArcaneBossESP == true
     Config.ArcaneBossDebug = Config.ArcaneBossDebug == true
     Config.ArcaneChestESP = Config.ArcaneChestESP == true
-    Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
+
+    if type(Config.ArcaneChestFilter) ~= "table" then
+        Config.ArcaneChestFilter = {}
+    end
+
+    for _, chestType in ipairs(CHEST_TYPE_ORDER) do
+        if Config.ArcaneChestFilter[chestType] == nil then
+            Config.ArcaneChestFilter[chestType] = true
+        end
+    end
 
     local miscTab = tabs["Misc"]
     if not miscTab then
@@ -1114,7 +1202,7 @@ function Arcane.Init(Shared, UI)
     local section = UI.createSection(
         miscTab,
         "Arcane Odyssey",
-        500
+        330
     )
 
     UI.createToggle(
@@ -1131,22 +1219,6 @@ function Arcane.Init(Shared, UI)
         "Shows detection information and discovery results.",
         "ArcaneBossDebug",
         80
-    )
-
-    UI.createToggle(
-        section,
-        "Chest ESP",
-        "Shows world chests.",
-        "ArcaneChestESP",
-        335
-    )
-
-    UI.createToggle(
-        section,
-        "Side Quest NPC ESP",
-        "Shows NPCs that give side quests.",
-        "ArcaneSideQuestESP",
-        379
     )
 
     local scanButton = Instance.new("TextButton")
@@ -1250,14 +1322,166 @@ function Arcane.Init(Shared, UI)
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
     statusLabel.Parent = section
 
+    
+    -------------------------------------------------
+    -- CHEST ESP / MULTI-FILTER UI
+    -------------------------------------------------
+
+    local chestSection = UI.createSection(
+        miscTab,
+        "Chest ESP",
+        370
+    )
+
+    UI.createToggle(
+        chestSection,
+        "Chest ESP",
+        "Shows chests with their type and distance.",
+        "ArcaneChestESP",
+        32
+    )
+
+    local chestFilterTitle = Instance.new("TextLabel")
+    chestFilterTitle.Size = UDim2.new(1, -16, 0, 22)
+    chestFilterTitle.Position = UDim2.fromOffset(8, 78)
+    chestFilterTitle.BackgroundTransparency = 1
+    chestFilterTitle.Text = "Chest Filter — select multiple types"
+    chestFilterTitle.TextColor3 = Color3.fromRGB(205, 205, 215)
+    chestFilterTitle.Font = Enum.Font.GothamBold
+    chestFilterTitle.TextSize = 9
+    chestFilterTitle.TextXAlignment = Enum.TextXAlignment.Left
+    chestFilterTitle.Parent = chestSection
+
+    local chestFilterButtons = {}
+
+    local function updateChestFilterButton(chestType)
+        local buttonData = chestFilterButtons[chestType]
+        if not buttonData then
+            return
+        end
+
+        local enabled = Config.ArcaneChestFilter[chestType] == true
+
+        buttonData.indicator.BackgroundColor3 = enabled
+            and CHEST_COLORS[chestType]
+            or Color3.fromRGB(50, 50, 60)
+
+        buttonData.text.TextColor3 = enabled
+            and Color3.fromRGB(240, 240, 240)
+            or Color3.fromRGB(120, 120, 130)
+
+        buttonData.check.Text = enabled and "✓" or ""
+    end
+
+    local filterStartY = 104
+    local filterRowHeight = 34
+
+    for index, chestType in ipairs(CHEST_TYPE_ORDER) do
+        local zeroIndex = index - 1
+        local column = zeroIndex % 2
+        local row = math.floor(zeroIndex / 2)
+
+        local button = Instance.new("TextButton")
+        button.Size = UDim2.new(0.5, -12, 0, 30)
+        button.Position = UDim2.new(
+            0.5 * column,
+            column == 0 and 4 or 8,
+            0,
+            filterStartY + (row * filterRowHeight)
+        )
+        button.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+        button.BorderSizePixel = 0
+        button.Text = ""
+        button.Parent = chestSection
+        Instance.new("UICorner", button).CornerRadius = UDim.new(0, 7)
+
+        local indicator = Instance.new("Frame")
+        indicator.Size = UDim2.fromOffset(16, 16)
+        indicator.Position = UDim2.fromOffset(7, 7)
+        indicator.BorderSizePixel = 0
+        indicator.Parent = button
+        Instance.new("UICorner", indicator).CornerRadius = UDim.new(0, 4)
+
+        local check = Instance.new("TextLabel")
+        check.Size = UDim2.fromScale(1, 1)
+        check.BackgroundTransparency = 1
+        check.Font = Enum.Font.GothamBold
+        check.TextSize = 11
+        check.TextColor3 = Color3.fromRGB(255, 255, 255)
+        check.Parent = indicator
+
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Size = UDim2.new(1, -31, 1, 0)
+        textLabel.Position = UDim2.fromOffset(29, 0)
+        textLabel.BackgroundTransparency = 1
+        textLabel.Text = CHEST_DISPLAY_NAMES[chestType]
+        textLabel.TextSize = 9
+        textLabel.Font = Enum.Font.GothamBold
+        textLabel.TextXAlignment = Enum.TextXAlignment.Left
+        textLabel.TextColor3 = Color3.fromRGB(220, 220, 225)
+        textLabel.Parent = button
+
+        chestFilterButtons[chestType] = {
+            button = button,
+            indicator = indicator,
+            check = check,
+            text = textLabel,
+        }
+
+        updateChestFilterButton(chestType)
+
+        button.Activated:Connect(function()
+            Config.ArcaneChestFilter[chestType] = not (
+                Config.ArcaneChestFilter[chestType] == true
+            )
+            updateChestFilterButton(chestType)
+        end)
+    end
+
+    local selectAllButton = Instance.new("TextButton")
+    selectAllButton.Size = UDim2.new(0.5, -12, 0, 28)
+    selectAllButton.Position = UDim2.new(0, 4, 0, 322)
+    selectAllButton.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
+    selectAllButton.BorderSizePixel = 0
+    selectAllButton.Text = "SELECT ALL"
+    selectAllButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+    selectAllButton.Font = Enum.Font.GothamBold
+    selectAllButton.TextSize = 9
+    selectAllButton.Parent = chestSection
+    Instance.new("UICorner", selectAllButton).CornerRadius = UDim.new(0, 7)
+
+    local clearAllButton = Instance.new("TextButton")
+    clearAllButton.Size = UDim2.new(0.5, -12, 0, 28)
+    clearAllButton.Position = UDim2.new(0.5, 8, 0, 322)
+    clearAllButton.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
+    clearAllButton.BorderSizePixel = 0
+    clearAllButton.Text = "CLEAR ALL"
+    clearAllButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+    clearAllButton.Font = Enum.Font.GothamBold
+    clearAllButton.TextSize = 9
+    clearAllButton.Parent = chestSection
+    Instance.new("UICorner", clearAllButton).CornerRadius = UDim.new(0, 7)
+
+    selectAllButton.Activated:Connect(function()
+        for _, chestType in ipairs(CHEST_TYPE_ORDER) do
+            Config.ArcaneChestFilter[chestType] = true
+            updateChestFilterButton(chestType)
+        end
+    end)
+
+    clearAllButton.Activated:Connect(function()
+        for _, chestType in ipairs(CHEST_TYPE_ORDER) do
+            Config.ArcaneChestFilter[chestType] = false
+            updateChestFilterButton(chestType)
+        end
+    end)
+
+
     local espObjects = {}
     local candidateModels = {}
 
     local chestESPObjects = {}
     local chestCandidates = {}
-
-    local sideQuestESPObjects = {}
-    local sideQuestCandidates = {}
 
     -- Boss lifecycle state is tracked by boss name, not by spawn position.
     -- This means a boss can die at Point A and respawn at Point B.
@@ -1306,28 +1530,15 @@ function Arcane.Init(Shared, UI)
         end
     end
 
-    local function destroySideQuestESP(model)
-        local data = sideQuestESPObjects[model]
-
-        if data then
-            if data.highlight then
-                pcall(function()
-                    data.highlight:Destroy()
-                end)
-            end
-
-            if data.billboard then
-                pcall(function()
-                    data.billboard:Destroy()
-                end)
-            end
-
-            sideQuestESPObjects[model] = nil
-        end
-    end
-
     local function createChestESP(target)
         if not Config.ArcaneChestESP then
+            return
+        end
+
+        local chestType = getChestType(target)
+
+        if not chestType or not isChestFilterEnabled(Config, chestType) then
+            destroyChestESP(target)
             return
         end
 
@@ -1341,11 +1552,16 @@ function Arcane.Init(Shared, UI)
             return
         end
 
+        local chestColor = CHEST_COLORS[chestType] or CHEST_COLORS.OTHER
+        local chestDisplayName = CHEST_DISPLAY_NAMES[chestType] or "Other Chest"
+
         local highlight = Instance.new("Highlight")
         highlight.Name = "SolarChestESP"
         highlight.Adornee = target
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillTransparency = 0.82
+        highlight.FillColor = chestColor
+        highlight.OutlineColor = chestColor
+        highlight.FillTransparency = 0.84
         highlight.OutlineTransparency = 0
         highlight.Parent = target:IsA("Model") and target or Workspace
 
@@ -1353,7 +1569,7 @@ function Arcane.Init(Shared, UI)
         billboard.Name = "SolarChestESPInfo"
         billboard.Adornee = root
         billboard.AlwaysOnTop = true
-        billboard.Size = UDim2.fromOffset(180, 40)
+        billboard.Size = UDim2.fromOffset(260, 32)
         billboard.StudsOffset = Vector3.new(0, 2.8, 0)
         billboard.Parent = Shared.playerGui
 
@@ -1361,71 +1577,17 @@ function Arcane.Init(Shared, UI)
         label.BackgroundTransparency = 1
         label.Size = UDim2.fromScale(1, 1)
         label.Font = Enum.Font.GothamBold
-        label.TextColor3 = Color3.new(1, 1, 1)
-        label.TextStrokeTransparency = 0.2
-        label.TextSize = 11
-        label.Text = "CHEST"
+        label.TextColor3 = chestColor
+        label.TextStrokeTransparency = 0.15
+        label.TextSize = 12
+        label.Text = chestDisplayName .. " | STUDS: ?"
         label.Parent = billboard
 
         chestESPObjects[target] = {
             highlight = highlight,
             billboard = billboard,
             label = label,
-        }
-    end
-
-    local function createSideQuestESP(model)
-        if not Config.ArcaneSideQuestESP then
-            return
-        end
-
-        if sideQuestESPObjects[model] then
-            return
-        end
-
-        local info = getSideQuestNPCInfo(model)
-
-        if not info then
-            return
-        end
-
-        local root = getRoot(model)
-
-        if not root then
-            return
-        end
-
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "SolarSideQuestESP"
-        highlight.Adornee = model
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillTransparency = 0.82
-        highlight.OutlineTransparency = 0
-        highlight.Parent = model
-
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "SolarSideQuestESPInfo"
-        billboard.Adornee = root
-        billboard.AlwaysOnTop = true
-        billboard.Size = UDim2.fromOffset(290, 48)
-        billboard.StudsOffset = Vector3.new(0, 3.8, 0)
-        billboard.Parent = root
-
-        local label = Instance.new("TextLabel")
-        label.BackgroundTransparency = 1
-        label.Size = UDim2.fromScale(1, 1)
-        label.Font = Enum.Font.GothamBold
-        label.TextColor3 = Color3.new(1, 1, 1)
-        label.TextStrokeTransparency = 0.2
-        label.TextSize = 11
-        label.TextWrapped = true
-        label.Text = "SIDE QUEST NPC\n" .. tostring(info.name)
-        label.Parent = billboard
-
-        sideQuestESPObjects[model] = {
-            highlight = highlight,
-            billboard = billboard,
-            label = label,
+            chestType = chestType,
         }
     end
 
@@ -1443,23 +1605,7 @@ function Arcane.Init(Shared, UI)
         end
     end
 
-    local function inspectSideQuestModel(model)
-        if not model or not model.Parent or not model:IsA("Model") then
-            return
-        end
-
-        if not getSideQuestNPCInfo(model) then
-            return
-        end
-
-        sideQuestCandidates[model] = true
-
-        if Config.ArcaneSideQuestESP then
-            createSideQuestESP(model)
-        end
-    end
-
-
+    local function markBossDead(model, bossName)
         if not initializedBossState then
             return
         end
@@ -1642,20 +1788,18 @@ function Arcane.Init(Shared, UI)
 
         if model then
             inspectModel(model)
-            inspectSideQuestModel(model)
             inspectChest(model)
 
             task.delay(0.15, function()
                 if model and model.Parent then
                     inspectModel(model)
-                    inspectSideQuestModel(model)
                     inspectChest(model)
                 end
             end)
         end
 
         if instance:IsA("BasePart")
-            and instance.Name:lower():find("chest", 1, true) then
+            and normalizeName(instance.Name):find("chest", 1, true) then
             inspectChest(instance)
         end
     end)
@@ -1663,12 +1807,8 @@ function Arcane.Init(Shared, UI)
     workspace.DescendantRemoving:Connect(function(instance)
         if instance:IsA("Model") then
             removeModel(instance)
-
             chestCandidates[instance] = nil
             destroyChestESP(instance)
-
-            sideQuestCandidates[instance] = nil
-            destroySideQuestESP(instance)
         end
 
         if instance:IsA("BasePart") then
@@ -1688,10 +1828,9 @@ function Arcane.Init(Shared, UI)
         for _, instance in ipairs(descendants) do
             if instance:IsA("Model") then
                 inspectModel(instance)
-                inspectSideQuestModel(instance)
                 inspectChest(instance)
             elseif instance:IsA("BasePart") then
-                if instance.Name:lower():find("chest", 1, true) then
+                if normalizeName(instance.Name):find("chest", 1, true) then
                     inspectChest(instance)
                 end
             end
@@ -1707,42 +1846,6 @@ function Arcane.Init(Shared, UI)
         task.delay(0.25, function()
             initializedBossState = true
         end)
-    end)
-
-    task.spawn(function()
-        while true do
-            task.wait(2)
-
-            if Config.ArcaneChestESP then
-                for target in pairs(chestCandidates) do
-                    if not target.Parent then
-                        chestCandidates[target] = nil
-                        destroyChestESP(target)
-                    else
-                        createChestESP(target)
-                    end
-                end
-            else
-                for target in pairs(chestESPObjects) do
-                    destroyChestESP(target)
-                end
-            end
-
-            if Config.ArcaneSideQuestESP then
-                for model in pairs(sideQuestCandidates) do
-                    if not model.Parent then
-                        sideQuestCandidates[model] = nil
-                        destroySideQuestESP(model)
-                    else
-                        createSideQuestESP(model)
-                    end
-                end
-            else
-                for model in pairs(sideQuestESPObjects) do
-                    destroySideQuestESP(model)
-                end
-            end
-        end
     end)
 
     task.spawn(function()
@@ -1785,21 +1888,44 @@ function Arcane.Init(Shared, UI)
                 end
             end
 
-            local chestCount = 0
-            for _ in pairs(chestESPObjects) do
-                chestCount += 1
+            local chestDetected = 0
+
+            if Config.ArcaneChestESP then
+                for target in pairs(chestESPObjects) do
+                    if target.Parent then
+                        chestDetected += 1
+                    end
+                end
             end
 
-            local questCount = 0
-            for _ in pairs(sideQuestESPObjects) do
-                questCount += 1
-            end
-
-            statusLabel.Text = ("Boss: %d | Chests: %d | Side NPC: %d"):format(
+            statusLabel.Text = ("Boss: %d | Chests: %d"):format(
                 detected,
-                chestCount,
-                questCount
+                chestDetected
             )
+        end
+    end)
+
+
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+
+            if Config.ArcaneChestESP then
+                for target in pairs(chestCandidates) do
+                    if not target.Parent then
+                        chestCandidates[target] = nil
+                        destroyChestESP(target)
+                    elseif isChestFilterEnabled(Config, getChestType(target)) then
+                        createChestESP(target)
+                    else
+                        destroyChestESP(target)
+                    end
+                end
+            else
+                for target in pairs(chestESPObjects) do
+                    destroyChestESP(target)
+                end
+            end
         end
     end)
 
@@ -1853,6 +1979,7 @@ function Arcane.Init(Shared, UI)
         end
     end)
 
+
     task.spawn(function()
         while true do
             task.wait(0.25)
@@ -1861,43 +1988,36 @@ function Arcane.Init(Shared, UI)
             local playerRoot = character
                 and character:FindFirstChild("HumanoidRootPart")
 
-            if not playerRoot then
-                continue
-            end
+            for target, data in pairs(chestESPObjects) do
+                local root = getChestRoot(target)
 
-            if Config.ArcaneChestESP then
-                for target, data in pairs(chestESPObjects) do
-                    local root = getChestRoot(target)
+                if not target.Parent or not root then
+                    destroyChestESP(target)
+                elseif not Config.ArcaneChestESP
+                    or not isChestFilterEnabled(Config, getChestType(target)) then
+                    destroyChestESP(target)
+                else
+                    local distanceText = "STUDS: ?"
 
-                    if root and target.Parent then
-                        local distance = math.floor(
-                            (playerRoot.Position - root.Position).Magnitude
+                    if playerRoot then
+                        distanceText = ("STUDS: %d"):format(
+                            math.floor(
+                                (playerRoot.Position - root.Position).Magnitude
+                            )
                         )
-
-                        data.label.Text = "CHEST\nSTUDS: " .. tostring(distance)
-                    else
-                        destroyChestESP(target)
                     end
-                end
-            end
 
-            if Config.ArcaneSideQuestESP then
-                for model, data in pairs(sideQuestESPObjects) do
-                    local root = getRoot(model)
-                    local info = getSideQuestNPCInfo(model)
+                    local chestType = data.chestType or getChestType(target)
+                    local chestDisplayName = CHEST_DISPLAY_NAMES[chestType]
+                        or "Other Chest"
 
-                    if root and info and model.Parent then
-                        local distance = math.floor(
-                            (playerRoot.Position - root.Position).Magnitude
-                        )
+                    local chestColor = CHEST_COLORS[chestType]
+                        or CHEST_COLORS.OTHER
 
-                        data.label.Text = "SIDE QUEST NPC\n"
-                            .. tostring(info.name)
-                            .. " | STUDS: "
-                            .. tostring(distance)
-                    else
-                        destroySideQuestESP(model)
-                    end
+                    data.label.TextColor3 = chestColor
+                    data.label.Text = chestDisplayName
+                        .. " | "
+                        .. distanceText
                 end
             end
         end
