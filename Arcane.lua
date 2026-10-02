@@ -566,8 +566,43 @@ local function looksLikeChestModel(model)
 
     if normalized:find("chest", 1, true)
         or normalized:find("treasure", 1, true)
-        or normalized:find("sealed", 1, true) then
+        or normalized:find("sealed", 1, true)
+        or normalized == "common"
+        or normalized == "uncommon"
+        or normalized == "rare"
+        or normalized == "mystic"
+        or normalized == "legendary"
+        or normalized == "privatestorage"
+        or normalized == "sky"
+        or normalized == "steel" then
         return true
+    end
+
+    -- Some chest models are generically named but expose their type through
+    -- attributes or replicated Value objects.
+    local okAttrs, attrs = pcall(function()
+        return model:GetAttributes()
+    end)
+
+    if okAttrs and type(attrs) == "table" then
+        for key, value in pairs(attrs) do
+            local keyText = normalizeChestText(key)
+            local valueType = typeof(value)
+
+            if keyText:find("chest", 1, true)
+                or keyText:find("rarity", 1, true)
+                or keyText:find("tier", 1, true)
+                or keyText:find("type", 1, true) then
+
+                if valueType == "string"
+                    or valueType == "number"
+                    or valueType == "boolean" then
+                    if classifyChestText(value) then
+                        return true
+                    end
+                end
+            end
+        end
     end
 
     local collectionService = game:GetService("CollectionService")
@@ -637,7 +672,19 @@ end
 
 local function getChestRoot(target)
     if target:IsA("Model") then
-        return getRoot(target)
+        local root = getRoot(target)
+
+        if root then
+            return root
+        end
+
+        for _, descendant in ipairs(target:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                return descendant
+            end
+        end
+
+        return nil
     end
 
     if target:IsA("BasePart") then
