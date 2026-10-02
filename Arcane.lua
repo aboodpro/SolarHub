@@ -1176,27 +1176,8 @@ local function runDebugScan(setText)
                 end
             end
 
-            local modulesFolder = rs:FindFirstChild("Modules")
-            if modulesFolder then
-                for _, instance in ipairs(modulesFolder:GetDescendants()) do
-                    if instance:IsA("ModuleScript") then
-                        local n = normalizeName(instance.Name)
-
-                        if n:find("npc", 1, true)
-                            or n:find("boss", 1, true)
-                            or n:find("enemy", 1, true)
-                            or n:find("quest", 1, true)
-                            or n:find("fish", 1, true) then
-
-                            addLimited(
-                                results.scripts,
-                                instance:GetFullName(),
-                                200
-                            )
-                        end
-                    end
-                end
-            end
+            -- Intentionally skip RS.Modules here.
+            -- It is very large and is not needed to diagnose world ESP.
         end
 
         -- Directly inspect quest-capable NPC templates. This includes models
@@ -2050,6 +2031,20 @@ function Arcane.Init(Shared, UI)
         end
 
         sideQuestCandidates[model] = true
+
+        local info = getSideQuestNPCInfo(model)
+
+        -- Prefer a live Workspace NPC over a static template marker with
+        -- the same name when both are available.
+        if info then
+            local normalizedLiveName = normalizeName(info.name)
+
+            for key, data in pairs(sideQuestVirtualESPObjects) do
+                if normalizeName(data.name) == normalizedLiveName then
+                    destroySideQuestVirtualESP(key)
+                end
+            end
+        end
 
         if Config.ArcaneSideQuestESP then
             createSideQuestESP(model)
