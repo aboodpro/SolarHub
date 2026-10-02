@@ -187,6 +187,8 @@ local function findBossNameFromValue(value)
     return nil
 end
 
+local hasBossMarker
+
 local function getBossDisplayName(model)
     local templateName, templateType = getTemplateBossName(model.Name)
     if templateName then
@@ -288,7 +290,7 @@ local function hasBossTag(model)
     return false
 end
 
-local function hasBossMarker(model)
+hasBossMarker = function(model)
     for _, attributeName in ipairs({
         "Boss",
         "IsBoss",
@@ -829,7 +831,7 @@ function Arcane.Init(Shared, UI)
 
     local function showBossSpawnNotification(bossName, bossClass, spawnPosition, deathPosition)
         local frame = Instance.new("Frame")
-        frame.Size = UDim2.fromOffset(340, deathPosition and 84 or 62)
+        frame.Size = UDim2.fromOffset(340, deathPosition and 90 or 62)
         frame.BackgroundColor3 = Color3.fromRGB(20, 20, 27)
         frame.BackgroundTransparency = 0.05
         frame.BorderSizePixel = 0
@@ -869,7 +871,7 @@ function Arcane.Init(Shared, UI)
 
         if deathPosition then
             local previousLabel = Instance.new("TextLabel")
-            previousLabel.Size = UDim2.new(1, -18, 0, 18)
+            previousLabel.Size = UDim2.new(1, -18, 0, 24)
             previousLabel.Position = UDim2.fromOffset(9, 53)
             previousLabel.BackgroundTransparency = 1
             previousLabel.TextColor3 = Color3.fromRGB(160, 160, 170)
@@ -1122,8 +1124,8 @@ function Arcane.Init(Shared, UI)
         billboard.Name = "SolarBossESPInfo"
         billboard.Adornee = root
         billboard.AlwaysOnTop = true
-        billboard.Size = UDim2.fromOffset(250, 58)
-        billboard.StudsOffset = Vector3.new(0, 3.6, 0)
+        billboard.Size = UDim2.fromOffset(270, 76)
+        billboard.StudsOffset = Vector3.new(0, 4.2, 0)
         billboard.Parent = root
 
         local label = Instance.new("TextLabel")
@@ -1348,10 +1350,10 @@ function Arcane.Init(Shared, UI)
                             destroyESP(model)
                         else
                             local bossName = getBossDisplayName(model) or model.Name
-                            local distanceText = "Distance: ?"
+                            local distanceText = "STUDS: ?"
 
                             if playerRoot then
-                                distanceText = ("Distance: %d studs"):format(
+                                distanceText = ("STUDS: %d"):format(
                                     math.floor(
                                         (playerRoot.Position - root.Position).Magnitude
                                     )
@@ -1369,7 +1371,7 @@ function Arcane.Init(Shared, UI)
                                 tostring(bossName),
                                 math.floor(health),
                                 math.floor(maxHealth),
-                                distanceText:gsub("Distance:", "STUDS:")
+                                distanceText
                             )
                         end
                     end
