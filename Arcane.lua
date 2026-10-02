@@ -1825,1208 +1825,50 @@ function Arcane.Init(Shared, UI)
     -------------------------------------------------
     -- AUTO FISHING
     -------------------------------------------------
+    -- Real Arcane Odyssey fishing flow discovered through RemoteSpy:
+    -- Equip:
+    --   RS.Remotes.Combat.ChangeToolState -> player, rodName, "Equip"
+    -- Cast / Reel:
+    --   RS.Remotes.Misc.ToolAction -> player, rodName
+    -- Server fishing state:
+    --   RS.Remotes.Misc.FishEvent -> player, "Bump" / "Bite" / "Complete"
+    --
+    -- IMPORTANT:
+    -- We do NOT detect the "!" GUI. Bite is driven by FishEvent.
 
-    local fishingSection = UI.createSection(
-        miscTab,
-        "Auto Fishing",
-        120
-    )
+    local replicatedStorageFishing = game:GetService("ReplicatedStorage")
+    local rsFishing = replicatedStorageFishing:FindFirstChild("RS")
+    local remotesFishing = rsFishing and rsFishing:FindFirstChild("Remotes")
+    local miscRemotesFishing = remotesFishing and remotesFishing:FindFirstChild("Misc")
+    local combatRemotesFishing = remotesFishing and remotesFishing:FindFirstChild("Combat")
 
-    UI.createToggle(
-        fishingSection,
-        "Auto Fishing",
-        "Auto equips the rod, casts, reels, and recasts.",
-        "ArcaneAutoFishing",
-        32
-    )
+    local toolActionRemote = miscRemotesFishing
+        and miscRemotesFishing:FindFirstChild("ToolAction")
 
-    local fishingStatusLabel = Instance.new("TextLabel")
-    fishingStatusLabel.Size = UDim2.new(1, -16, 0, 20)
-    fishingStatusLabel.Position = UDim2.fromOffset(8, 78)
-    fishingStatusLabel.BackgroundTransparency = 1
-    fishingStatusLabel.Text = "Status: OFF | Put cursor over water first."
-    fishingStatusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
-    fishingStatusLabel.Font = Enum.Font.Gotham
-    fishingStatusLabel.TextSize = 8
-    fishingStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    fishingStatusLabel.Parent = fishingSection
+    local fishEventRemote = miscRemotesFishing
+        and miscRemotesFishing:FindFirstChild("FishEvent")
 
+    local changeToolStateRemote = combatRemotesFishing
+        and combatRemotesFishing:FindFirstChild("ChangeToolState")
 
-    local espObjects = {}
-    local candidateModels = {}
+    local fishingState = "OFF"
+    local biteReceived = false
+    local completeReceived = false
+    local fishingEventConnection = nil
 
-    local chestESPObjects = {}
-    local chestCandidates = {}
-    local openedChests = {}
-
-
-    local sideQuestESPObjects = {}
-    local sideQuestCandidates = {}
-
-    local autoFishingBusy = false
-
-    -- Boss lifecycle state is tracked by boss name, not by spawn position.
-    -- This means a boss can die at Point A and respawn at Point B.
-    local bossStates = {}
-    local activeBossModels = {}
-    local bossDeathHooks = {}
-    local initializedBossState = false
-
-    local function destroyESP(model)
-        local data = espObjects[model]
-
-        if data then
-            if data.highlight then
-                pcall(function()
-                    data.highlight:Destroy()
-                end)
-            end
-
-            if data.billboard then
-                pcall(function()
-                    data.billboard:Destroy()
-                end)
-            end
-
-            espObjects[model] = nil
+    local function setFishingStatus(text)
+        if fishingStatusLabel then
+            fishingStatusLabel.Text = "Status: " .. tostring(text)
         end
     end
 
-    local function destroyChestESP(target)
-        local data = chestESPObjects[target]
-
-        if data then
-            if data.highlight then
-                pcall(function()
-                    data.highlight:Destroy()
-                end)
-            end
-
-            if data.billboard then
-                pcall(function()
-                    data.billboard:Destroy()
-                end)
-            end
-
-            chestESPObjects[target] = nil
+    local function getFishingRodName(tool)
+        if not tool or not tool:IsA("Tool") then
+            return nil
         end
+
+        return tool.Name
     end
-
-    local function createChestESP(target)
-        if not Config.ArcaneChestESP
-            or not hasAnyChestFilterEnabled(Config) then
-            return
-        end
-
-        local chestType = getChestTypeFast(target) or getChestType(target)
-
-        if not chestType or not isChestFilterEnabled(Config, chestType) then
-            destroyChestESP(target)
-            return
-        end
-
-        if chestESPObjects[target] then
-            return
-        end
-
-        local root = getChestRoot(target)
-
-        if not root then
-            return
-        end
-
-        local chestColor = CHEST_COLORS[chestType] or CHEST_COLORS.OTHER
-        local chestDisplayName = CHEST_DISPLAY_NAMES[chestType] or "Other Chest"
-
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "SolarChestESP"
-        highlight.Adornee = target
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillColor = chestColor
-        highlight.OutlineColor = chestColor
-        highlight.FillTransparency = 0.84
-        highlight.OutlineTransparency = 0
-        highlight.Parent = target:IsA("Model") and target or Workspace
-
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "SolarChestESPInfo"
-        billboard.Adornee = root
-        billboard.AlwaysOnTop = true
-        billboard.MaxDistance = 0
-        billboard.Size = UDim2.fromOffset(260, 32)
-        billboard.StudsOffset = Vector3.new(0, 2.8, 0)
-        billboard.Parent = Shared.playerGui
-
-        local label = Instance.new("TextLabel")
-        label.BackgroundTransparency = 1
-        label.Size = UDim2.fromScale(1, 1)
-        label.Font = Enum.Font.GothamBold
-        label.TextColor3 = chestColor
-        label.TextStrokeTransparency = 0.15
-        label.TextSize = 12
-        label.Text = chestDisplayName .. " | STUDS: ?"
-        label.Parent = billboard
-
-        chestESPObjects[target] = {
-            highlight = highlight,
-            billboard = billboard,
-            label = label,
-            chestType = chestType,
-        }
-    end
-
-    local localChestTagObjects = {}
-
-    local function markChestOpened(chest)
-        if not chest then
-            return
-        end
-
-        openedChests[chest] = true
-        chestCandidates[chest] = nil
-
-        destroyChestESP(chest)
-    end
-
-
-    local function hasChestOpenedMarker(chest)
-        if not chest then
-            return false
-        end
-
-        -- Attribute markers, if the game sets one.
-        local okAttrs, attrs = pcall(function()
-            return chest:GetAttributes()
-        end)
-
-        if okAttrs and type(attrs) == "table" then
-            for key, value in pairs(attrs) do
-                local normalizedKey = normalizeChestText(key)
-
-                if (normalizedKey == "opened"
-                    or normalizedKey == "open"
-                    or normalizedKey == "isopen"
-                    or normalizedKey == "chestopened"
-                    or normalizedKey == "openedchest")
-                    and value == true then
-                    return true
-                end
-            end
-        end
-
-        -- Common replicated Value markers.
-        for _, descendant in ipairs(chest:GetDescendants()) do
-            local normalizedName = normalizeChestText(descendant.Name)
-
-            if descendant:IsA("BoolValue")
-                and (normalizedName == "opened"
-                    or normalizedName == "open"
-                    or normalizedName == "isopen"
-                    or normalizedName == "chestopened"
-                    or normalizedName == "openedchest")
-                and descendant.Value == true then
-                return true
-            end
-
-            if descendant:IsA("BoolValue")
-                and normalizedName == "chestobj"
-                and descendant.Value == true then
-                return true
-            end
-        end
-
-        return false
-    end
-
-    local proximityPromptService = game:GetService("ProximityPromptService")
-
-    proximityPromptService.PromptTriggered:Connect(function(prompt, player)
-        if player and player ~= Shared.player then
-            return
-        end
-
-        local chest = prompt
-            and prompt:FindFirstAncestorOfClass("Model")
-
-        if chest and getChestTarget(chest) then
-            markChestOpened(chest)
-        end
-    end)
-
-    local function inspectChest(target)
-        if not Config.ArcaneChestESP
-            or not hasAnyChestFilterEnabled(Config) then
-            return
-        end
-
-        -- Do the cheap name test first. Only fall back to the deeper chest
-        -- classifier for generic chest names.
-        local fastType = getChestTypeFast(target)
-        if fastType and not isChestFilterEnabled(Config, fastType) then
-            return
-        end
-
-        local chest = getChestTarget(target)
-        if not chest then
-            return
-        end
-
-        local chestType = fastType or getChestType(chest)
-
-        if not isChestFilterEnabled(Config, chestType) then
-            return
-        end
-
-        if openedChests[chest] or hasChestOpenedMarker(chest) then
-            markChestOpened(chest)
-            return
-        end
-
-        localChestTagObjects[chest] = true
-        chestCandidates[chest] = true
-
-        createChestESP(chest)
-    end
-
-
-    local function scanSelectedChests()
-        if not Config.ArcaneChestESP
-            or not hasAnyChestFilterEnabled(Config) then
-            return
-        end
-
-        local collectionService = game:GetService("CollectionService")
-        local seen = {}
-
-        for _, tag in ipairs({
-            "Chests",
-            "Prompt_Chest",
-            "BuriedChests",
-        }) do
-            for _, object in ipairs(collectionService:GetTagged(tag)) do
-                if not seen[object] then
-                    seen[object] = true
-                    inspectChest(object)
-                end
-            end
-        end
-    end
-    local collectionService = game:GetService("CollectionService")
-
-    for _, tag in ipairs({
-        "Chests",
-        "Prompt_Chest",
-        "BuriedChests",
-    }) do
-        collectionService:GetInstanceAddedSignal(tag):Connect(function(instance)
-            if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
-                inspectChest(instance)
-            end
-        end)
-    end
-
-    local function destroySideQuestESP(model)
-        local data = sideQuestESPObjects[model]
-
-        if data then
-            if data.highlight then
-                pcall(function()
-                    data.highlight:Destroy()
-                end)
-            end
-
-            if data.billboard then
-                pcall(function()
-                    data.billboard:Destroy()
-                end)
-            end
-
-            sideQuestESPObjects[model] = nil
-        end
-    end
-
-    local function createSideQuestESP(model)
-        if not Config.ArcaneSideQuestESP then
-            return
-        end
-
-        if sideQuestESPObjects[model] then
-            return
-        end
-
-        local info = getSideQuestNPCInfo(model)
-
-        if not info then
-            return
-        end
-
-        local root = getRoot(model)
-
-        if not root then
-            return
-        end
-
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "SolarSideQuestESP"
-        highlight.Adornee = model
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillColor = Color3.fromRGB(220, 140, 40)
-        highlight.OutlineColor = Color3.fromRGB(220, 140, 40)
-        highlight.FillTransparency = 0.84
-        highlight.OutlineTransparency = 0
-        highlight.Parent = model
-
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "SolarSideQuestESPInfo"
-        billboard.Adornee = root
-        billboard.AlwaysOnTop = true
-        billboard.MaxDistance = 0
-        billboard.Size = UDim2.fromOffset(300, 34)
-        billboard.StudsOffset = Vector3.new(0, 3.8, 0)
-        billboard.Parent = Shared.playerGui
-
-        local label = Instance.new("TextLabel")
-        label.BackgroundTransparency = 1
-        label.Size = UDim2.fromScale(1, 1)
-        label.Font = Enum.Font.GothamBold
-        label.TextColor3 = Color3.fromRGB(220, 140, 40)
-        label.TextStrokeTransparency = 0.15
-        label.TextSize = 11
-        label.Text = "SIDE QUEST NPC | " .. tostring(info.name) .. " | STUDS: ?"
-        label.Parent = billboard
-
-        sideQuestESPObjects[model] = {
-            highlight = highlight,
-            billboard = billboard,
-            label = label,
-        }
-    end
-
-    local function inspectSideQuestModel(model)
-        if not model or not model.Parent or not model:IsA("Model") then
-            return
-        end
-
-        if not getSideQuestNPCInfo(model) then
-            return
-        end
-
-        -- ReplicatedStorage templates are handled by the virtual-marker
-        -- scanner below; live ESP objects should only target Workspace NPCs.
-        if not model:IsDescendantOf(workspace) then
-            return
-        end
-
-        sideQuestCandidates[model] = true
-
-        if Config.ArcaneSideQuestESP then
-            createSideQuestESP(model)
-        end
-    end
-
-    local sideQuestVirtualESPObjects = {}
-    local sideQuestTemplatesScanned = false
-
-    local function destroySideQuestVirtualESP(key)
-        local data = sideQuestVirtualESPObjects[key]
-
-        if not data then
-            return
-        end
-
-        if data.highlight then
-            pcall(function()
-                data.highlight:Destroy()
-            end)
-        end
-
-        if data.billboard then
-            pcall(function()
-                data.billboard:Destroy()
-            end)
-        end
-
-        if data.anchor then
-            pcall(function()
-                data.anchor:Destroy()
-            end)
-        end
-
-        sideQuestVirtualESPObjects[key] = nil
-    end
-
-    local function createSideQuestVirtualESP(model)
-        if not Config.ArcaneSideQuestESP then
-            return
-        end
-
-        if not model
-            or not model:IsA("Model")
-            or model:IsDescendantOf(workspace) then
-            return
-        end
-
-        local info = getSideQuestNPCInfo(model)
-        local root = getRoot(model)
-
-        if not info or not root then
-            return
-        end
-
-        local position = root.Position
-
-        -- Ignore obvious staging positions. Real Arcane templates use
-        -- actual world coordinates, while utility figures often sit near 0,0,0.
-        if math.abs(position.X) < 5
-            and math.abs(position.Y) < 5
-            and math.abs(position.Z) < 5 then
-            return
-        end
-
-        local key = model:GetFullName()
-
-        if sideQuestVirtualESPObjects[key] then
-            return
-        end
-
-        local anchor = Instance.new("Part")
-        anchor.Name = "SolarSideQuestVirtualAnchor"
-        anchor.Anchored = true
-        anchor.CanCollide = false
-        anchor.CanTouch = false
-        anchor.CanQuery = false
-        anchor.Transparency = 1
-        anchor.Size = Vector3.new(1, 1, 1)
-        anchor.CFrame = CFrame.new(position)
-        anchor.Parent = workspace
-
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "SolarSideQuestVirtualESPInfo"
-        billboard.Adornee = anchor
-        billboard.AlwaysOnTop = true
-        billboard.MaxDistance = 0
-        billboard.Size = UDim2.fromOffset(300, 34)
-        billboard.StudsOffset = Vector3.new(0, 3.8, 0)
-        billboard.Parent = Shared.playerGui
-
-        local label = Instance.new("TextLabel")
-        label.BackgroundTransparency = 1
-        label.Size = UDim2.fromScale(1, 1)
-        label.Font = Enum.Font.GothamBold
-        label.TextColor3 = Color3.fromRGB(220, 140, 40)
-        label.TextStrokeTransparency = 0.15
-        label.TextSize = 11
-        label.Text = "SIDE QUEST NPC | "
-            .. tostring(info.name)
-            .. " | STUDS: ?"
-        label.Parent = billboard
-
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "SolarSideQuestVirtualHighlight"
-        highlight.Adornee = anchor
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillColor = Color3.fromRGB(220, 140, 40)
-        highlight.OutlineColor = Color3.fromRGB(220, 140, 40)
-        highlight.FillTransparency = 0.84
-        highlight.OutlineTransparency = 0
-        highlight.Parent = workspace
-
-        sideQuestVirtualESPObjects[key] = {
-            source = model,
-            anchor = anchor,
-            billboard = billboard,
-            label = label,
-            highlight = highlight,
-            position = position,
-            name = info.name,
-        }
-    end
-
-    local function scanSideQuestTemplateSources()
-        if not Config.ArcaneSideQuestESP
-            or sideQuestTemplatesScanned then
-            return
-        end
-
-        sideQuestTemplatesScanned = true
-
-        local replicatedStorage = game:GetService("ReplicatedStorage")
-        local rs = replicatedStorage:FindFirstChild("RS")
-        local objects = rs and rs:FindFirstChild("Objects")
-
-        local function scanFolder(folder, recursive)
-            if not folder then
-                return
-            end
-
-            local source = recursive
-                and folder:GetDescendants()
-                or folder:GetChildren()
-
-            for _, model in ipairs(source) do
-                if model:IsA("Model")
-                    and model:FindFirstChildOfClass("Humanoid") then
-                    createSideQuestVirtualESP(model)
-                end
-            end
-        end
-
-        scanFolder(objects, true)
-        scanFolder(rs and rs:FindFirstChild("UnloadEnemies"), false)
-    end
-
-
-    local function markBossDead(model, bossName)
-        if not initializedBossState then
-            return
-        end
-
-        local key = normalizeName(bossName)
-        if key == "" then
-            return
-        end
-
-        local state = bossStates[key] or {}
-
-        local root = getRoot(model)
-        local position = root and root.Position or state.lastPosition
-
-        state.alive = false
-        state.lastDeathPosition = position
-        state.lastDeathTime = os.clock()
-        state.model = nil
-
-        bossStates[key] = state
-    end
-
-    local function removeModel(model)
-        candidateModels[model] = nil
-
-        local bossName = getBossDisplayName(model)
-        if bossName then
-            activeBossModels[model] = nil
-            markBossDead(model, bossName)
-        end
-
-        bossDeathHooks[model] = nil
-        destroyESP(model)
-    end
-
-    local function createESP(model)
-        if not Config.ArcaneBossESP then
-            return
-        end
-
-        if espObjects[model] then
-            return
-        end
-
-        local info = getBossInfo(model)
-        if not info then
-            return
-        end
-
-        local root = info.root or getRoot(model)
-        if not root then
-            return
-        end
-
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "SolarBossESP"
-        highlight.Adornee = model
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillTransparency = 0.78
-        highlight.OutlineTransparency = 0
-        highlight.Parent = model
-
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "SolarBossESPInfo"
-        billboard.Adornee = root
-        billboard.AlwaysOnTop = true
-        billboard.MaxDistance = 0
-        billboard.Size = UDim2.fromOffset(270, 76)
-        billboard.StudsOffset = Vector3.new(0, 4.2, 0)
-        billboard.Parent = root
-
-        local label = Instance.new("TextLabel")
-        label.BackgroundTransparency = 1
-        label.Size = UDim2.fromScale(1, 1)
-        label.Font = Enum.Font.GothamBold
-        label.TextColor3 = Color3.new(1, 1, 1)
-        label.TextStrokeTransparency = 0.25
-        label.TextSize = 13
-        label.TextWrapped = true
-        label.Parent = billboard
-
-        espObjects[model] = {
-            highlight = highlight,
-            billboard = billboard,
-            label = label,
-            detectionType = info.detectionType,
-            bossClass = info.bossClass,
-        }
-    end
-
-    local function inspectModel(model)
-        if not model or not model.Parent or not model:IsA("Model") then
-            return
-        end
-
-        local humanoid = model:FindFirstChildOfClass("Humanoid")
-        if not humanoid then
-            return
-        end
-
-        local bossName, detectionType = getBossDisplayName(model)
-
-        local bossClass = getBossClass(model)
-
-        if bossName and bossClass and (
-            isBossTemplateName(model.Name)
-            or bossClass == "MINI BOSS"
-            or bossClass == "BOSS"
-        ) then
-            local key = normalizeName(bossName)
-            local state = bossStates[key] or {}
-            local root = getRoot(model)
-            local spawnPosition = root and root.Position or state.lastPosition
-
-            -- A new model for the same boss after a confirmed death is a respawn.
-            -- We use the NEW model's current position as the actual spawn location.
-            if initializedBossState
-                and state.alive == false
-                and not activeBossModels[model] then
-
-                showBossSpawnNotification(
-                    bossName,
-                    bossClass,
-                    spawnPosition,
-                    state.lastDeathPosition
-                )
-            end
-
-            state.alive = true
-            state.model = model
-            state.lastPosition = spawnPosition
-            bossStates[key] = state
-            activeBossModels[model] = true
-
-            if not bossDeathHooks[model] then
-                bossDeathHooks[model] = true
-
-                humanoid.Died:Connect(function()
-                    local currentRoot = getRoot(model)
-                    local deathPosition = currentRoot and currentRoot.Position or state.lastPosition
-
-                    local currentState = bossStates[key] or {}
-                    currentState.alive = false
-                    currentState.model = nil
-                    currentState.lastDeathPosition = deathPosition
-                    currentState.lastDeathTime = os.clock()
-                    currentState.lastPosition = deathPosition
-                    bossStates[key] = currentState
-
-                    activeBossModels[model] = nil
-                end)
-            end
-        end
-
-        candidateModels[model] = true
-
-        if Config.ArcaneBossESP then
-            createESP(model)
-        end
-    end
-
-    -------------------------------------------------
-    -- TARGETED WORLD RESCAN
-    -------------------------------------------------
-    -- Do not call Workspace.Map:GetDescendants() repeatedly.
-    -- That can walk a very large streamed map and freeze the client.
-    local function scanTargetedWorldSources()
-        local npcFolder = workspace:FindFirstChild("NPCs")
-        if npcFolder then
-            for _, model in ipairs(npcFolder:GetChildren()) do
-                inspectModel(model)
-                inspectSideQuestModel(model)
-            end
-        end
-
-        local enemiesFolder = workspace:FindFirstChild("Enemies")
-        if enemiesFolder then
-            for _, model in ipairs(enemiesFolder:GetChildren()) do
-                inspectModel(model)
-            end
-        end
-
-
-        local replicatedStorage = game:GetService("ReplicatedStorage")
-        local rs = replicatedStorage:FindFirstChild("RS")
-
-        if rs then
-            local unloadEnemies = rs:FindFirstChild("UnloadEnemies")
-
-            if unloadEnemies and Config.ArcaneSideQuestESP then
-                -- These are lightweight child-level NPC definitions with real
-                -- world positions (NPCHitbox / SpawnPart).
-                for _, model in ipairs(unloadEnemies:GetChildren()) do
-                    if model:IsA("Model") then
-                        inspectSideQuestModel(model)
-                    end
-                end
-            end
-        end
-    end
-
-local replicatedStorage = game:GetService("ReplicatedStorage")
-    local rs = replicatedStorage:FindFirstChild("RS")
-    local objectsFolder = rs and rs:FindFirstChild("Objects")
-    local spawningEnemies = objectsFolder and objectsFolder:FindFirstChild("SpawningEnemies")
-
-    if spawningEnemies then
-        spawningEnemies.ChildAdded:Connect(function()
-            task.defer(refreshBossTemplateRegistry)
-        end)
-
-        spawningEnemies.ChildRemoved:Connect(function()
-            task.defer(refreshBossTemplateRegistry)
-        end)
-    end
-
-    workspace.DescendantAdded:Connect(function(instance)
-        local model = instance:IsA("Model")
-            and instance
-            or instance:FindFirstAncestorOfClass("Model")
-
-        if model then
-            inspectModel(model)
-            inspectChest(model)
-            inspectSideQuestModel(model)
-
-            task.delay(0.15, function()
-                if model and model.Parent then
-                    inspectModel(model)
-                    inspectChest(model)
-                    inspectSideQuestModel(model)
-                end
-            end)
-        end
-
-        if instance:IsA("BasePart")
-            and normalizeName(instance.Name):find("chest", 1, true) then
-            inspectChest(instance)
-        end
-    end)
-
-    workspace.DescendantRemoving:Connect(function(instance)
-        if instance:IsA("Model") then
-            removeModel(instance)
-            chestCandidates[instance] = nil
-            openedChests[instance] = nil
-            destroyChestESP(instance)
-            sideQuestCandidates[instance] = nil
-            destroySideQuestESP(instance)
-        end
-
-        if instance:IsA("BasePart") then
-            local chest = getChestTarget(instance)
-
-            if chest then
-                chestCandidates[chest] = nil
-                destroyChestESP(chest)
-            end
-        end
-    end)
-
-    task.spawn(function()
-        scanTargetedWorldSources()
-
-        if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
-            scanSelectedChests()
-        end
-
-        if Config.ArcaneSideQuestESP then
-            scanSideQuestTemplateSources()
-        end
-
-        -- Everything seen during the initial scan is considered already alive.
-        task.delay(0.25, function()
-            initializedBossState = true
-        end)
-    end)
-
-    local lastChestFilterSignature = nil
-    local lastChestESPEnabled = Config.ArcaneChestESP == true
-
-    local function getChestFilterSignature()
-        local parts = {}
-
-        for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-            parts[#parts + 1] = Config.ArcaneChestFilter[chestType] == true
-                and "1"
-                or "0"
-        end
-
-        return table.concat(parts, "")
-    end
-
-    -- Keep a lightweight targeted world scan running. This is intentionally
-    -- separate from the 2-second status/lifecycle loop so detection
-    -- continues even when Arcane adds/rebuilds streamed objects.
-    task.spawn(function()
-        while true do
-            task.wait(1.5)
-
-            local currentChestFilterSignature = getChestFilterSignature()
-            local chestFilterChanged = currentChestFilterSignature ~= lastChestFilterSignature
-            local chestESPChanged = Config.ArcaneChestESP ~= lastChestESPEnabled
-
-            lastChestFilterSignature = currentChestFilterSignature
-            lastChestESPEnabled = Config.ArcaneChestESP == true
-
-            if Config.ArcaneBossESP
-                or Config.ArcaneSideQuestESP then
-                pcall(scanTargetedWorldSources)
-            end
-
-            -- Chest scanning is isolated from NPC/Boss scanning.
-            -- It happens only when the selected filter or Chest ESP state changes.
-            if chestFilterChanged or chestESPChanged then
-                if Config.ArcaneChestESP
-                    and hasAnyChestFilterEnabled(Config) then
-                    pcall(scanSelectedChests)
-                else
-                    table.clear(chestCandidates)
-
-                    for target in pairs(chestESPObjects) do
-                        destroyChestESP(target)
-                    end
-                end
-            end
-
-            if Config.ArcaneSideQuestESP then
-                pcall(scanSideQuestTemplateSources)
-            end
-        end
-    end)
-
-    task.spawn(function()
-        while true do
-            task.wait(2)
-
-            refreshBossTemplateRegistry()
-
-            for model in pairs(activeBossModels) do
-                if not model.Parent then
-                    local bossName = getBossDisplayName(model)
-                    if bossName then
-                        markBossDead(model, bossName)
-                    end
-
-                    activeBossModels[model] = nil
-                    bossDeathHooks[model] = nil
-                end
-            end
-
-            local detected = 0
-
-            if Config.ArcaneBossESP then
-                for model in pairs(candidateModels) do
-                    if not model.Parent then
-                        removeModel(model)
-                    else
-                        createESP(model)
-                    end
-                end
-
-                for model in pairs(espObjects) do
-                    if model.Parent then
-                        detected += 1
-                    end
-                end
-            else
-                for model in pairs(espObjects) do
-                    destroyESP(model)
-                end
-            end
-
-            local chestDetected = 0
-
-            if Config.ArcaneChestESP then
-                for target in pairs(chestESPObjects) do
-                    if target.Parent then
-                        chestDetected += 1
-                    end
-                end
-            end
-
-            local sideQuestDetected = 0
-
-            if Config.ArcaneSideQuestESP then
-                for model in pairs(sideQuestESPObjects) do
-                    if model.Parent then
-                        sideQuestDetected += 1
-                    end
-                end
-            end
-
-            statusLabel.Text = ("Boss: %d | Chests: %d | Side NPC: %d"):format(
-                detected,
-                chestDetected,
-                sideQuestDetected
-            )
-        end
-    end)
-
-
-
-    task.spawn(function()
-        while true do
-            task.wait(0.5)
-
-            if Config.ArcaneSideQuestESP then
-                for model in pairs(sideQuestCandidates) do
-                    if not model.Parent then
-                        sideQuestCandidates[model] = nil
-                        destroySideQuestESP(model)
-                    else
-                        createSideQuestESP(model)
-                    end
-                end
-            else
-                sideQuestTemplatesScanned = false
-
-                for model in pairs(sideQuestESPObjects) do
-                    destroySideQuestESP(model)
-                end
-
-                for key in pairs(sideQuestVirtualESPObjects) do
-                    destroySideQuestVirtualESP(key)
-                end
-            end
-        end
-    end)
-
-    task.spawn(function()
-        while true do
-            task.wait(0.5)
-
-            if Config.ArcaneChestESP
-                and hasAnyChestFilterEnabled(Config) then
-                for target in pairs(chestCandidates) do
-                    if not target.Parent then
-                        chestCandidates[target] = nil
-                        destroyChestESP(target)
-                    else
-                        if openedChests[target] or hasChestOpenedMarker(target) then
-                            markChestOpened(target)
-                        else
-                            local chestType = getChestTypeFast(target) or getChestType(target)
-
-                            if isChestFilterEnabled(Config, chestType) then
-                                createChestESP(target)
-                            else
-                                chestCandidates[target] = nil
-                                destroyChestESP(target)
-                            end
-                        end
-                    end
-                end
-            else
-                -- No selected type = zero chest candidates and zero scanning work.
-                table.clear(chestCandidates)
-
-                for target in pairs(chestESPObjects) do
-                    destroyChestESP(target)
-                end
-
-                table.clear(openedChests)
-
-            end
-        end
-    end)
-
-    task.spawn(function()
-        while true do
-            task.wait(0.25)
-
-            if Config.ArcaneSideQuestESP then
-                local character = Shared.player.Character
-                local playerRoot = character
-                    and character:FindFirstChild("HumanoidRootPart")
-
-                for key, data in pairs(sideQuestVirtualESPObjects) do
-                    if not data.anchor
-                        or not data.anchor.Parent
-                        or not data.source
-                        or not data.source.Parent then
-                        destroySideQuestVirtualESP(key)
-                    else
-                        local sourceRoot = getRoot(data.source)
-
-                        if sourceRoot then
-                            local position = sourceRoot.Position
-
-                            if (position - data.position).Magnitude > 0.5 then
-                                data.position = position
-                                data.anchor.CFrame = CFrame.new(position)
-                            end
-
-                            local distanceText = "STUDS: ?"
-
-                            if playerRoot then
-                                distanceText = ("STUDS: %d"):format(
-                                    math.floor(
-                                        (playerRoot.Position - position).Magnitude
-                                    )
-                                )
-                            end
-
-                            data.label.Text = "SIDE QUEST NPC | "
-                                .. tostring(data.name)
-                                .. " | "
-                                .. distanceText
-                        end
-                    end
-                end
-            end
-        end
-    end)
-
-    task.spawn(function()
-        while true do
-            task.wait(0.25)
-
-            if Config.ArcaneBossESP then
-                local character = Shared.player.Character
-                local playerRoot = character
-                    and character:FindFirstChild("HumanoidRootPart")
-
-                for model, data in pairs(espObjects) do
-                    if not model.Parent then
-                        removeModel(model)
-                    else
-                        local root = getRoot(model)
-                        local humanoid = model:FindFirstChildOfClass("Humanoid")
-
-                        if not root or not humanoid then
-                            destroyESP(model)
-                        else
-                            local bossName = getBossDisplayName(model) or model.Name
-                            local distanceText = "STUDS: ?"
-
-                            if playerRoot then
-                                distanceText = ("STUDS: %d"):format(
-                                    math.floor(
-                                        (playerRoot.Position - root.Position).Magnitude
-                                    )
-                                )
-                            end
-
-                            local health = math.max(0, humanoid.Health)
-                            local maxHealth = math.max(0, humanoid.MaxHealth)
-
-                            local bossClass = getBossClass(model) or "BOSS"
-
-                            data.label.Text = string.format(
-                                "%s\n%s\nHP: %d/%d  |  %s",
-                                tostring(bossClass),
-                                tostring(bossName),
-                                math.floor(health),
-                                math.floor(maxHealth),
-                                distanceText
-                            )
-                        end
-                    end
-                end
-            end
-        end
-    end)
-
-
-    task.spawn(function()
-        while true do
-            task.wait(0.25)
-
-            local character = Shared.player.Character
-            local playerRoot = character
-                and character:FindFirstChild("HumanoidRootPart")
-
-            if not Config.ArcaneChestESP
-                or not hasAnyChestFilterEnabled(Config) then
-                continue
-            end
-
-            for target, data in pairs(chestESPObjects) do
-                local root = getChestRoot(target)
-
-                if not target.Parent or not root then
-                    destroyChestESP(target)
-                elseif not Config.ArcaneChestESP
-                    or not isChestFilterEnabled(Config, getChestType(target)) then
-                    destroyChestESP(target)
-                else
-                    local distanceText = "STUDS: ?"
-
-                    if playerRoot then
-                        distanceText = ("STUDS: %d"):format(
-                            math.floor(
-                                (playerRoot.Position - root.Position).Magnitude
-                            )
-                        )
-                    end
-
-                    local chestType = data.chestType or getChestType(target)
-                    local chestDisplayName = CHEST_DISPLAY_NAMES[chestType]
-                        or "Other Chest"
-
-                    local chestColor = CHEST_COLORS[chestType]
-                        or CHEST_COLORS.OTHER
-
-                    data.label.TextColor3 = chestColor
-                    data.label.Text = chestDisplayName
-                        .. " | "
-                        .. distanceText
-                end
-            end
-        end
-    end)
-
-
-    task.spawn(function()
-        while true do
-            task.wait(0.25)
-
-            if Config.ArcaneSideQuestESP then
-                local character = Shared.player.Character
-                local playerRoot = character
-                    and character:FindFirstChild("HumanoidRootPart")
-
-                if playerRoot then
-                    for model, data in pairs(sideQuestESPObjects) do
-                        local root = getRoot(model)
-                        local info = getSideQuestNPCInfo(model)
-
-                        if not model.Parent or not root or not info then
-                            destroySideQuestESP(model)
-                        else
-                            data.label.Text = "SIDE QUEST NPC | "
-                                .. tostring(info.name)
-                                .. " | STUDS: "
-                                .. tostring(math.floor(
-                                    (playerRoot.Position - root.Position).Magnitude
-                                ))
-                        end
-                    end
-                end
-            end
-        end
-    end)
-
-
-    -------------------------------------------------
-    -- AUTO FISHING
-    -------------------------------------------------
 
     local function findFishingRod()
         local character = Shared.player.Character
@@ -3082,104 +1924,225 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             pcall(function()
                 humanoid:EquipTool(rod)
             end)
+
             task.wait(0.2)
+        end
+
+        -- Also mirror the exact state remote observed in RemoteSpy.
+        if changeToolStateRemote
+            and changeToolStateRemote:IsA("RemoteEvent") then
+
+            local rodName = getFishingRodName(rod)
+
+            if rodName then
+                pcall(function()
+                    changeToolStateRemote:FireServer(
+                        Shared.player,
+                        rodName,
+                        "Equip"
+                    )
+                end)
+            end
         end
 
         return rod
     end
 
-    local function clickMouse1()
-        if type(mouse1click) == "function" then
-            local ok = pcall(function()
-                mouse1click()
-            end)
-
-            if ok then
-                return true
-            end
-        end
-
-        local camera = workspace.CurrentCamera
-        local virtualInputManager = game:GetService("VirtualInputManager")
-
-        if not camera or not virtualInputManager then
+    local function useFishingTool(rod)
+        if not toolActionRemote
+            or not toolActionRemote:IsA("RemoteEvent") then
             return false
         end
 
-        local viewport = camera.ViewportSize
-        local x = math.floor(viewport.X * 0.5)
-        local y = math.floor(viewport.Y * 0.5)
+        local rodName = getFishingRodName(rod)
 
-        local okDown = pcall(function()
-            virtualInputManager:SendMouseButtonEvent(
-                x, y, 0, true, game, 0
+        if not rodName then
+            return false
+        end
+
+        local ok = pcall(function()
+            -- This exact call matches the observed Cast/Reel RemoteSpy entry.
+            toolActionRemote:FireServer(
+                Shared.player,
+                rodName
             )
         end)
 
-        local okUp = pcall(function()
-            virtualInputManager:SendMouseButtonEvent(
-                x, y, 0, false, game, 0
-            )
-        end)
-
-        return okDown and okUp
+        return ok
     end
 
-    local function detectFishingResult()
-        local camera = workspace.CurrentCamera
-        local guiService = game:GetService("GuiService")
+    local function installFishingEventListener()
+        if fishingEventConnection then
+            return true
+        end
 
-        if not camera or not guiService then
+        if not fishEventRemote
+            or not fishEventRemote:IsA("RemoteEvent") then
             return false
         end
 
-        local viewport = camera.ViewportSize
-        local x = math.floor(viewport.X * 0.5)
-        local y = math.floor(viewport.Y * 0.5)
+        fishingEventConnection = fishEventRemote.OnClientEvent:Connect(
+            function(...)
+                local args = {...}
 
-        local ok, objects = pcall(function()
-            return guiService:GetGuiObjectsAtPosition(x, y)
-        end)
+                -- RemoteSpy showed:
+                -- [1] = player, [2] = "Bump"/"Bite"/"Complete"
+                local state = args[2]
 
-        if not ok or type(objects) ~= "table" then
-            return false
-        end
+                if state == "Bump" then
+                    if fishingState == "CASTING"
+                        or fishingState == "WAITING_BITE" then
+                        fishingState = "WAITING_BITE"
+                        setFishingStatus("Waiting for Bite...")
+                    end
 
-        local keywords = {
-            "fish",
-            "junk",
-            "treasure",
-            "sunken",
-        }
+                    return
+                end
 
-        for _, object in ipairs(objects) do
-            local name = normalizeName(object.Name)
-            local text = ""
+                if state == "Bite" then
+                    biteReceived = true
+                    completeReceived = false
+                    fishingState = "REELING"
 
-            if object:IsA("TextLabel")
-                or object:IsA("TextButton") then
-                text = normalizeName(object.Text)
-            end
+                    local fishName = args[3]
+                    if fishName then
+                        setFishingStatus(
+                            "Bite! Reeling " .. tostring(fishName) .. "..."
+                        )
+                    else
+                        setFishingStatus("Bite! Reeling...")
+                    end
 
-            for _, keyword in ipairs(keywords) do
-                if name:find(keyword, 1, true)
-                    or text:find(keyword, 1, true) then
-                    return true
+                    return
+                end
+
+                if state == "Complete" then
+                    completeReceived = true
+                    fishingState = "COMPLETE"
+                    setFishingStatus("Catch complete.")
                 end
             end
+        )
+
+        return true
+    end
+
+    installFishingEventListener()
+
+    local function doFishingCycle()
+        if not Config.ArcaneAutoFishing then
+            return false
         end
 
-        return false
+        if not toolActionRemote
+            or not toolActionRemote:IsA("RemoteEvent") then
+            setFishingStatus("ERROR: ToolAction RemoteEvent not found.")
+            return false
+        end
+
+        if not fishEventRemote
+            or not fishEventRemote:IsA("RemoteEvent") then
+            setFishingStatus("ERROR: FishEvent RemoteEvent not found.")
+            return false
+        end
+
+        local rod = equipFishingRod()
+
+        if not rod then
+            setFishingStatus("Waiting for fishing rod...")
+            task.wait(0.5)
+            return false
+        end
+
+        biteReceived = false
+        completeReceived = false
+
+        fishingState = "CASTING"
+        setFishingStatus("Casting...")
+
+        -- First ToolAction = Cast.
+        if not useFishingTool(rod) then
+            setFishingStatus("ERROR: Cast failed.")
+            task.wait(0.5)
+            return false
+        end
+
+        fishingState = "WAITING_BITE"
+        setFishingStatus("Waiting for Bite...")
+
+        -- Wait for the real FishEvent.Bite.
+        local biteDeadline = os.clock() + 75
+
+        while Config.ArcaneAutoFishing
+            and not biteReceived
+            and os.clock() < biteDeadline do
+
+            task.wait(0.05)
+        end
+
+        if not Config.ArcaneAutoFishing then
+            fishingState = "OFF"
+            setFishingStatus("OFF")
+            return false
+        end
+
+        if not biteReceived then
+            fishingState = "TIMEOUT"
+            setFishingStatus("No Bite received. Recasting...")
+            task.wait(0.4)
+            return false
+        end
+
+        -- Once Bite arrives, spam the SAME ToolAction used by manual clicks.
+        local reelDeadline = os.clock() + 20
+
+        while Config.ArcaneAutoFishing
+            and not completeReceived
+            and os.clock() < reelDeadline do
+
+            useFishingTool(rod)
+            task.wait(0.08)
+        end
+
+        if not Config.ArcaneAutoFishing then
+            fishingState = "OFF"
+            setFishingStatus("OFF")
+            return false
+        end
+
+        if not completeReceived then
+            fishingState = "REEL_TIMEOUT"
+            setFishingStatus("Reel timeout. Recasting...")
+            task.wait(0.5)
+            return false
+        end
+
+        task.wait(0.4)
+        return true
     end
 
     task.spawn(function()
         while true do
-            task.wait(0.25)
+            if not Config.ArcaneAutoFishing then
+                fishingState = "OFF"
+                biteReceived = false
+                completeReceived = false
 
-            if Config.ArcaneAutoFishing then
-                fishingStatusLabel.Text = "Status: Waiting for fishing remotes..."
+                setFishingStatus(
+                    "OFF | Cast → Bite → Reel → Complete"
+                )
+
+                task.wait(0.25)
             else
-                fishingStatusLabel.Text = "Status: OFF | Waiting for fishing remotes."
+                if fishingState == "OFF"
+                    or fishingState == "COMPLETE"
+                    or fishingState == "TIMEOUT"
+                    or fishingState == "REEL_TIMEOUT" then
+
+                    doFishingCycle()
+                else
+                    task.wait(0.1)
+                end
             end
         end
     end)
