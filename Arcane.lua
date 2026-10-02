@@ -50,6 +50,84 @@ for _, name in ipairs(BOSS_NAMES) do
 end
 
 -------------------------------------------------
+-- ARCANE BOSS TEMPLATE REGISTRY
+-------------------------------------------------
+-- Arcane Odyssey exposes enemy templates under:
+-- ReplicatedStorage.RS.Objects.SpawningEnemies
+-- Boss templates contain a BoolValue named "Boss".
+-- This lets the ESP discover bosses without a hardcoded name list.
+
+local BOSS_TEMPLATE_NAMES = {}
+local MINIBOSS_TEMPLATE_NAMES = {}
+
+local function refreshBossTemplateRegistry()
+    table.clear(BOSS_TEMPLATE_NAMES)
+    table.clear(MINIBOSS_TEMPLATE_NAMES)
+
+    local replicatedStorage = game:GetService("ReplicatedStorage")
+    local rs = replicatedStorage:FindFirstChild("RS")
+    local objects = rs and rs:FindFirstChild("Objects")
+    local spawningEnemies = objects and objects:FindFirstChild("SpawningEnemies")
+
+    if not spawningEnemies then
+        return 0, 0
+    end
+
+    for _, child in ipairs(spawningEnemies:GetChildren()) do
+        local normalized = normalizeName(child.Name)
+
+        local bossValue = child:FindFirstChild("Boss")
+        local minibossValue = child:FindFirstChild("Miniboss")
+
+        if bossValue and bossValue:IsA("BoolValue") and bossValue.Value == true then
+            BOSS_TEMPLATE_NAMES[normalized] = child.Name
+        end
+
+        if minibossValue and minibossValue:IsA("BoolValue") and minibossValue.Value == true then
+            MINIBOSS_TEMPLATE_NAMES[normalized] = child.Name
+        end
+    end
+
+    return
+        (function()
+            local count = 0
+            for _ in pairs(BOSS_TEMPLATE_NAMES) do
+                count += 1
+            end
+            return count
+        end)(),
+        (function()
+            local count = 0
+            for _ in pairs(MINIBOSS_TEMPLATE_NAMES) do
+                count += 1
+            end
+            return count
+        end)()
+end
+
+local function getTemplateBossName(value)
+    local normalized = normalizeName(value)
+
+    if normalized == "" then
+        return nil, nil
+    end
+
+    local bossName = BOSS_TEMPLATE_NAMES[normalized]
+    if bossName then
+        return bossName, "BossTemplate"
+    end
+
+    local minibossName = MINIBOSS_TEMPLATE_NAMES[normalized]
+    if minibossName then
+        return minibossName, "MinibossTemplate"
+    end
+
+    return nil, nil
+end
+
+refreshBossTemplateRegistry()
+
+-------------------------------------------------
 -- HELPERS
 -------------------------------------------------
 
@@ -82,16 +160,21 @@ local function findBossNameFromValue(value)
 end
 
 local function getBossDisplayName(model)
+    local templateName, templateType = getTemplateBossName(model.Name)
+    if templateName then
+        return templateName, templateType
+    end
+
     local byName = findBossNameFromValue(model.Name)
     if byName then
-        return byName
+        return byName, "KnownName"
     end
 
     local humanoid = model:FindFirstChildOfClass("Humanoid")
     if humanoid then
         local byHumanoidDisplayName = findBossNameFromValue(humanoid.DisplayName)
         if byHumanoidDisplayName then
-            return byHumanoidDisplayName
+            return byHumanoidDisplayName, "HumanoidDisplayName"
         end
     end
 
@@ -104,11 +187,11 @@ local function getBossDisplayName(model)
         local value = model:GetAttribute(attributeName)
         local match = findBossNameFromValue(value)
         if match then
-            return match
+            return match, "Attribute"
         end
     end
 
-    return nil
+    return nil, nil
 end
 
 local function hasBossTag(model)
@@ -189,19 +272,23 @@ local function getBossInfo(model)
         return nil
     end
 
-    if not getRoot(model) then
+    local root = getRoot(model)
+    if not root then
         return nil
     end
 
-    local bossName = getBossDisplayName(model)
+    local bossName, detectionType = getBossDisplayName(model)
+    local bossMarker = hasBossMarker(model)
 
-    if not bossName and not hasBossMarker(model) then
+    if not bossName and not bossMarker then
         return nil
     end
 
     return {
         name = bossName or model.Name,
         humanoid = humanoid,
+        root = root,
+        detectionType = detectionType or (bossMarker and "Marker" or "Unknown"),
     }
 end
 
@@ -441,6 +528,44 @@ local function runDebugScan(setText)
             end
         end
 
+        -- Explicit Arcane boss-template discovery.
+        local bossTemplateCount, minibossTemplateCount = refreshBossTemplateRegistry()
+        results.bossTemplateCount = bossTemplateCount
+        results.minibossTemplateCount = minibossTemplateCount
+        results.bossTemplates = {}
+
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local rs = replicatedStorage:FindFirstChild("RS")
+        local objects = rs and rs:FindFirstChild("Objects")
+        local spawningEnemies = objects and objects:FindFirstChild("SpawningEnemies")
+
+        if spawningEnemies then
+            for _, child in ipairs(spawningEnemies:GetChildren()) do
+                local bossValue = child:FindFirstChild("Boss")
+                local minibossValue = child:FindFirstChild("Miniboss")
+
+                if bossValue and bossValue:IsA("BoolValue") and bossValue.Value == true then
+                    appendLimited(
+                        results.bossTemplates,
+                        ("BOSS TEMPLATE | %s | %s"):format(
+                            child.Name,
+                            child:GetFullName()
+                        ),
+                        150
+                    )
+                elseif minibossValue and minibossValue:IsA("BoolValue") and minibossValue.Value == true then
+                    appendLimited(
+                        results.bossTemplates,
+                        ("MINIBOSS TEMPLATE | %s | %s"):format(
+                            child.Name,
+                            child:GetFullName()
+                        ),
+                        150
+                    )
+                end
+            end
+        end
+
         table.sort(results.highHpModels, function(a, b)
             local aHp = tonumber(a:match("HP %d+/(%d+)")) or 0
             local bHp = tonumber(b:match("HP %d+/(%d+)")) or 0
@@ -527,6 +652,16 @@ local function runDebugScan(setText)
             table.insert(lines, "<none>")
         else
             for _, line in ipairs(results.remotes) do
+                table.insert(lines, line)
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, ("BOSS TEMPLATES FROM SpawningEnemies (%d):"):format(#(results.bossTemplates or {})))
+        if #(results.bossTemplates or {}) == 0 then
+            table.insert(lines, "<none>")
+        else
+            for _, line in ipairs(results.bossTemplates) do
                 table.insert(lines, line)
             end
         end
@@ -745,7 +880,7 @@ function Arcane.Init(Shared, UI)
             return
         end
 
-        local root = getRoot(model)
+        local root = info.root or getRoot(model)
         if not root then
             return
         end
@@ -780,11 +915,18 @@ function Arcane.Init(Shared, UI)
             highlight = highlight,
             billboard = billboard,
             label = label,
+            detectionType = info.detectionType,
         }
     end
 
     local function inspectModel(model)
         if not model or not model.Parent or not model:IsA("Model") then
+            return
+        end
+
+        -- Only track character-like models. Do not keep every decorative
+        -- Model in the candidate table.
+        if not model:FindFirstChildOfClass("Humanoid") then
             return
         end
 
@@ -837,6 +979,8 @@ function Arcane.Init(Shared, UI)
     task.spawn(function()
         while true do
             task.wait(2)
+
+            refreshBossTemplateRegistry()
 
             local detected = 0
 
