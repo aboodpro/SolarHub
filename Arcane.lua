@@ -547,6 +547,50 @@ local function getChestType(target)
     return "OTHER"
 end
 
+local function hasAnyChestFilterEnabled(Config)
+    local filter = Config.ArcaneChestFilter
+
+    if type(filter) ~= "table" then
+        return false
+    end
+
+    for _, chestType in ipairs(CHEST_TYPE_ORDER) do
+        if filter[chestType] == true then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function getChestTypeFast(target)
+    if not target or not target.Parent then
+        return nil
+    end
+
+    local text = target.Name
+
+    -- Most live Arcane chest instances expose the exact type in their name.
+    local chestType = classifyChestText(text)
+    if chestType then
+        return chestType
+    end
+
+    -- For generic "Treasure Chest"/"Chest" models, use the nearest model name.
+    local model = target:IsA("Model")
+        and target
+        or target:FindFirstAncestorOfClass("Model")
+
+    if model then
+        chestType = classifyChestText(model.Name)
+        if chestType then
+            return chestType
+        end
+    end
+
+    return nil
+end
+
 local function isChestFilterEnabled(Config, chestType)
     local filter = Config.ArcaneChestFilter
 
@@ -1346,14 +1390,13 @@ function Arcane.Init(Shared, UI)
     Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
     Config.ArcaneAutoFishing = Config.ArcaneAutoFishing == true
 
+    -- Chest filters intentionally start OFF every time SolarHub initializes.
     if type(Config.ArcaneChestFilter) ~= "table" then
         Config.ArcaneChestFilter = {}
     end
 
     for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-        if Config.ArcaneChestFilter[chestType] == nil then
-            Config.ArcaneChestFilter[chestType] = true
-        end
+        Config.ArcaneChestFilter[chestType] = false
     end
 
     local miscTab = tabs["Misc"]
@@ -1868,11 +1911,12 @@ function Arcane.Init(Shared, UI)
     end
 
     local function createChestESP(target)
-        if not Config.ArcaneChestESP then
+        if not Config.ArcaneChestESP
+            or not hasAnyChestFilterEnabled(Config) then
             return
         end
 
-        local chestType = getChestType(target)
+        local chestType = getChestTypeFast(target) or getChestType(target)
 
         if not chestType or not isChestFilterEnabled(Config, chestType) then
             destroyChestESP(target)
@@ -1929,20 +1973,52 @@ function Arcane.Init(Shared, UI)
         }
     end
 
-    local function inspectChest(target)
-        local chest = getChestTarget(target)
+    local localChestTagObjects = {}
 
+    local function inspectChest(target)
+        if not Config.ArcaneChestESP
+            or not hasAnyChestFilterEnabled(Config) then
+            return
+        end
+
+        -- Do the cheap name test first. Only fall back to the deeper chest
+        -- classifier for generic chest names.
+        local fastType = getChestTypeFast(target)
+        if fastType and not isChestFilterEnabled(Config, fastType) then
+            return
+        end
+
+        local chest = getChestTarget(target)
         if not chest then
             return
         end
 
+        local chestType = fastType or getChestType(chest)
+
+        if not isChestFilterEnabled(Config, chestType) then
+            return
+        end
+
+        localChestTagObjects[chest] = true
         chestCandidates[chest] = true
 
-        if Config.ArcaneChestESP then
-            createChestESP(chest)
-        end
+        createChestESP(chest)
     end
 
+
+    local collectionService = game:GetService("CollectionService")
+
+    for _, tag in ipairs({
+        "Chests",
+        "Prompt_Chest",
+        "BuriedChests",
+    }) do
+        collectionService:GetInstanceAddedSignal(tag):Connect(function(instance)
+            if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
+                inspectChest(instance)
+            end
+        end)
+    end
 
     local function destroySideQuestESP(model)
         local data = sideQuestESPObjects[model]
@@ -2369,17 +2445,20 @@ function Arcane.Init(Shared, UI)
             end
         end
 
-        local collectionService = game:GetService("CollectionService")
+        -- Chest scanning is completely skipped when every chest type is OFF.
+        if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
+            local collectionService = game:GetService("CollectionService")
 
-        local chestTags = {
-            "Chests",
-            "Prompt_Chest",
-            "BuriedChests",
-        }
+            local chestTags = {
+                "Chests",
+                "Prompt_Chest",
+                "BuriedChests",
+            }
 
-        for _, tag in ipairs(chestTags) do
-            for _, object in ipairs(collectionService:GetTagged(tag)) do
-                inspectChest(object)
+            for _, tag in ipairs(chestTags) do
+                for _, object in ipairs(collectionService:GetTagged(tag)) do
+                    inspectChest(object)
+                end
             end
         end
 
@@ -2470,6 +2549,20 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end)
     end)
 
+    local lastChestFilterSignature = nil
+
+    local function getChestFilterSignature()
+        local parts = {}
+
+        for _, chestType in ipairs(CHEST_TYPE_ORDER) do
+            parts[#parts + 1] = Config.ArcaneChestFilter[chestType] == true
+                and "1"
+                or "0"
+        end
+
+        return table.concat(parts, "")
+    end
+
     -- Keep a lightweight targeted world scan running. This is intentionally
     -- separate from the 2-second status/lifecycle loop so detection
     -- continues even when Arcane adds/rebuilds streamed objects.
@@ -2477,10 +2570,19 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         while true do
             task.wait(1.5)
 
+            local currentChestFilterSignature = getChestFilterSignature()
+            local chestFilterChanged = currentChestFilterSignature ~= lastChestFilterSignature
+            lastChestFilterSignature = currentChestFilterSignature
+
             if Config.ArcaneBossESP
-                or Config.ArcaneChestESP
-                or Config.ArcaneSideQuestESP then
+                or Config.ArcaneSideQuestESP
+                or (chestFilterChanged
+                    and Config.ArcaneChestESP
+                    and hasAnyChestFilterEnabled(Config)) then
                 pcall(scanTargetedWorldSources)
+            end
+
+            if Config.ArcaneSideQuestESP then
                 pcall(scanSideQuestTemplateSources)
             end
         end
@@ -2585,18 +2687,27 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         while true do
             task.wait(0.5)
 
-            if Config.ArcaneChestESP then
+            if Config.ArcaneChestESP
+                and hasAnyChestFilterEnabled(Config) then
                 for target in pairs(chestCandidates) do
                     if not target.Parent then
                         chestCandidates[target] = nil
                         destroyChestESP(target)
-                    elseif isChestFilterEnabled(Config, getChestType(target)) then
-                        createChestESP(target)
                     else
-                        destroyChestESP(target)
+                        local chestType = getChestTypeFast(target) or getChestType(target)
+
+                        if isChestFilterEnabled(Config, chestType) then
+                            createChestESP(target)
+                        else
+                            chestCandidates[target] = nil
+                            destroyChestESP(target)
+                        end
                     end
                 end
             else
+                -- No selected type = zero chest candidates and zero scanning work.
+                table.clear(chestCandidates)
+
                 for target in pairs(chestESPObjects) do
                     destroyChestESP(target)
                 end
@@ -2709,6 +2820,11 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             local character = Shared.player.Character
             local playerRoot = character
                 and character:FindFirstChild("HumanoidRootPart")
+
+            if not Config.ArcaneChestESP
+                or not hasAnyChestFilterEnabled(Config) then
+                continue
+            end
 
             for target, data in pairs(chestESPObjects) do
                 local root = getChestRoot(target)
