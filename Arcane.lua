@@ -87,30 +87,7 @@ local function refreshBossTemplateRegistry()
     table.clear(BOSS_TEMPLATE_NAMES)
     table.clear(MINIBOSS_TEMPLATE_NAMES)
 
-        local function scanSelectedChests()
-        if not Config.ArcaneChestESP
-            or not hasAnyChestFilterEnabled(Config) then
-            return
-        end
-
-        local collectionService = game:GetService("CollectionService")
-        local seen = {}
-
-        for _, tag in ipairs({
-            "Chests",
-            "Prompt_Chest",
-            "BuriedChests",
-        }) do
-            for _, object in ipairs(collectionService:GetTagged(tag)) do
-                if not seen[object] then
-                    seen[object] = true
-                    inspectChest(object)
-                end
-            end
-        end
-    end
-
-local replicatedStorage = game:GetService("ReplicatedStorage")
+        local replicatedStorage = game:GetService("ReplicatedStorage")
     local rs = replicatedStorage:FindFirstChild("RS")
     local objects = rs and rs:FindFirstChild("Objects")
     local spawningEnemies = objects and objects:FindFirstChild("SpawningEnemies")
@@ -2029,6 +2006,28 @@ function Arcane.Init(Shared, UI)
     end
 
 
+    local function scanSelectedChests()
+        if not Config.ArcaneChestESP
+            or not hasAnyChestFilterEnabled(Config) then
+            return
+        end
+
+        local collectionService = game:GetService("CollectionService")
+        local seen = {}
+
+        for _, tag in ipairs({
+            "Chests",
+            "Prompt_Chest",
+            "BuriedChests",
+        }) do
+            for _, object in ipairs(collectionService:GetTagged(tag)) do
+                if not seen[object] then
+                    seen[object] = true
+                    inspectChest(object)
+                end
+            end
+        end
+    end
     local collectionService = game:GetService("CollectionService")
 
     for _, tag in ipairs({
@@ -2623,7 +2622,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
             if Config.ArcaneSideQuestESP then
                 pcall(scanSideQuestTemplateSources)
-            end        end
+            end
+        end
     end)
 
     task.spawn(function()
