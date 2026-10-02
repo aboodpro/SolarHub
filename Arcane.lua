@@ -2032,20 +2032,6 @@ function Arcane.Init(Shared, UI)
 
         sideQuestCandidates[model] = true
 
-        local info = getSideQuestNPCInfo(model)
-
-        -- Prefer a live Workspace NPC over a static template marker with
-        -- the same name when both are available.
-        if info then
-            local normalizedLiveName = normalizeName(info.name)
-
-            for key, data in pairs(sideQuestVirtualESPObjects) do
-                if normalizeName(data.name) == normalizedLiveName then
-                    destroySideQuestVirtualESP(key)
-                end
-            end
-        end
-
         if Config.ArcaneSideQuestESP then
             createSideQuestESP(model)
         end
