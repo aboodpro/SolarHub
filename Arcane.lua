@@ -2030,6 +2030,12 @@ function Arcane.Init(Shared, UI)
             return
         end
 
+        -- ReplicatedStorage templates are handled by the virtual-marker
+        -- scanner below; live ESP objects should only target Workspace NPCs.
+        if not model:IsDescendantOf(workspace) then
+            return
+        end
+
         sideQuestCandidates[model] = true
 
         if Config.ArcaneSideQuestESP then
