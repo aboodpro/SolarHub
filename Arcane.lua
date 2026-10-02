@@ -746,9 +746,21 @@ function Arcane.Init(Shared, UI)
     notificationLayout.Padding = UDim.new(0, 8)
     notificationLayout.Parent = notificationHolder
 
-    local function showBossSpawnNotification(bossName)
+    local function formatPosition(position)
+        if not position then
+            return "Unknown"
+        end
+
+        return ("X %.0f | Y %.0f | Z %.0f"):format(
+            position.X,
+            position.Y,
+            position.Z
+        )
+    end
+
+    local function showBossSpawnNotification(bossName, spawnPosition, deathPosition)
         local frame = Instance.new("Frame")
-        frame.Size = UDim2.fromOffset(320, 62)
+        frame.Size = UDim2.fromOffset(340, deathPosition and 84 or 62)
         frame.BackgroundColor3 = Color3.fromRGB(20, 20, 27)
         frame.BackgroundTransparency = 0.05
         frame.BorderSizePixel = 0
@@ -779,19 +791,47 @@ function Arcane.Init(Shared, UI)
         nameLabel.Size = UDim2.new(1, -18, 0, 22)
         nameLabel.Position = UDim2.fromOffset(9, 29)
         nameLabel.BackgroundTransparency = 1
-        nameLabel.Text = tostring(bossName) .. " has spawned."
+        nameLabel.Text = tostring(bossName) .. " spawned at: " .. formatPosition(spawnPosition)
         nameLabel.TextColor3 = Color3.fromRGB(240, 240, 245)
         nameLabel.Font = Enum.Font.GothamBold
-        nameLabel.TextSize = 10
+        nameLabel.TextSize = 9
         nameLabel.TextXAlignment = Enum.TextXAlignment.Left
         nameLabel.Parent = frame
 
-        task.delay(4, function()
+        if deathPosition then
+            local previousLabel = Instance.new("TextLabel")
+            previousLabel.Size = UDim2.new(1, -18, 0, 18)
+            previousLabel.Position = UDim2.fromOffset(9, 53)
+            previousLabel.BackgroundTransparency = 1
+            previousLabel.TextColor3 = Color3.fromRGB(160, 160, 170)
+            previousLabel.Font = Enum.Font.Gotham
+            previousLabel.TextSize = 8
+            previousLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+            local distance = (spawnPosition - deathPosition).Magnitude
+
+            if distance <= 12 then
+                previousLabel.Text = ("Death: %s | Spawn moved: %.0f studs (same area)"):format(
+                    formatPosition(deathPosition),
+                    distance
+                )
+            else
+                previousLabel.Text = ("Death: %s | Spawn moved: %.0f studs"):format(
+                    formatPosition(deathPosition),
+                    distance
+                )
+            end
+
+            previousLabel.Parent = frame
+        end
+
+        task.delay(5, function()
             if frame and frame.Parent then
                 frame:Destroy()
             end
         end)
     end
+
 
     local section = UI.createSection(
         miscTab,
@@ -919,11 +959,11 @@ function Arcane.Init(Shared, UI)
     local espObjects = {}
     local candidateModels = {}
 
-    -- Bosses that were observed alive, then disappeared.
-    -- Used to distinguish a real respawn from a boss that was already
-    -- present when SolarHub started.
+    -- Boss lifecycle state is tracked by boss name, not by spawn position.
+    -- This means a boss can die at Point A and respawn at Point B.
+    local bossStates = {}
     local activeBossModels = {}
-    local deadBosses = {}
+    local bossDeathHooks = {}
     local initializedBossState = false
 
     local function destroyESP(model)
@@ -946,18 +986,39 @@ function Arcane.Init(Shared, UI)
         end
     end
 
+    local function markBossDead(model, bossName)
+        if not initializedBossState then
+            return
+        end
+
+        local key = normalizeName(bossName)
+        if key == "" then
+            return
+        end
+
+        local state = bossStates[key] or {}
+
+        local root = getRoot(model)
+        local position = root and root.Position or state.lastPosition
+
+        state.alive = false
+        state.lastDeathPosition = position
+        state.lastDeathTime = os.clock()
+        state.model = nil
+
+        bossStates[key] = state
+    end
+
     local function removeModel(model)
         candidateModels[model] = nil
 
         local bossName = getBossDisplayName(model)
         if bossName then
             activeBossModels[model] = nil
-
-            if initializedBossState then
-                deadBosses[normalizeName(bossName)] = bossName
-            end
+            markBossDead(model, bossName)
         end
 
+        bossDeathHooks[model] = nil
         destroyESP(model)
     end
 
@@ -1028,16 +1089,47 @@ function Arcane.Init(Shared, UI)
 
         if bossName and isBossTemplateName(model.Name) then
             local key = normalizeName(bossName)
+            local state = bossStates[key] or {}
+            local root = getRoot(model)
+            local spawnPosition = root and root.Position or state.lastPosition
 
+            -- A new model for the same boss after a confirmed death is a respawn.
+            -- We use the NEW model's current position as the actual spawn location.
             if initializedBossState
-                and deadBosses[key]
+                and state.alive == false
                 and not activeBossModels[model] then
 
-                showBossSpawnNotification(bossName)
-                deadBosses[key] = nil
+                showBossSpawnNotification(
+                    bossName,
+                    spawnPosition,
+                    state.lastDeathPosition
+                )
             end
 
+            state.alive = true
+            state.model = model
+            state.lastPosition = spawnPosition
+            bossStates[key] = state
             activeBossModels[model] = true
+
+            if not bossDeathHooks[model] then
+                bossDeathHooks[model] = true
+
+                humanoid.Died:Connect(function()
+                    local currentRoot = getRoot(model)
+                    local deathPosition = currentRoot and currentRoot.Position or state.lastPosition
+
+                    local currentState = bossStates[key] or {}
+                    currentState.alive = false
+                    currentState.model = nil
+                    currentState.lastDeathPosition = deathPosition
+                    currentState.lastDeathTime = os.clock()
+                    currentState.lastPosition = deathPosition
+                    bossStates[key] = currentState
+
+                    activeBossModels[model] = nil
+                end)
+            end
         end
 
         candidateModels[model] = true
@@ -1114,7 +1206,13 @@ function Arcane.Init(Shared, UI)
 
             for model in pairs(activeBossModels) do
                 if not model.Parent then
+                    local bossName = getBossDisplayName(model)
+                    if bossName then
+                        markBossDead(model, bossName)
+                    end
+
                     activeBossModels[model] = nil
+                    bossDeathHooks[model] = nil
                 end
             end
 
