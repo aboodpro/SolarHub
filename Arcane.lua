@@ -49,6 +49,29 @@ for _, name in ipairs(BOSS_NAMES) do
     NORMALIZED_BOSSES[normalizeName(name)] = name
 end
 
+-- Known Mini Boss names seen in Arcane's SpawningEnemies definitions.
+local MINIBOSS_NAMES = {
+    "Evander",
+    "Dusk",
+    "Delamere",
+    "The Crone",
+    "Laelus",
+    "Maine",
+    "The One Beyond Reach",
+    "Vatnulf",
+    "Veyne",
+    "Harzog",
+    "Crowe",
+    "Lysara",
+    "Harjvindr",
+}
+
+local NORMALIZED_MINIBOSSES = {}
+
+for _, name in ipairs(MINIBOSS_NAMES) do
+    NORMALIZED_MINIBOSSES[normalizeName(name)] = name
+end
+
 -------------------------------------------------
 -- ARCANE BOSS TEMPLATE REGISTRY
 -------------------------------------------------
@@ -76,33 +99,33 @@ local function refreshBossTemplateRegistry()
     for _, child in ipairs(spawningEnemies:GetChildren()) do
         local normalized = normalizeName(child.Name)
 
+        -- The presence of these BoolValues is the game's template classification.
+        -- Do not require Value == true: some replicated templates expose the marker
+        -- while keeping its runtime value false.
         local bossValue = child:FindFirstChild("Boss")
         local minibossValue = child:FindFirstChild("Miniboss")
 
-        if bossValue and bossValue:IsA("BoolValue") and bossValue.Value == true then
+        if bossValue and bossValue:IsA("BoolValue") then
             BOSS_TEMPLATE_NAMES[normalized] = child.Name
         end
 
-        if minibossValue and minibossValue:IsA("BoolValue") and minibossValue.Value == true then
+        if minibossValue and minibossValue:IsA("BoolValue") then
             MINIBOSS_TEMPLATE_NAMES[normalized] = child.Name
         end
     end
 
-    return
-        (function()
-            local count = 0
-            for _ in pairs(BOSS_TEMPLATE_NAMES) do
-                count += 1
-            end
-            return count
-        end)(),
-        (function()
-            local count = 0
-            for _ in pairs(MINIBOSS_TEMPLATE_NAMES) do
-                count += 1
-            end
-            return count
-        end)()
+    local bossCount = 0
+    local minibossCount = 0
+
+    for _ in pairs(BOSS_TEMPLATE_NAMES) do
+        bossCount += 1
+    end
+
+    for _ in pairs(MINIBOSS_TEMPLATE_NAMES) do
+        minibossCount += 1
+    end
+
+    return bossCount, minibossCount
 end
 
 local function getTemplateBossName(value)
@@ -170,6 +193,18 @@ local function getBossDisplayName(model)
         return templateName, templateType
     end
 
+    local normalizedModelName = normalizeName(model.Name)
+
+    local knownBoss = NORMALIZED_BOSSES[normalizedModelName]
+    if knownBoss then
+        return knownBoss, "KnownName"
+    end
+
+    local knownMini = NORMALIZED_MINIBOSSES[normalizedModelName]
+    if knownMini then
+        return knownMini, "KnownMiniboss"
+    end
+
     local byName = findBossNameFromValue(model.Name)
     if byName then
         return byName, "KnownName"
@@ -199,6 +234,34 @@ local function getBossDisplayName(model)
     return nil, nil
 end
 
+local function getBossClass(model)
+    local templateName, templateType = getTemplateBossName(model.Name)
+
+    if templateName then
+        if templateType == "MinibossTemplate" then
+            return "MINI BOSS"
+        end
+
+        return "BOSS"
+    end
+
+    local normalized = normalizeName(model.Name)
+
+    if NORMALIZED_MINIBOSSES[normalized] then
+        return "MINI BOSS"
+    end
+
+    if NORMALIZED_BOSSES[normalized] then
+        return "BOSS"
+    end
+
+    local bossMarker = hasBossMarker(model)
+    if bossMarker then
+        return "BOSS"
+    end
+
+    return nil
+end
 local function hasBossTag(model)
     local CollectionService = game:GetService("CollectionService")
 
@@ -283,6 +346,7 @@ local function getBossInfo(model)
     end
 
     local bossName, detectionType = getBossDisplayName(model)
+    local bossClass = getBossClass(model)
     local bossMarker = hasBossMarker(model)
 
     if not bossName and not bossMarker then
@@ -293,6 +357,7 @@ local function getBossInfo(model)
         name = bossName or model.Name,
         humanoid = humanoid,
         root = root,
+        bossClass = bossClass or "BOSS",
         detectionType = detectionType or (bossMarker and "Marker" or "Unknown"),
     }
 end
@@ -549,20 +614,24 @@ local function runDebugScan(setText)
                 local bossValue = child:FindFirstChild("Boss")
                 local minibossValue = child:FindFirstChild("Miniboss")
 
-                if bossValue and bossValue:IsA("BoolValue") and bossValue.Value == true then
+                if bossValue and bossValue:IsA("BoolValue") then
                     appendLimited(
                         results.bossTemplates,
-                        ("BOSS TEMPLATE | %s | %s"):format(
+                        ("BOSS TEMPLATE | %s | Boss.Value=%s | %s"):format(
                             child.Name,
+                            tostring(bossValue.Value),
                             child:GetFullName()
                         ),
                         150
                     )
-                elseif minibossValue and minibossValue:IsA("BoolValue") and minibossValue.Value == true then
+                end
+
+                if minibossValue and minibossValue:IsA("BoolValue") then
                     appendLimited(
                         results.bossTemplates,
-                        ("MINIBOSS TEMPLATE | %s | %s"):format(
+                        ("MINIBOSS TEMPLATE | %s | Miniboss.Value=%s | %s"):format(
                             child.Name,
+                            tostring(minibossValue.Value),
                             child:GetFullName()
                         ),
                         150
@@ -758,7 +827,7 @@ function Arcane.Init(Shared, UI)
         )
     end
 
-    local function showBossSpawnNotification(bossName, spawnPosition, deathPosition)
+    local function showBossSpawnNotification(bossName, bossClass, spawnPosition, deathPosition)
         local frame = Instance.new("Frame")
         frame.Size = UDim2.fromOffset(340, deathPosition and 84 or 62)
         frame.BackgroundColor3 = Color3.fromRGB(20, 20, 27)
@@ -780,7 +849,7 @@ function Arcane.Init(Shared, UI)
         title.Size = UDim2.new(1, -18, 0, 22)
         title.Position = UDim2.fromOffset(9, 6)
         title.BackgroundTransparency = 1
-        title.Text = "⚔ BOSS RESPAWNED"
+        title.Text = "⚔ " .. tostring(bossClass or "BOSS") .. " RESPAWNED"
         title.TextColor3 = Color3.fromRGB(220, 140, 40)
         title.Font = Enum.Font.GothamBold
         title.TextSize = 11
@@ -1072,6 +1141,7 @@ function Arcane.Init(Shared, UI)
             billboard = billboard,
             label = label,
             detectionType = info.detectionType,
+            bossClass = info.bossClass,
         }
     end
 
@@ -1087,7 +1157,13 @@ function Arcane.Init(Shared, UI)
 
         local bossName, detectionType = getBossDisplayName(model)
 
-        if bossName and isBossTemplateName(model.Name) then
+        local bossClass = getBossClass(model)
+
+        if bossName and bossClass and (
+            isBossTemplateName(model.Name)
+            or bossClass == "MINI BOSS"
+            or bossClass == "BOSS"
+        ) then
             local key = normalizeName(bossName)
             local state = bossStates[key] or {}
             local root = getRoot(model)
@@ -1101,6 +1177,7 @@ function Arcane.Init(Shared, UI)
 
                 showBossSpawnNotification(
                     bossName,
+                    bossClass,
                     spawnPosition,
                     state.lastDeathPosition
                 )
@@ -1284,12 +1361,15 @@ function Arcane.Init(Shared, UI)
                             local health = math.max(0, humanoid.Health)
                             local maxHealth = math.max(0, humanoid.MaxHealth)
 
+                            local bossClass = getBossClass(model) or "BOSS"
+
                             data.label.Text = string.format(
-                                "%s\nHP: %d/%d  |  %s",
+                                "%s\n%s\nHP: %d/%d  |  %s",
+                                tostring(bossClass),
                                 tostring(bossName),
                                 math.floor(health),
                                 math.floor(maxHealth),
-                                distanceText
+                                distanceText:gsub("Distance:", "STUDS:")
                             )
                         end
                     end
