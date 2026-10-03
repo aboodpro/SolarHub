@@ -693,21 +693,35 @@ local function getChestTarget(object)
         return nil
     end
 
-    local model = object:IsA("Model")
-        and object
-        or object:FindFirstAncestorOfClass("Model")
+    -- Arcane Odyssey chest models use a Base part as the physical anchor.
+    -- Walk upward so a tagged Base/Prompt/etc. resolves to the actual chest
+    -- model instead of accidentally selecting an unrelated nested model.
+    local current = object
 
-    if model and looksLikeChestModel(model) then
-        return model
+    while current and current ~= workspace do
+        if current:IsA("Model") then
+            local base = current:FindFirstChild("Base")
+
+            if base and base:IsA("BasePart") and looksLikeChestModel(current) then
+                return current
+            end
+
+            if looksLikeChestModel(current) then
+                return current
+            end
+        end
+
+        current = current.Parent
     end
 
     if object:IsA("BasePart") then
         local normalized = normalizeName(object.Name)
 
-        if normalized:find("chest", 1, true)
+        if normalized == "base"
+            or normalized:find("chest", 1, true)
             or normalized:find("treasure", 1, true)
             or normalized:find("sealedchest", 1, true) then
-            return object
+            return object:IsDescendantOf(workspace) and object or nil
         end
     end
 
@@ -716,6 +730,12 @@ end
 
 local function getChestRoot(target)
     if target:IsA("Model") then
+        local base = target:FindFirstChild("Base")
+
+        if base and base:IsA("BasePart") then
+            return base
+        end
+
         local root = getRoot(target)
 
         if root then
@@ -989,7 +1009,7 @@ local function runDebugScan(setText)
 
         setText(
             "Running Arcane DEEP DEBUG...\\n"
-            .. "Targeted only to known systems; large traversals yield periodically."
+            .. "Scans Arcane systems: bosses, chests, side quest NPCs/locations, templates, remotes and fishing."
         )
 
         local results = {
@@ -1290,48 +1310,75 @@ local function runDebugScan(setText)
 
         task.wait()
 
-        -- Chest diagnosis: only tagged objects in Workspace, deduplicated.
+        -- Chest diagnosis. Use the known AO chest structure (Base/Open/Prompt)
+        -- in addition to the three CollectionService tags.
         local chestSeen = {}
+
+        local function addChestDiagnosis(chest, source)
+            if not chest
+                or not chest:IsDescendantOf(workspace)
+                or chestSeen[chest] then
+                return
+            end
+
+            chestSeen[chest] = true
+
+            local root = getChestRoot(chest)
+            local chestType = getChestType(chest)
+            local live = hasLiveChestInteraction(chest)
+            local distance = "DIST=?"
+            local playerRoot = getLocalPlayerRoot()
+            local base = chest:IsA("Model") and chest:FindFirstChild("Base")
+            local prompt = chest:FindFirstChild("Prompt", true)
+            local open = chest:FindFirstChild("Open", true)
+
+            if playerRoot and root then
+                distance = ("DIST=%.0f"):format(
+                    (playerRoot.Position - root.Position).Magnitude
+                )
+            end
+
+            add(
+                results.chests,
+                ("%s | SOURCE=%s | TYPE=%s | LIVE=%s | BASE=%s | PROMPT=%s | OPEN=%s | %s | %s | %s | %s | %s"):format(
+                    chest.Name,
+                    tostring(source),
+                    tostring(chestType),
+                    tostring(live),
+                    tostring(base and base:IsA("BasePart")),
+                    tostring(prompt and prompt.ClassName or "nil"),
+                    tostring(open ~= nil),
+                    distance,
+                    opened(chest),
+                    pos(root),
+                    attrs(chest),
+                    tags(chest),
+                    interaction(chest)
+                ),
+                900
+            )
+        end
 
         for _, tagName in ipairs({"Chests", "Prompt_Chest", "BuriedChests"}) do
             local tagged = CollectionService:GetTagged(tagName)
 
             for _, object in ipairs(tagged) do
-                local chest = getChestTarget(object)
+                addChestDiagnosis(
+                    getChestTarget(object),
+                    "TAG:" .. tagName
+                )
+            end
+        end
 
-                if chest
-                    and chest:IsDescendantOf(workspace)
-                    and not chestSeen[chest] then
+        -- Also inspect Workspace-root chest models. This matches the public
+        -- AO ESP implementations that resolve chests by their name/Base.
+        for _, object in ipairs(workspace:GetChildren()) do
+            if object:IsA("Model") then
+                local normalized = normalizeName(object.Name)
 
-                    chestSeen[chest] = true
-
-                    local root = getChestRoot(chest)
-                    local chestType = getChestType(chest)
-                    local live = hasLiveChestInteraction(chest)
-                    local distance = "DIST=?"
-                    local playerRoot = getLocalPlayerRoot()
-
-                    if playerRoot and root then
-                        distance = ("DIST=%.0f"):format(
-                            (playerRoot.Position - root.Position).Magnitude
-                        )
-                    end
-
-                    add(
-                        results.chests,
-                        ("%s | TYPE=%s | LIVE=%s | %s | %s | %s | %s | %s | %s"):format(
-                            chest.Name,
-                            tostring(chestType),
-                            tostring(live),
-                            distance,
-                            opened(chest),
-                            pos(root),
-                            attrs(chest),
-                            tags(chest),
-                            interaction(chest)
-                        ),
-                        600
-                    )
+                if normalized:find("chest", 1, true)
+                    or object:FindFirstChild("Base") then
+                    addChestDiagnosis(object, "WORKSPACE_CHILD")
                 end
             end
         end
@@ -1351,10 +1398,41 @@ local function runDebugScan(setText)
                     for _, child in ipairs(object:GetChildren()) do
                         if child:IsA("ObjectValue") then
                             local valueName = child.Value and child.Value.Name or "nil"
+                            local childAttrs = child:GetAttributes()
+                            local attrParts = {}
+
+                            for key, value in pairs(childAttrs) do
+                                table.insert(
+                                    attrParts,
+                                    tostring(key) .. "=" .. tostring(value)
+                                )
+                            end
+
+                            table.sort(attrParts)
 
                             table.insert(
                                 links,
-                                child.Name .. "=" .. valueName
+                                child.Name
+                                    .. "="
+                                    .. valueName
+                                    .. (
+                                        #attrParts > 0
+                                            and ("{" .. table.concat(attrParts, ";") .. "}")
+                                            or ""
+                                    )
+                            )
+                        elseif child:IsA("StringValue")
+                            or child:IsA("IntValue")
+                            or child:IsA("NumberValue")
+                            or child:IsA("BoolValue") then
+                            table.insert(
+                                links,
+                                child.Name .. "=" .. tostring(child.Value)
+                            )
+                        else
+                            table.insert(
+                                links,
+                                child.Name .. ":" .. child.ClassName
                             )
                         end
                     end
@@ -1766,7 +1844,7 @@ function Arcane.Init(Shared, UI)
     scanButton.Position = UDim2.fromOffset(8, 124)
     scanButton.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
     scanButton.BorderSizePixel = 0
-    scanButton.Text = "SCAN BOSS STRUCTURE"
+    scanButton.Text = "SCAN ARCANE STRUCTURE"
     scanButton.TextColor3 = Color3.fromRGB(235, 235, 240)
     scanButton.Font = Enum.Font.GothamBold
     scanButton.TextSize = 10
@@ -1799,7 +1877,7 @@ function Arcane.Init(Shared, UI)
     debugBox.Font = Enum.Font.Code
     debugBox.TextSize = 9
     debugBox.TextColor3 = Color3.fromRGB(220, 220, 225)
-    debugBox.Text = "Ready. Press SCAN BOSS STRUCTURE."
+    debugBox.Text = "Ready. Press SCAN ARCANE STRUCTURE."
     debugBox.Parent = section
     Instance.new("UICorner", debugBox).CornerRadius = UDim.new(0, 7)
 
@@ -1824,7 +1902,7 @@ function Arcane.Init(Shared, UI)
             end
 
             if scanButton and scanButton.Parent then
-                scanButton.Text = "SCAN BOSS STRUCTURE"
+                scanButton.Text = "SCAN ARCANE STRUCTURE"
             end
         end)
     end)
@@ -2199,22 +2277,35 @@ function Arcane.Init(Shared, UI)
             return false
         end
 
-        -- A live chest must expose an actual interaction object on the client.
-        -- This rejects stale/template-tagged models and opened objects whose
-        -- interaction was removed.
-        local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
+        -- Verified Arcane Odyssey chest structure:
+        -- a live chest has a Base part and normally a Prompt child/object.
+        -- Open is the game's opened-state marker.
+        local base = chest:IsA("Model") and chest:FindFirstChild("Base")
+        if not (base and base:IsA("BasePart") and base:IsDescendantOf(workspace)) then
+            return false
+        end
 
-        if prompt and prompt.Enabled then
+        if chest:FindFirstChild("Open", true) then
+            return false
+        end
+
+        local prompt = chest:FindFirstChild("Prompt", true)
+
+        if prompt then
+            if prompt:IsA("ProximityPrompt") then
+                return prompt.Enabled
+            end
+
             return true
         end
 
-        local clickDetector = chest:FindFirstChildWhichIsA("ClickDetector", true)
-
-        if clickDetector then
+        -- Fallback for versions/locations where the prompt is represented
+        -- by a normal ClickDetector or another prompt-like object.
+        if chest:FindFirstChildWhichIsA("ClickDetector", true) then
             return true
         end
 
-        return false
+        return true
     end
 
     local function createChestESP(target)
@@ -2329,6 +2420,11 @@ function Arcane.Init(Shared, UI)
             end
         end
 
+        -- Arcane Odyssey uses an "Open" child when a chest has been taken.
+        if chest:FindFirstChild("Open", true) then
+            return true
+        end
+
         -- Common replicated Value markers.
         for _, descendant in ipairs(chest:GetDescendants()) do
             local normalizedName = normalizeChestText(descendant.Name)
@@ -2360,10 +2456,9 @@ function Arcane.Init(Shared, UI)
             return
         end
 
-        local chest = prompt
-            and prompt:FindFirstAncestorOfClass("Model")
+        local chest = prompt and getChestTarget(prompt)
 
-        if chest and getChestTarget(chest) then
+        if chest then
             markChestOpened(chest)
         end
     end)
@@ -2745,6 +2840,151 @@ function Arcane.Init(Shared, UI)
         }
     end
 
+    local function findKnownSideQuestName(value)
+        local text = normalizeName(value)
+
+        if text == "" then
+            return nil
+        end
+
+        local exact = NORMALIZED_SIDE_QUEST_NPCS[text]
+
+        if exact then
+            return exact
+        end
+
+        for normalizedName, displayName in pairs(NORMALIZED_SIDE_QUEST_NPCS) do
+            if text:find(normalizedName, 1, true) then
+                return displayName
+            end
+        end
+
+        return nil
+    end
+
+    local function getWorldPositionForLocationObject(instance)
+        if instance:IsA("BasePart") then
+            return instance.Position
+        end
+
+        if instance:IsA("Attachment") then
+            return instance.WorldPosition
+        end
+
+        if instance:IsA("Model") then
+            local root = getRoot(instance)
+
+            if root then
+                return root.Position
+            end
+
+            local ok, pivot = pcall(function()
+                return instance:GetPivot()
+            end)
+
+            if ok then
+                return pivot.Position
+            end
+        end
+
+        local parent = instance.Parent
+
+        while parent and parent ~= workspace do
+            if parent:IsA("BasePart") then
+                return parent.Position
+            end
+
+            if parent:IsA("Attachment") then
+                return parent.WorldPosition
+            end
+
+            parent = parent.Parent
+        end
+
+        return nil
+    end
+
+    local function getSideQuestLocationNameFromNode(node)
+        -- 1) The node itself and its full path can contain the NPC name.
+        local knownName = findKnownSideQuestName(node.Name)
+
+        if knownName then
+            return knownName
+        end
+
+        knownName = findKnownSideQuestName(node:GetFullName())
+
+        if knownName then
+            return knownName
+        end
+
+        -- 2) Attributes on the location/object value.
+        local okAttrs, attributes = pcall(function()
+            return node:GetAttributes()
+        end)
+
+        if okAttrs and type(attributes) == "table" then
+            for key, value in pairs(attributes) do
+                knownName = findKnownSideQuestName(key)
+                    or findKnownSideQuestName(value)
+
+                if knownName then
+                    return knownName
+                end
+            end
+        end
+
+        -- 3) Direct metadata children. ObjectValue.Value may be nil until
+        -- the NPC is actually spawned, so never make Value the only source.
+        for _, child in ipairs(node:GetChildren()) do
+            knownName = findKnownSideQuestName(child.Name)
+
+            if knownName then
+                return knownName
+            end
+
+            if child:IsA("StringValue")
+                or child:IsA("IntValue")
+                or child:IsA("NumberValue")
+                or child:IsA("BoolValue") then
+
+                knownName = findKnownSideQuestName(child.Value)
+
+                if knownName then
+                    return knownName
+                end
+            elseif child:IsA("ObjectValue") then
+                knownName = findKnownSideQuestName(child.Name)
+
+                if not knownName and child.Value then
+                    knownName = findKnownSideQuestName(child.Value.Name)
+                        or findKnownSideQuestName(child.Value:GetFullName())
+                end
+
+                local okObjectAttrs, objectAttrs = pcall(function()
+                    return child:GetAttributes()
+                end)
+
+                if okObjectAttrs and type(objectAttrs) == "table" then
+                    for key, value in pairs(objectAttrs) do
+                        knownName = findKnownSideQuestName(key)
+                            or findKnownSideQuestName(value)
+
+                        if knownName then
+                            return knownName
+                        end
+                    end
+                end
+            end
+
+            if knownName then
+                return knownName
+            end
+        end
+
+        return nil
+    end
+
     local function scanSideQuestLocationRegistry()
         if not Config.ArcaneSideQuestESP then
             return
@@ -2758,50 +2998,31 @@ function Arcane.Init(Shared, UI)
             return
         end
 
+        local seenLocationKeys = {}
+
         for index, object in ipairs(npcLocations:GetDescendants()) do
             if index % 150 == 0 then
                 task.wait()
             end
 
-            if object:IsA("BasePart") then
-                local position = object.Position
+            local position = getWorldPositionForLocationObject(object)
 
-                for _, child in ipairs(object:GetChildren()) do
-                    if child:IsA("ObjectValue") then
-                        local value = child.Value
+            if position then
+                local knownName = getSideQuestLocationNameFromNode(object)
 
-                        if value and value:IsA("Model") then
-                            local info = getSideQuestNPCInfo(value)
-                            local knownName = info
-                                and info.name
-                                or NORMALIZED_SIDE_QUEST_NPCS[
-                                    normalizeName(value.Name)
-                                ]
+                if knownName then
+                    local key = "NPCLOCATION|"
+                        .. object:GetFullName()
+                        .. "|"
+                        .. knownName
 
-                            if knownName then
-                                createSideQuestLocationVirtualESP(
-                                    knownName,
-                                    position,
-                                    "NPCLOCATION|" .. object:GetFullName() .. "|" .. child.Name,
-                                    object
-                                )
-                            end
-                        end
-                    end
-                end
+                    if not seenLocationKeys[key] then
+                        seenLocationKeys[key] = true
 
-                local attrs = object:GetAttributes()
-
-                for key, value in pairs(attrs) do
-                    local knownName = NORMALIZED_SIDE_QUEST_NPCS[
-                        normalizeName(value)
-                    ]
-
-                    if knownName then
                         createSideQuestLocationVirtualESP(
                             knownName,
                             position,
-                            "NPCLOCATION_ATTR|" .. object:GetFullName() .. "|" .. tostring(key),
+                            key,
                             object
                         )
                     end
@@ -3032,9 +3253,9 @@ function Arcane.Init(Shared, UI)
         if enemiesFolder then
             for _, model in ipairs(enemiesFolder:GetChildren()) do
                 inspectModel(model)
+                inspectSideQuestModel(model)
             end
         end
-
 
         local replicatedStorage = game:GetService("ReplicatedStorage")
         local rs = replicatedStorage:FindFirstChild("RS")
@@ -3043,11 +3264,11 @@ function Arcane.Init(Shared, UI)
             local unloadEnemies = rs:FindFirstChild("UnloadEnemies")
 
             if unloadEnemies and Config.ArcaneSideQuestESP then
-                -- These are lightweight child-level NPC definitions with real
-                -- world positions (NPCHitbox / SpawnPart).
-                for _, model in ipairs(unloadEnemies:GetChildren()) do
-                    if model:IsA("Model") then
-                        inspectSideQuestModel(model)
+                -- These are lightweight NPC definitions; scan both current
+                -- children and nested models because quest NPCs can be grouped.
+                for _, instance in ipairs(unloadEnemies:GetChildren()) do
+                    if instance:IsA("Model") then
+                        inspectSideQuestModel(instance)
                     end
                 end
             end
