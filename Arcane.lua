@@ -2338,10 +2338,23 @@ function Arcane.Init(Shared, UI)
             return true
         end
 
-        -- The public AO chest implementations also use a Prompt child to
-        -- distinguish an actually interactable chest from decorative/stale
-        -- chest models.
-        local clickDetector = chest:FindFirstChildWhichIsA("ClickDetector", true)
+        -- Accept any ProximityPrompt as well. The game's regular chest
+        -- interaction is prompt-based, but the prompt's instance name is not
+        -- something the ESP should depend on.
+        local proximityPrompt = chest:FindFirstChildWhichIsA(
+            "ProximityPrompt",
+            true
+        )
+
+        if proximityPrompt then
+            return proximityPrompt.Enabled
+        end
+
+        -- Some interactable variants expose a ClickDetector instead.
+        local clickDetector = chest:FindFirstChildWhichIsA(
+            "ClickDetector",
+            true
+        )
 
         if clickDetector then
             return true
@@ -2558,14 +2571,29 @@ function Arcane.Init(Shared, UI)
     end
 
 
-    local function scanSelectedChests()
+    local function scanAllWorkspaceChests()
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
         end
 
-        local collectionService = game:GetService("CollectionService")
+        -- Tags are useful, but they are not sufficient to guarantee that
+        -- every live chest is discovered. Scan the replicated Workspace too.
         local seen = {}
+
+        local function inspectOnce(object)
+            if not object
+                or not object:IsDescendantOf(workspace)
+                or seen[object] then
+                return
+            end
+
+            seen[object] = true
+            inspectChest(object)
+        end
+
+        -- First use the game's known chest-related tags.
+        local collectionService = game:GetService("CollectionService")
 
         for _, tag in ipairs({
             "Chests",
@@ -2573,15 +2601,57 @@ function Arcane.Init(Shared, UI)
             "BuriedChests",
         }) do
             for _, object in ipairs(collectionService:GetTagged(tag)) do
-                if not seen[object] then
-                    seen[object] = true
+                inspectOnce(object)
+            end
+        end
 
-                    if object:IsDescendantOf(workspace) then
-                        inspectChest(object)
+        -- Then scan every replicated Workspace model for the actual chest
+        -- shape/name. This catches chests that have no useful CollectionService
+        -- tag, including nested chests in ships and underwater structures.
+        for index, object in ipairs(workspace:GetDescendants()) do
+            if index % 350 == 0 then
+                task.wait()
+            end
+
+            if object:IsA("Model") then
+                local normalized = normalizeName(object.Name)
+
+                local namedChest =
+                    normalized:find("chest", 1, true) ~= nil
+                    or normalized:find("treasure", 1, true) ~= nil
+                    or normalized:find("sealed", 1, true) ~= nil
+
+                local chestShape = false
+
+                if not namedChest then
+                    local base = object:FindFirstChild("Base")
+
+                    if base and base:IsA("BasePart") then
+                        local prompt = object:FindFirstChildWhichIsA(
+                            "ProximityPrompt",
+                            true
+                        )
+
+                        local clickDetector = object:FindFirstChildWhichIsA(
+                            "ClickDetector",
+                            true
+                        )
+
+                        chestShape = prompt ~= nil or clickDetector ~= nil
                     end
+                end
+
+                if namedChest or chestShape then
+                    inspectOnce(object)
                 end
             end
         end
+    end
+
+    -- Keep the old function name as a compatibility wrapper for existing
+    -- callers in this module.
+    local function scanSelectedChests()
+        scanAllWorkspaceChests()
     end
     local collectionService = game:GetService("CollectionService")
 
@@ -3456,7 +3526,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         scanTargetedWorldSources()
 
         if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
-            scanSelectedChests()
+            scanAllWorkspaceChests()
         end
 
         if Config.ArcaneSideQuestESP then
@@ -3472,6 +3542,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     local lastChestFilterSignature = nil
     local lastChestESPEnabled = Config.ArcaneChestESP == true
     local targetedScanAccumulator = 0
+    local chestScanAccumulator = 0
 
     local function getChestFilterSignature()
         local parts = {}
@@ -3517,6 +3588,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             end
 
             targetedScanAccumulator += 0.25
+            chestScanAccumulator += 0.25
 
             if targetedScanAccumulator >= 1.5 then
                 targetedScanAccumulator = 0
@@ -3528,6 +3600,18 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
                 if Config.ArcaneSideQuestESP then
                     pcall(scanSideQuestTemplateSources)
+                end
+            end
+
+            -- Re-scan the whole replicated Workspace for chests periodically.
+            -- This covers newly spawned chests and containers that are not
+            -- represented by the known tags.
+            if chestScanAccumulator >= 2 then
+                chestScanAccumulator = 0
+
+                if Config.ArcaneChestESP
+                    and hasAnyChestFilterEnabled(Config) then
+                    pcall(scanAllWorkspaceChests)
                 end
             end
         end
