@@ -2545,19 +2545,19 @@ function Arcane.Init(Shared, UI)
 
 
     -------------------------------------------------
-    -- TREASURE CHART ESP
+    -- TREASURE CHART FINDER
     -------------------------------------------------
 
     local treasureChartSection = UI.createSection(
         miscTab,
-        "Treasure Chart ESP",
+        "Treasure Chart Finder",
         150
     )
 
     UI.createToggle(
         treasureChartSection,
-        "Treasure Chart ESP",
-        "Reads your active chart, shows STUDS to the search area, then highlights dig parts green.",
+        "Treasure Chart Finder",
+        "Only activates while a Treasure Chart is equipped; shows the destination, STUDS remaining, then marks the dig area green within 30 studs.",
         "ArcaneTreasureChartESP",
         32
     )
@@ -2566,7 +2566,7 @@ function Arcane.Init(Shared, UI)
     treasureChartStatus.Size = UDim2.new(1, -16, 0, 54)
     treasureChartStatus.Position = UDim2.fromOffset(8, 78)
     treasureChartStatus.BackgroundTransparency = 1
-    treasureChartStatus.Text = "Treasure Chart: not detected."
+    treasureChartStatus.Text = "Treasure Chart Finder: equip a Treasure Chart to activate."
     treasureChartStatus.TextColor3 = Color3.fromRGB(150, 150, 160)
     treasureChartStatus.Font = Enum.Font.Gotham
     treasureChartStatus.TextSize = 9
@@ -2665,6 +2665,8 @@ function Arcane.Init(Shared, UI)
         Halfway = {1 / 3, 2 / 3},
         ["On the edge"] = {2 / 3, 1.10},
     }
+
+    local TREASURE_CHART_ARRIVAL_DISTANCE = 30
 
     local TREASURE_CHART_ISLANDS = {
         "Frostmill Island", "Ravenna", "Forest of Cernunno", "Shell Island",
@@ -3156,7 +3158,9 @@ function Arcane.Init(Shared, UI)
         label.TextWrapped = true
         label.Text = "TREASURE CHART | "
             .. tostring(info.island or "?")
-            .. "\\nGO TO DIG AREA"
+            .. "\n"
+            .. tostring(info.direction or "?")
+            .. " | GO TO DIG AREA"
         label.Parent = billboard
 
         treasureChartESP = {
@@ -3355,7 +3359,7 @@ function Arcane.Init(Shared, UI)
             treasureChartESP.position = nearest.Position
             treasureChartESP.anchor.CFrame = CFrame.new(nearest.Position)
 
-            local arrived = nearestDistance <= 30
+            local arrived = nearestDistance <= TREASURE_CHART_ARRIVAL_DISTANCE
 
             setTreasureChartGreenArea(arrived)
 
