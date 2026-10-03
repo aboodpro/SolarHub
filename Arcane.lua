@@ -536,8 +536,98 @@ local function getChestType(target)
         return nil
     end
 
+    local model = target:IsA("Model")
+        and target
+        or target:FindFirstAncestorOfClass("Model")
+
+    local function classify(value)
+        return classifyChestText(value)
+    end
+
+    -- Prefer explicit runtime metadata over a generic asset/model name.
+    if model then
+        local okAttrs, attrs = pcall(function()
+            return model:GetAttributes()
+        end)
+
+        if okAttrs and type(attrs) == "table" then
+            for key, value in pairs(attrs) do
+                local normalizedKey = normalizeChestText(key)
+
+                if normalizedKey:find("rarity", 1, true)
+                    or normalizedKey:find("tier", 1, true)
+                    or normalizedKey:find("chesttype", 1, true)
+                    or normalizedKey == "type" then
+
+                    local chestType = classify(value)
+                    if chestType then
+                        return chestType
+                    end
+                end
+            end
+        end
+
+        -- Prompt text is often the live chest's actual displayed rarity.
+        for _, descendant in ipairs(model:GetDescendants()) do
+            if descendant:IsA("ProximityPrompt") then
+                local chestType = classify(descendant.ObjectText)
+                    or classify(descendant.ActionText)
+                    or classify(descendant.Name)
+
+                if chestType then
+                    return chestType
+                end
+            end
+        end
+
+        -- Replicated value objects can also carry the live rarity.
+        for _, descendant in ipairs(model:GetDescendants()) do
+            if descendant:IsA("StringValue")
+                or descendant:IsA("IntValue")
+                or descendant:IsA("NumberValue") then
+
+                local chestType = classify(descendant.Value)
+                    or classify(descendant.Name)
+
+                if chestType then
+                    return chestType
+                end
+            end
+        end
+
+        -- CollectionService tags may expose the exact rarity on some variants.
+        local collectionService = game:GetService("CollectionService")
+        local okTags, tags = pcall(function()
+            return collectionService:GetTags(model)
+        end)
+
+        if okTags and type(tags) == "table" then
+            for _, tag in ipairs(tags) do
+                local chestType = classify(tag)
+
+                if chestType then
+                    return chestType
+                end
+            end
+        end
+    end
+
+    -- Use explicit object/model names only as fallbacks.
+    local chestType = classify(target.Name)
+    if chestType then
+        return chestType
+    end
+
+    if model then
+        chestType = classify(model.Name)
+        if chestType then
+            return chestType
+        end
+    end
+
+    -- Keep the broad source collector as a final fallback for unusual variants.
     for _, source in ipairs(collectChestTextSources(target)) do
-        local chestType = classifyChestText(source)
+        chestType = classify(source)
 
         if chestType then
             return chestType
@@ -2316,32 +2406,31 @@ function Arcane.Init(Shared, UI)
     end
 
     local function hasLiveChestInteraction(chest)
-        if not chest or not chest:IsDescendantOf(workspace) then
-            return false
-        end
-
-        local root = getChestRoot(chest)
-        if not root or not root:IsDescendantOf(workspace) then
-            return false
-        end
-
-        -- Chest discovery must not depend on an interaction object.
-        -- The reliable physical chest signature is the Base part, while
-        -- the game's Open marker identifies a chest that has already been
-        -- looted. A Prompt/ClickDetector can be absent or created later.
-        local base = chest:IsA("Model") and chest:FindFirstChild("Base")
-        if not (
-            base
-            and base:IsA("BasePart")
-            and base:IsDescendantOf(workspace)
-        ) then
-            return false
-        end
-
-        return not chest:FindFirstChild("Open", true)
+    if not chest or not chest:IsDescendantOf(workspace) then
+        return false
     end
 
-    local function createChestESP(target)
+    local root = getChestRoot(chest)
+    if not root or not root:IsDescendantOf(workspace) then
+        return false
+    end
+
+    -- The only structural requirement for ESP discovery is the live chest Base.
+    -- Do not require Prompt/ClickDetector/Open here: those objects can be absent,
+    -- delayed, or used differently by different chest variants.
+    local base = chest:IsA("Model") and chest:FindFirstChild("Base")
+    if not (
+        base
+        and base:IsA("BasePart")
+        and base:IsDescendantOf(workspace)
+    ) then
+        return false
+    end
+
+    return true
+end
+
+local function createChestESP(target)
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
@@ -2429,60 +2518,47 @@ function Arcane.Init(Shared, UI)
 
 
     local function hasChestOpenedMarker(chest)
-        if not chest then
-            return false
-        end
-
-        -- Attribute markers, if the game sets one.
-        local okAttrs, attrs = pcall(function()
-            return chest:GetAttributes()
-        end)
-
-        if okAttrs and type(attrs) == "table" then
-            for key, value in pairs(attrs) do
-                local normalizedKey = normalizeChestText(key)
-
-                if (normalizedKey == "opened"
-                    or normalizedKey == "open"
-                    or normalizedKey == "isopen"
-                    or normalizedKey == "chestopened"
-                    or normalizedKey == "openedchest")
-                    and value == true then
-                    return true
-                end
-            end
-        end
-
-        -- Arcane Odyssey uses an "Open" child when a chest has been taken.
-        if chest:FindFirstChild("Open", true) then
-            return true
-        end
-
-        -- Common replicated Value markers.
-        for _, descendant in ipairs(chest:GetDescendants()) do
-            local normalizedName = normalizeChestText(descendant.Name)
-
-            if descendant:IsA("BoolValue")
-                and (normalizedName == "opened"
-                    or normalizedName == "open"
-                    or normalizedName == "isopen"
-                    or normalizedName == "chestopened"
-                    or normalizedName == "openedchest")
-                and descendant.Value == true then
-                return true
-            end
-
-            if descendant:IsA("BoolValue")
-                and normalizedName == "chestobj"
-                and descendant.Value == true then
-                return true
-            end
-        end
-
+    if not chest then
         return false
     end
 
-    local proximityPromptService = game:GetService("ProximityPromptService")
+    local function isTruthyOpenValue(name, value)
+        local normalizedName = normalizeChestText(name)
+
+        return value == true
+            and (
+                normalizedName == "opened"
+                or normalizedName == "open"
+                or normalizedName == "isopen"
+                or normalizedName == "chestopened"
+                or normalizedName == "openedchest"
+            )
+    end
+
+    -- Only trust explicit boolean open-state markers.
+    local okAttrs, attrs = pcall(function()
+        return chest:GetAttributes()
+    end)
+
+    if okAttrs and type(attrs) == "table" then
+        for key, value in pairs(attrs) do
+            if isTruthyOpenValue(key, value) then
+                return true
+            end
+        end
+    end
+
+    for _, descendant in ipairs(chest:GetDescendants()) do
+        if descendant:IsA("BoolValue")
+            and isTruthyOpenValue(descendant.Name, descendant.Value) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local proximityPromptService = game:GetService("ProximityPromptService")
 
     proximityPromptService.PromptTriggered:Connect(function(prompt, player)
         if player and player ~= Shared.player then
@@ -2497,59 +2573,54 @@ function Arcane.Init(Shared, UI)
     end)
 
     local function inspectChest(target)
-        if not Config.ArcaneChestESP
-            or not hasAnyChestFilterEnabled(Config) then
-            return
-        end
-
-        -- Do the cheap name test first. Only fall back to the deeper chest
-        -- classifier for generic chest names.
-        local fastType = getChestTypeFast(target)
-        if fastType and not isChestFilterEnabled(Config, fastType) then
-            return
-        end
-
-        local chest = getChestTarget(target)
-        if not chest then
-            return
-        end
-
-        if not hasLiveChestInteraction(chest) then
-            chestCandidates[chest] = nil
-            destroyChestESP(chest)
-            return
-        end
-
-        local chestType = fastType or getChestType(chest)
-
-        if not isChestFilterEnabled(Config, chestType) then
-            return
-        end
-
-        if openedChests[chest] then
-            markChestOpened(chest)
-            return
-        end
-
-        if hasChestOpenedMarker(chest) then
-            markChestOpened(chest)
-            return
-        end
-
-        if not isChestWithinScanDistance(chest, chestType) then
-            chestCandidates[chest] = nil
-            destroyChestESP(chest)
-            return
-        end
-
-        localChestTagObjects[chest] = true
-        chestCandidates[chest] = true
-
-        createChestESP(chest)
+    if not Config.ArcaneChestESP
+        or not hasAnyChestFilterEnabled(Config) then
+        return
     end
 
+    -- Resolve the real chest first. Do not reject a candidate using only the
+    -- scanned object's name, because the live rarity may exist in prompts,
+    -- values, attributes, or tags inside the chest.
+    local chest = getChestTarget(target)
+    if not chest then
+        return
+    end
 
-    local function scanAllWorkspaceChests()
+    if not hasLiveChestInteraction(chest) then
+        chestCandidates[chest] = nil
+        destroyChestESP(chest)
+        return
+    end
+
+    local chestType = getChestType(chest)
+
+    if not isChestFilterEnabled(Config, chestType) then
+        return
+    end
+
+    if openedChests[chest] then
+        markChestOpened(chest)
+        return
+    end
+
+    if hasChestOpenedMarker(chest) then
+        markChestOpened(chest)
+        return
+    end
+
+    if not isChestWithinScanDistance(chest, chestType) then
+        chestCandidates[chest] = nil
+        destroyChestESP(chest)
+        return
+    end
+
+    localChestTagObjects[chest] = true
+    chestCandidates[chest] = true
+
+    createChestESP(chest)
+end
+
+local function scanAllWorkspaceChests()
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
