@@ -1414,7 +1414,8 @@ local function runDebugScan(setText)
             local chestType = getChestType(chest)
             local live = hasLiveChestInteraction(chest)
             local selected = isChestFilterEnabled(Config, chestType)
-            local playerRoot = getLocalPlayerRoot()
+            local character = Shared.player.Character
+            local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
             local distanceValue = nil
 
             if playerRoot and root then
@@ -1860,7 +1861,8 @@ local function runChestDebug(setText)
             setText("Running CHEST DEBUG...\\nScanning chest folders, tags and live models.")
 
             local player = Players.LocalPlayer
-            local playerRoot = getLocalPlayerRoot()
+            local character = Shared.player.Character
+            local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
 
             local summary = {
                 chestFolders = 0,
