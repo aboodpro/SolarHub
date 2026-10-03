@@ -1327,29 +1327,148 @@ local function runDebugScan(setText)
         -- in addition to the three CollectionService tags.
         local chestSeen = {}
 
+        local chestDebug = {
+            workspaceModels = 0,
+            modelsWithBase = 0,
+            namedCandidates = 0,
+            taggedCandidates = 0,
+            resolvedTargets = 0,
+            rareTargets = 0,
+            selectedTargets = 0,
+            liveTargets = 0,
+            withinDistance = 0,
+            rejectedNoTarget = 0,
+            rejectedFilter = 0,
+            rejectedDistance = 0,
+            openedTargets = 0,
+            samples = {},
+        }
+
+        local function addChestSample(value)
+            if #chestDebug.samples < 300 then
+                table.insert(chestDebug.samples, tostring(value))
+            end
+        end
+
+        local function isNamedChestModel(model)
+            if not model or not model:IsA("Model") then
+                return false
+            end
+
+            local normalized = normalizeName(model.Name)
+
+            return normalized:find("chest", 1, true) ~= nil
+                or normalized:find("treasure", 1, true) ~= nil
+                or normalized:find("sealed", 1, true) ~= nil
+                or normalized == "common"
+                or normalized == "uncommon"
+                or normalized == "rare"
+                or normalized == "mystic"
+                or normalized == "legendary"
+                or normalized == "privatestorage"
+                or normalized == "sky"
+                or normalized == "steel"
+        end
+
+        local function hasChestDebugTag(model)
+            if not model then
+                return false
+            end
+
+            local okTags, data = pcall(function()
+                return CollectionService:GetTags(model)
+            end)
+
+            if not okTags or type(data) ~= "table" then
+                return false
+            end
+
+            for _, tag in ipairs(data) do
+                local normalized = normalizeName(tag)
+
+                if normalized == "chests"
+                    or normalized == "promptchest"
+                    or normalized == "buriedchests"
+                    or normalized:find("chest", 1, true) then
+                    return true
+                end
+            end
+
+            return false
+        end
+
         local function addChestDiagnosis(chest, source)
-            if not chest
-                or not chest:IsDescendantOf(workspace)
-                or chestSeen[chest] then
+            if not chest or not chest:IsDescendantOf(workspace) then
+                chestDebug.rejectedNoTarget += 1
+                return
+            end
+
+            if chestSeen[chest] then
                 return
             end
 
             chestSeen[chest] = true
+            chestDebug.resolvedTargets += 1
 
             local root = getChestRoot(chest)
             local chestType = getChestType(chest)
             local live = hasLiveChestInteraction(chest)
-            local distance = "DIST=?"
+            local selected = isChestFilterEnabled(Config, chestType)
             local playerRoot = getLocalPlayerRoot()
+            local distanceValue = nil
+
+            if playerRoot and root then
+                distanceValue = (playerRoot.Position - root.Position).Magnitude
+            end
+
+            if chestType == "RARE" then
+                chestDebug.rareTargets += 1
+            end
+
+            if selected then
+                chestDebug.selectedTargets += 1
+            else
+                chestDebug.rejectedFilter += 1
+            end
+
+            local wasOpened = openedChests[chest] or hasChestOpenedMarker(chest)
+
+            if wasOpened then
+                chestDebug.openedTargets += 1
+            elseif live then
+                chestDebug.liveTargets += 1
+            end
+
+            if selected and not wasOpened then
+                if isChestWithinScanDistance(chest, chestType) then
+                    chestDebug.withinDistance += 1
+                else
+                    chestDebug.rejectedDistance += 1
+                end
+            end
+
+            addChestSample(
+                ("%s | SRC=%s | TYPE=%s | LIVE=%s | SELECTED=%s | DIST=%s | BASE=%s | %s"):format(
+                    chest.Name,
+                    tostring(source),
+                    tostring(chestType),
+                    tostring(live),
+                    tostring(selected),
+                    distanceValue and ("%.0f"):format(distanceValue) or "?",
+                    tostring(chest:IsA("Model") and chest:FindFirstChild("Base") ~= nil),
+                    chest:GetFullName()
+                )
+            )
+
+            local distance = "DIST=?"
+
+            if distanceValue then
+                distance = ("DIST=%.0f"):format(distanceValue)
+            end
+
             local base = chest:IsA("Model") and chest:FindFirstChild("Base")
             local prompt = chest:FindFirstChild("Prompt", true)
             local open = chest:FindFirstChild("Open", true)
-
-            if playerRoot and root then
-                distance = ("DIST=%.0f"):format(
-                    (playerRoot.Position - root.Position).Magnitude
-                )
-            end
 
             add(
                 results.chests,
@@ -1406,6 +1525,23 @@ local function runDebugScan(setText)
             end
 
             if instance:IsA("Model") then
+                chestDebug.workspaceModels += 1
+
+                local base = instance:FindFirstChild("Base")
+                if base and base:IsA("BasePart") then
+                    chestDebug.modelsWithBase += 1
+                end
+
+                local named = isNamedChestModel(instance)
+                local tagged = hasChestDebugTag(instance)
+
+                if named then
+                    chestDebug.namedCandidates += 1
+                end
+
+                if tagged then
+                    chestDebug.taggedCandidates += 1
+                end
                 visitedWorkspace[instance] = true
 
                 local normalized = normalizeName(instance.Name)
@@ -1667,6 +1803,27 @@ local function runDebugScan(setText)
                     table.insert(lines, line)
                 end
             end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, "CHEST DEBUG SUMMARY:")
+        table.insert(lines, ("Workspace Models=%d"):format(chestDebug.workspaceModels))
+        table.insert(lines, ("Models with Base=%d"):format(chestDebug.modelsWithBase))
+        table.insert(lines, ("Named Chest Candidates=%d"):format(chestDebug.namedCandidates))
+        table.insert(lines, ("Tagged Chest Candidates=%d"):format(chestDebug.taggedCandidates))
+        table.insert(lines, ("Resolved Chest Targets=%d"):format(chestDebug.resolvedTargets))
+        table.insert(lines, ("Rare Targets=%d"):format(chestDebug.rareTargets))
+        table.insert(lines, ("Selected Targets=%d"):format(chestDebug.selectedTargets))
+        table.insert(lines, ("Live Targets=%d"):format(chestDebug.liveTargets))
+        table.insert(lines, ("Within Distance=%d"):format(chestDebug.withinDistance))
+        table.insert(lines, ("Rejected: No Target=%d"):format(chestDebug.rejectedNoTarget))
+        table.insert(lines, ("Rejected: Filter=%d"):format(chestDebug.rejectedFilter))
+        table.insert(lines, ("Rejected: Distance=%d"):format(chestDebug.rejectedDistance))
+        table.insert(lines, ("Opened/Tracked=%d"):format(chestDebug.openedTargets))
+        table.insert(lines, "")
+        table.insert(lines, "CHEST DEBUG SAMPLES:")
+        for _, sample in ipairs(chestDebug.samples) do
+            table.insert(lines, sample)
         end
 
         table.insert(lines, "")
