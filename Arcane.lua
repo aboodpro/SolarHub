@@ -2596,6 +2596,8 @@ function Arcane.Init(Shared, UI)
 
     local chestESPObjects = {}
     local staticChestESPObjects = {}
+    local staticChestLocationCache = {}
+    local staticChestLocationsScanned = false
     local chestCandidates = {}
     local openedChests = {}
 
@@ -2920,9 +2922,41 @@ local function createChestESP(target)
         }
     end
 
-    local function scanStaticChestLocations(root)
+    local function cacheStaticChestLocation(entry, chestType)
+        if not entry then
+            return
+        end
+
+        local key = entry:GetFullName()
+        local position = getStaticChestPosition(entry)
+
+        if not position then
+            return
+        end
+
+        staticChestLocationCache[key] = {
+            source = entry,
+            position = position,
+            chestType = chestType or "OTHER",
+        }
+    end
+
+    local function refreshStaticChestESP()
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
+            return
+        end
+
+        for _, data in pairs(staticChestLocationCache) do
+            if data.source and data.source.Parent then
+                createStaticChestESP(data.source, data.chestType)
+            end
+        end
+    end
+
+    local function scanStaticChestLocations(root)
+        if staticChestLocationsScanned then
+            refreshStaticChestESP()
             return
         end
 
@@ -2931,8 +2965,8 @@ local function createChestESP(target)
             return
         end
 
-        -- Initial discovery only. Do not repeat a Workspace:GetDescendants()
-        -- scan every 2 seconds; DescendantAdded handles new/streamed entries.
+        staticChestLocationsScanned = true
+
         for _, object in ipairs(root:GetDescendants()) do
             if (object:IsA("Folder") or object:IsA("Model"))
                 and normalizeName(object.Name) == "chests" then
@@ -2943,11 +2977,13 @@ local function createChestESP(target)
                             or getChestType(entry)
                             or "OTHER"
 
-                        createStaticChestESP(entry, chestType)
+                        cacheStaticChestLocation(entry, chestType)
                     end
                 end
             end
         end
+
+        refreshStaticChestESP()
     end
 
     local function markChestOpened(chest)
@@ -3967,17 +4003,19 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         if parent
             and (parent:IsA("Folder") or parent:IsA("Model"))
             and normalizeName(parent.Name) == "chests"
-            and (instance:IsA("Model") or instance:IsA("BasePart"))
-            and Config.ArcaneChestESP
-            and hasAnyChestFilterEnabled(Config) then
+            and (instance:IsA("Model") or instance:IsA("BasePart")) then
             task.defer(function()
                 if instance.Parent then
-                    createStaticChestESP(
-                        instance,
-                        getChestTypeFast(instance)
-                            or getChestType(instance)
-                            or "OTHER"
-                    )
+                    local chestType = getChestTypeFast(instance)
+                        or getChestType(instance)
+                        or "OTHER"
+
+                    cacheStaticChestLocation(instance, chestType)
+
+                    if Config.ArcaneChestESP
+                        and hasAnyChestFilterEnabled(Config) then
+                        createStaticChestESP(instance, chestType)
+                    end
                 end
             end)
         end
@@ -3986,23 +4024,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             inspectModel(model)
             inspectChest(model)
             inspectSideQuestModel(model)
-
-            local parent = instance.Parent
-            if parent
-                and (parent:IsA("Folder") or parent:IsA("Model"))
-                and normalizeName(parent.Name) == "chests"
-                and (instance:IsA("Model") or instance:IsA("BasePart")) then
-                if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
-                    task.defer(function()
-                        if instance.Parent then
-                            createStaticChestESP(
-                                instance,
-                                getChestType(instance) or "OTHER"
-                            )
-                        end
-                    end)
-                end
-            end
 
             task.delay(0.15, function()
                 if model and model.Parent then
