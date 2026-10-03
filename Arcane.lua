@@ -1920,373 +1920,857 @@ end
 local function runChestDebug(setText, Config)
     task.spawn(function()
         local ok, err = xpcall(function()
-            local ps = game:GetService("Players")
-            local cs = game:GetService("CollectionService")
-            local workspaceService = game:GetService("Workspace")
+            local Players = game:GetService("Players")
+            local CollectionService = game:GetService("CollectionService")
+            local WorkspaceService = game:GetService("Workspace")
+            local ReplicatedStorageService = game:GetService("ReplicatedStorage")
 
-            setText("CHEST DEBUG v5 | GLOBAL SCAN | STARTING...")
+            setText("CHEST DEBUG v6 | GLOBAL + INFINITE RANGE | SCANNING...")
 
-            local lp = ps and ps.LocalPlayer
-            local char = lp and lp.Character
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            local map = workspaceService:FindFirstChild("Map")
+            local player = Players.LocalPlayer
+            local character = player and player.Character
+            local hrp = character and character:FindFirstChild("HumanoidRootPart")
+            local map = WorkspaceService:FindFirstChild("Map")
+            local rs = ReplicatedStorageService
+            local unloadIslands = rs and rs:FindFirstChild("RS")
+            unloadIslands = unloadIslands and unloadIslands:FindFirstChild("UnloadIslands")
 
             local function safeNumber(value)
                 local n = tonumber(value)
                 return n and math.floor(n + 0.5) or nil
             end
 
-            local function getStreamingProperty(name)
-                local okProp, value = pcall(function()
-                    return workspaceService[name]
+            local function safeString(value)
+                local okValue, result = pcall(function()
+                    return tostring(value)
                 end)
 
-                return okProp and tostring(value) or "<unavailable>"
+                return okValue and result or "<error>"
             end
 
-            local out = {
-                "SOLARHUB CHEST DEBUG v5",
-                "BUILD: GLOBAL-STREAMING-DIAGNOSTIC",
-                "==============================",
-                "PlaceId: " .. tostring(game.PlaceId),
-                "GameId: " .. tostring(game.GameId),
-                "JobId: " .. tostring(game.JobId),
-                "LocalPlayer: " .. tostring(lp),
-                "Character: " .. tostring(char),
-                "HRP: " .. tostring(hrp),
-                "Map: " .. tostring(map),
-                "Workspace.StreamingEnabled: " .. getStreamingProperty("StreamingEnabled"),
-                "Workspace.StreamingTargetRadius: " .. getStreamingProperty("StreamingTargetRadius"),
-                "Workspace.StreamingMinRadius: " .. getStreamingProperty("StreamingMinRadius"),
-                "",
-            }
+            local function isChestName(value)
+                local normalized = normalizeName(value)
 
-            local stats = {
-                mapDescendants = 0,
-                mapModels = 0,
-                mapFolders = 0,
-                mapBaseParts = 0,
-                mapPrompts = 0,
-                mapClicks = 0,
-                taggedChests = 0,
-                namedChestModels = 0,
-                resolvedFromPrompts = 0,
-                resolvedFromClicks = 0,
-                resolvedFromTags = 0,
-                resolvedFromNames = 0,
-                uniqueResolved = 0,
-                live = 0,
-                opened = 0,
-                selected = 0,
-                rejectedFilter = 0,
-                noTarget = 0,
-                noRoot = 0,
-            }
-
-            local seenChests = {}
-            local samples = {}
-            local promptSamples = {}
-            local tagSamples = {}
-
-            local function sample(list, value, limit)
-                if #list < limit then
-                    table.insert(list, tostring(value))
-                end
+                return normalized:find("chest", 1, true) ~= nil
+                    or normalized:find("treasure", 1, true) ~= nil
+                    or normalized:find("sealed", 1, true) ~= nil
+                    or normalized == "common"
+                    or normalized == "uncommon"
+                    or normalized == "rare"
+                    or normalized == "mystic"
+                    or normalized == "legendary"
+                    or normalized == "privatestorage"
+                    or normalized == "sky"
+                    or normalized == "steel"
             end
 
-            local function recordResolved(chest, source)
-                if not chest then
-                    stats.noTarget += 1
-                    return
+            local function getAnyRoot(instance)
+                if not instance then
+                    return nil
                 end
 
-                if seenChests[chest] then
-                    return
+                if instance:IsA("BasePart") then
+                    return instance
                 end
 
-                seenChests[chest] = true
-                stats.uniqueResolved += 1
+                if instance:IsA("Model") then
+                    local root = nil
 
-                local root = getChestRoot(chest)
+                    pcall(function()
+                        root = getChestRoot(instance)
+                    end)
+
+                    if root and root:IsA("BasePart") then
+                        return root
+                    end
+
+                    pcall(function()
+                        root = instance.PrimaryPart
+                            or instance:FindFirstChild("Base", true)
+                            or instance:FindFirstChildWhichIsA("BasePart", true)
+                    end)
+
+                    if root and root:IsA("BasePart") then
+                        return root
+                    end
+                end
+
+                return nil
+            end
+
+            local function isInWorkspace(instance)
+                return instance ~= nil and instance:IsDescendantOf(WorkspaceService)
+            end
+
+            local function getDistance(instance, root)
+                if not hrp or not root then
+                    return nil
+                end
+
+                local okDistance, distance = pcall(function()
+                    return (hrp.Position - root.Position).Magnitude
+                end)
+
+                return okDistance and distance or nil
+            end
+
+            local function getCandidateReason(instance)
+                local reasons = {}
+
+                if not instance then
+                    return reasons
+                end
+
+                if isChestName(instance.Name) then
+                    reasons[#reasons + 1] = "NAME"
+                end
+
+                for _, tagName in ipairs({
+                    "Chests",
+                    "Prompt_Chest",
+                    "BuriedChests",
+                }) do
+                    local hasTag = false
+
+                    pcall(function()
+                        hasTag = CollectionService:HasTag(instance, tagName)
+                    end)
+
+                    if hasTag then
+                        reasons[#reasons + 1] = "TAG:" .. tagName
+                    end
+                end
+
+                return reasons
+            end
+
+            local function getType(instance)
                 local chestType = "?"
-                local live = false
-                local opened = false
 
                 pcall(function()
-                    chestType = tostring(getChestType(chest))
+                    chestType = tostring(getChestTypeFast(instance) or getChestType(instance) or "?")
                 end)
 
-                pcall(function()
-                    live = hasLiveChestInteraction(chest)
-                end)
+                return chestType
+            end
 
-                pcall(function()
-                    opened = openedChests[chest] == true
-                        or hasChestOpenedMarker(chest)
-                end)
-
-                if root then
-                    stats.live += live and 1 or 0
-                else
-                    stats.noRoot += 1
-                end
-
-                stats.opened += opened and 1 or 0
-
+            local function getFilterState(chestType)
                 local selected = false
+
                 pcall(function()
                     selected = isChestFilterEnabled(Config, chestType)
                 end)
 
-                if selected then
-                    stats.selected += 1
-                else
-                    stats.rejectedFilter += 1
-                end
-
-                local distance = nil
-                if hrp and root then
-                    distance = (hrp.Position - root.Position).Magnitude
-                end
-
-                sample(
-                    samples,
-                    ("%s | SRC=%s | TYPE=%s | LIVE=%s | OPENED=%s | SELECTED=%s | DIST=%s | POS=%s | %s"):format(
-                        chest.Name,
-                        source,
-                        chestType,
-                        tostring(live),
-                        tostring(opened),
-                        tostring(selected),
-                        distance and tostring(safeNumber(distance)) or "?",
-                        root and ("%d,%d,%d"):format(
-                            root.Position.X,
-                            root.Position.Y,
-                            root.Position.Z
-                        ) or "?",
-                        chest:GetFullName()
-                    ),
-                    300
-                )
+                return selected
             end
 
-            local function inspectInteraction(object, source)
-                local chest = nil
+            local function getConfiguredDistance(chestType)
+                local distance = nil
 
                 pcall(function()
-                    chest = getChestTarget(object)
+                    local value = Config.ArcaneChestScanDistance
+                        and Config.ArcaneChestScanDistance[chestType]
+
+                    if value ~= nil then
+                        distance = tonumber(value)
+                    end
                 end)
 
-                if source == "PROMPT" then
-                    if chest then
-                        stats.resolvedFromPrompts += 1
-                    end
-                elseif source == "CLICK" then
-                    if chest then
-                        stats.resolvedFromClicks += 1
+                return distance
+            end
+
+            local function getAttributeSummary(instance)
+                local values = {}
+
+                local okAttributes, attributes = pcall(function()
+                    return instance:GetAttributes()
+                end)
+
+                if not okAttributes or type(attributes) ~= "table" then
+                    return ""
+                end
+
+                for key, value in pairs(attributes) do
+                    local keyText = normalizeChestText(key)
+
+                    if keyText:find("pos", 1, true)
+                        or keyText:find("location", 1, true)
+                        or keyText:find("cframe", 1, true)
+                        or keyText:find("position", 1, true)
+                        or keyText:find("spawn", 1, true)
+                        or keyText:find("coord", 1, true) then
+
+                        values[#values + 1] = safeString(key) .. "=" .. safeString(value)
                     end
                 end
 
-                if not chest then
-                    sample(
-                        promptSamples,
-                        ("%s | NO_TARGET | %s"):format(
-                            source,
-                            object:GetFullName()
-                        ),
-                        120
-                    )
-                    stats.noTarget += 1
+                table.sort(values)
+
+                if #values == 0 then
+                    return ""
+                end
+
+                return table.concat(values, ", ")
+            end
+
+            local function getValueObjectSummary(instance)
+                local values = {}
+                local count = 0
+
+                pcall(function()
+                    for _, descendant in ipairs(instance:GetDescendants()) do
+                        if descendant:IsA("Vector3Value") then
+                            local n = normalizeName(descendant.Name)
+
+                            if n:find("pos", 1, true)
+                                or n:find("location", 1, true)
+                                or n:find("spawn", 1, true)
+                                or n:find("coord", 1, true) then
+
+                                count += 1
+
+                                if #values < 8 then
+                                    values[#values + 1] = descendant.Name
+                                        .. "="
+                                        .. safeString(descendant.Value)
+                                end
+                            end
+                        elseif descendant:IsA("CFrameValue") then
+                            local n = normalizeName(descendant.Name)
+
+                            if n:find("pos", 1, true)
+                                or n:find("location", 1, true)
+                                or n:find("spawn", 1, true)
+                                or n:find("coord", 1, true)
+                                or n:find("cframe", 1, true) then
+
+                                count += 1
+
+                                if #values < 8 then
+                                    values[#values + 1] = descendant.Name
+                                        .. "=CFrame"
+                                end
+                            end
+                        end
+                    end
+                end)
+
+                if count == 0 then
+                    return ""
+                end
+
+                return ("count=%d [%s]"):format(count, table.concat(values, ", "))
+            end
+
+            local out = {
+                "SOLARHUB CHEST DEBUG v6",
+                "BUILD: GLOBAL + INFINITE-RANGE CHEST DISCOVERY",
+                "==============================",
+                "PlaceId: " .. safeString(game.PlaceId),
+                "GameId: " .. safeString(game.GameId),
+                "JobId: " .. safeString(game.JobId),
+                "LocalPlayer: " .. safeString(player),
+                "Character: " .. safeString(character),
+                "HRP: " .. safeString(hrp),
+                "Workspace.StreamingEnabled: " .. safeString(
+                    pcall(function()
+                        return WorkspaceService.StreamingEnabled
+                    end)
+                        and WorkspaceService.StreamingEnabled
+                        or "<unavailable>"
+                ),
+                "Map: " .. safeString(map),
+                "ReplicatedStorage.RS.UnloadIslands: " .. safeString(unloadIslands),
+                "DISTANCE FILTER: DISABLED FOR THIS DEBUG",
+                "",
+            }
+
+            local stats = {
+                workspaceDescendants = 0,
+                workspaceModels = 0,
+                workspaceFolders = 0,
+                workspaceParts = 0,
+                workspacePrompts = 0,
+                workspaceClicks = 0,
+                workspaceNamedChestModels = 0,
+
+                rsDescendants = 0,
+                rsModels = 0,
+                rsFolders = 0,
+                rsParts = 0,
+                rsPrompts = 0,
+                rsClicks = 0,
+                rsNamedChestModels = 0,
+
+                taggedObjects = 0,
+                tagChests = 0,
+                tagPromptChests = 0,
+                tagBuriedChests = 0,
+
+                uniqueCandidates = 0,
+                liveWorkspaceCandidates = 0,
+                templateCandidates = 0,
+
+                workspaceWithRoot = 0,
+                workspaceWithoutRoot = 0,
+                workspaceSelected = 0,
+                workspaceRejected = 0,
+                workspacePassDistance = 0,
+                workspaceFailDistance = 0,
+                workspaceEspEligibleIgnoringDistance = 0,
+                workspaceEspEligibleWithDistance = 0,
+                workspaceOpened = 0,
+
+                unresolvedTagged = 0,
+                unresolvedInteraction = 0,
+            }
+
+            local seenCandidates = {}
+            local workspaceSamples = {}
+            local templateSamples = {}
+            local unresolvedSamples = {}
+            local sourceCounts = {}
+            local typeCounts = {}
+            local distanceBuckets = {
+                ["0-500"] = 0,
+                ["500-2000"] = 0,
+                ["2000-5000"] = 0,
+                ["5000-10000"] = 0,
+                ["10000+"] = 0,
+                ["UNKNOWN"] = 0,
+            }
+
+            local function addSample(list, value, limit)
+                if #list < limit then
+                    list[#list + 1] = tostring(value)
+                end
+            end
+
+            local function addCount(tableRef, key)
+                key = tostring(key or "?")
+                tableRef[key] = (tableRef[key] or 0) + 1
+            end
+
+            local function addDistanceBucket(distance)
+                if not distance then
+                    distanceBuckets.UNKNOWN += 1
+                elseif distance <= 500 then
+                    distanceBuckets["0-500"] += 1
+                elseif distance <= 2000 then
+                    distanceBuckets["500-2000"] += 1
+                elseif distance <= 5000 then
+                    distanceBuckets["2000-5000"] += 1
+                elseif distance <= 10000 then
+                    distanceBuckets["5000-10000"] += 1
+                else
+                    distanceBuckets["10000+"] += 1
+                end
+            end
+
+            local function resolveTarget(instance)
+                local target = nil
+
+                pcall(function()
+                    target = getChestTarget(instance)
+                end)
+
+                if target then
+                    return target
+                end
+
+                if instance and instance:IsA("Model") and looksLikeChestModel(instance) then
+                    return instance
+                end
+
+                return nil
+            end
+
+            local function recordCandidate(target, source, explicitReasons)
+                if not target then
                     return
                 end
 
-                recordResolved(chest, source)
-            end
+                if seenCandidates[target] then
+                    return
+                end
 
-            -- CollectionService chest tags, including objects which may not be
-            -- named "Chest".
-            for _, tagName in ipairs({
-                "Chests",
-                "Prompt_Chest",
-                "BuriedChests",
-            }) do
-                local tagged = {}
+                seenCandidates[target] = true
+                stats.uniqueCandidates += 1
+
+                local inWorkspace = isInWorkspace(target)
+                local root = getAnyRoot(target)
+                local chestType = getType(target)
+                local selected = getFilterState(chestType)
+                local distance = getDistance(target, root)
+                local configuredDistance = getConfiguredDistance(chestType)
+                local passDistance = true
+
+                if configuredDistance ~= nil and distance ~= nil then
+                    passDistance = distance <= configuredDistance
+                end
+
+                local opened = false
                 pcall(function()
-                    tagged = cs:GetTagged(tagName)
+                    opened = openedChests[target] == true
+                        or hasChestOpenedMarker(target)
                 end)
 
-                stats.taggedChests += #tagged
+                local reasonList = explicitReasons or getCandidateReason(target)
+                if #reasonList == 0 then
+                    reasonList = {"RESOLVED"}
+                end
 
-                sample(
-                    tagSamples,
-                    ("%s = %d"):format(tagName, #tagged),
-                    20
+                if inWorkspace then
+                    stats.liveWorkspaceCandidates += 1
+
+                    if root then
+                        stats.workspaceWithRoot += 1
+                    else
+                        stats.workspaceWithoutRoot += 1
+                    end
+
+                    if selected then
+                        stats.workspaceSelected += 1
+                    else
+                        stats.workspaceRejected += 1
+                    end
+
+                    if passDistance then
+                        stats.workspacePassDistance += 1
+                    else
+                        stats.workspaceFailDistance += 1
+                    end
+
+                    local eligibleIgnoringDistance =
+                        root ~= nil
+                        and not opened
+                        and selected
+
+                    local eligibleWithDistance =
+                        eligibleIgnoringDistance
+                        and passDistance
+
+                    if eligibleIgnoringDistance then
+                        stats.workspaceEspEligibleIgnoringDistance += 1
+                    end
+
+                    if eligibleWithDistance then
+                        stats.workspaceEspEligibleWithDistance += 1
+                    end
+
+                    if opened then
+                        stats.workspaceOpened += 1
+                    end
+
+                    addDistanceBucket(distance)
+                else
+                    stats.templateCandidates += 1
+                end
+
+                addCount(sourceCounts, table.concat(reasonList, "+"))
+                addCount(typeCounts, chestType)
+
+                local rootPosition = root and (
+                    ("%d,%d,%d"):format(
+                        root.Position.X,
+                        root.Position.Y,
+                        root.Position.Z
+                    )
+                ) or "?"
+
+                local attrs = getAttributeSummary(target)
+                local values = getValueObjectSummary(target)
+
+                local line = (
+                    "%s | %s | TYPE=%s | ROOT=%s | OPENED=%s | FILTER=%s | DIST=%s | CFG=%s | PASSDIST=%s | POS=%s | %s | PATH=%s"
+                ):format(
+                    inWorkspace and "LIVE-WORKSPACE" or "REPLICATED-TEMPLATE",
+                    table.concat(reasonList, "+"),
+                    chestType,
+                    root and "YES" or "NO",
+                    tostring(opened),
+                    tostring(selected),
+                    distance and tostring(safeNumber(distance)) or "?",
+                    configuredDistance and tostring(safeNumber(configuredDistance)) or "N/A",
+                    tostring(passDistance),
+                    rootPosition,
+                    (attrs ~= "" and "ATTR={" .. attrs .. "} " or "")
+                        .. (values ~= "" and "VALUES={" .. values .. "}" or ""),
+                    target:GetFullName()
                 )
 
-                for _, object in ipairs(tagged) do
-                    local chest = nil
+                if inWorkspace then
+                    addSample(workspaceSamples, line, 600)
+                else
+                    addSample(templateSamples, line, 600)
+                end
+            end
 
-                    pcall(function()
-                        chest = getChestTarget(object)
-                    end)
+            -- 1) Scan CollectionService tags globally.
+            local tagLists = {
+                Chests = {},
+                Prompt_Chest = {},
+                BuriedChests = {},
+            }
 
-                    if chest then
-                        stats.resolvedFromTags += 1
-                        recordResolved(chest, "TAG:" .. tagName)
+            for tagName, targetList in pairs(tagLists) do
+                pcall(function()
+                    targetList = CollectionService:GetTagged(tagName)
+                    tagLists[tagName] = targetList
+                end)
+
+                addCount(sourceCounts, "TAG-LIST:" .. tagName)
+
+                if tagName == "Chests" then
+                    stats.tagChests = #targetList
+                elseif tagName == "Prompt_Chest" then
+                    stats.tagPromptChests = #targetList
+                elseif tagName == "BuriedChests" then
+                    stats.tagBuriedChests = #targetList
+                end
+
+                stats.taggedObjects += #targetList
+
+                for index, taggedObject in ipairs(targetList) do
+                    local target = resolveTarget(taggedObject)
+
+                    if target then
+                        recordCandidate(target, "TAG:" .. tagName)
                     else
-                        stats.noTarget += 1
-                        sample(
-                            tagSamples,
-                            ("NO_TARGET | %s | %s"):format(
+                        stats.unresolvedTagged += 1
+
+                        addSample(
+                            unresolvedSamples,
+                            ("TAG:%s | NO_TARGET | %s"):format(
                                 tagName,
-                                object:GetFullName()
+                                taggedObject:GetFullName()
                             ),
-                            120
+                            250
                         )
+                    end
+
+                    if index % 250 == 0 then
+                        task.wait()
                     end
                 end
             end
 
-            if map then
-                for index, object in ipairs(map:GetDescendants()) do
-                    stats.mapDescendants += 1
+            -- 2) Scan ALL Workspace descendants. No distance gate whatsoever.
+            do
+                local descendants = WorkspaceService:GetDescendants()
 
-                    if index % 500 == 0 then
+                for index, object in ipairs(descendants) do
+                    stats.workspaceDescendants += 1
+
+                    if index % 750 == 0 then
                         task.wait()
                     end
 
                     if object:IsA("Model") then
-                        stats.mapModels += 1
+                        stats.workspaceModels += 1
 
-                        local normalized = normalizeName(object.Name)
+                        if isChestName(object.Name) then
+                            stats.workspaceNamedChestModels += 1
 
-                        if normalized:find("chest", 1, true)
-                            or normalized:find("treasure", 1, true)
-                            or normalized:find("sealed", 1, true)
-                            or normalized == "common"
-                            or normalized == "uncommon"
-                            or normalized == "rare"
-                            or normalized == "mystic"
-                            or normalized == "legendary"
-                            or normalized == "privatestorage"
-                            or normalized == "sky"
-                            or normalized == "steel" then
-                            stats.namedChestModels += 1
+                            local target = resolveTarget(object)
 
-                            local chest = nil
-                            pcall(function()
-                                chest = getChestTarget(object)
-                            end)
-
-                            if chest then
-                                stats.resolvedFromNames += 1
-                                recordResolved(chest, "NAME")
+                            if target then
+                                recordCandidate(target, "WORKSPACE-NAME")
                             else
-                                stats.noTarget += 1
-                                sample(
-                                    samples,
-                                    ("NAMED_NO_TARGET | %s"):format(
+                                addSample(
+                                    unresolvedSamples,
+                                    ("WORKSPACE-NAME | NO_TARGET | %s"):format(
                                         object:GetFullName()
                                     ),
-                                    120
+                                    250
                                 )
                             end
                         end
                     elseif object:IsA("Folder") then
-                        stats.mapFolders += 1
+                        stats.workspaceFolders += 1
                     elseif object:IsA("BasePart") then
-                        stats.mapBaseParts += 1
+                        stats.workspaceParts += 1
+
+                        if isChestName(object.Name) then
+                            local target = resolveTarget(object)
+
+                            if target then
+                                recordCandidate(target, "WORKSPACE-PART-NAME")
+                            end
+                        end
                     elseif object:IsA("ProximityPrompt") then
-                        stats.mapPrompts += 1
-                        inspectInteraction(object, "PROMPT")
+                        stats.workspacePrompts += 1
+
+                        local target = resolveTarget(object)
+
+                        if target then
+                            recordCandidate(target, "WORKSPACE-PROMPT")
+                        else
+                            local parentName = object.Parent and object.Parent:GetFullName() or "?"
+                            if parentName:lower():find("chest", 1, true)
+                                or parentName:lower():find("treasure", 1, true)
+                                or parentName:lower():find("sealed", 1, true) then
+
+                                stats.unresolvedInteraction += 1
+
+                                addSample(
+                                    unresolvedSamples,
+                                    ("PROMPT | CHEST-LIKE-PARENT | %s"):format(
+                                        object:GetFullName()
+                                    ),
+                                    250
+                                )
+                            end
+                        end
                     elseif object:IsA("ClickDetector") then
-                        stats.mapClicks += 1
-                        inspectInteraction(object, "CLICK")
+                        stats.workspaceClicks += 1
+
+                        local target = resolveTarget(object)
+
+                        if target then
+                            recordCandidate(target, "WORKSPACE-CLICK")
+                        end
+                    end
+                end
+            end
+
+            -- 3) Scan ALL ReplicatedStorage descendants, especially the
+            --    UnloadIslands hierarchy that already contains chest templates.
+            do
+                local descendants = ReplicatedStorageService:GetDescendants()
+
+                for index, object in ipairs(descendants) do
+                    stats.rsDescendants += 1
+
+                    if index % 750 == 0 then
+                        task.wait()
+                    end
+
+                    local isUnderUnload = unloadIslands
+                        and object:IsDescendantOf(unloadIslands)
+
+                    if object:IsA("Model") then
+                        stats.rsModels += 1
+
+                        if isChestName(object.Name) then
+                            stats.rsNamedChestModels += 1
+
+                            local target = resolveTarget(object)
+
+                            if target then
+                                recordCandidate(target, isUnderUnload and "RS-UNLOAD-NAME" or "RS-NAME")
+                            else
+                                addSample(
+                                    unresolvedSamples,
+                                    ("RS-NAME | NO_TARGET | %s"):format(
+                                        object:GetFullName()
+                                    ),
+                                    250
+                                )
+                            end
+                        end
+                    elseif object:IsA("Folder") then
+                        stats.rsFolders += 1
+                    elseif object:IsA("BasePart") then
+                        stats.rsParts += 1
+
+                        if isChestName(object.Name) then
+                            local target = resolveTarget(object)
+
+                            if target then
+                                recordCandidate(target, isUnderUnload and "RS-UNLOAD-PART-NAME" or "RS-PART-NAME")
+                            end
+                        end
+                    elseif object:IsA("ProximityPrompt") then
+                        stats.rsPrompts += 1
+
+                        local target = resolveTarget(object)
+
+                        if target then
+                            recordCandidate(target, isUnderUnload and "RS-UNLOAD-PROMPT" or "RS-PROMPT")
+                        end
+                    elseif object:IsA("ClickDetector") then
+                        stats.rsClicks += 1
+
+                        local target = resolveTarget(object)
+
+                        if target then
+                            recordCandidate(target, isUnderUnload and "RS-UNLOAD-CLICK" or "RS-CLICK")
+                        end
                     end
                 end
             end
 
             local function appendLine(value)
-                table.insert(out, tostring(value))
+                out[#out + 1] = tostring(value)
             end
 
-            appendLine("SCAN COUNTS:")
-            appendLine(("Map descendants scanned: %d"):format(stats.mapDescendants))
-            appendLine(("Map models: %d"):format(stats.mapModels))
-            appendLine(("Map folders: %d"):format(stats.mapFolders))
-            appendLine(("Map BaseParts: %d"):format(stats.mapBaseParts))
-            appendLine(("Map ProximityPrompts: %d"):format(stats.mapPrompts))
-            appendLine(("Map ClickDetectors: %d"):format(stats.mapClicks))
-            appendLine(("Named chest models: %d"):format(stats.namedChestModels))
-            appendLine(("Tagged chest objects: %d"):format(stats.taggedChests))
+            appendLine("WORKSPACE SCAN:")
+            appendLine(("Workspace descendants: %d"):format(stats.workspaceDescendants))
+            appendLine(("Workspace models: %d"):format(stats.workspaceModels))
+            appendLine(("Workspace folders: %d"):format(stats.workspaceFolders))
+            appendLine(("Workspace BaseParts: %d"):format(stats.workspaceParts))
+            appendLine(("Workspace ProximityPrompts: %d"):format(stats.workspacePrompts))
+            appendLine(("Workspace ClickDetectors: %d"):format(stats.workspaceClicks))
+            appendLine(("Workspace named chest models: %d"):format(stats.workspaceNamedChestModels))
             appendLine("")
 
-            appendLine("CHEST RESOLUTION:")
-            appendLine(("Unique chest targets: %d"):format(stats.uniqueResolved))
-            appendLine(("Resolved from prompts: %d"):format(stats.resolvedFromPrompts))
-            appendLine(("Resolved from clicks: %d"):format(stats.resolvedFromClicks))
-            appendLine(("Resolved from tags: %d"):format(stats.resolvedFromTags))
-            appendLine(("Resolved from names: %d"):format(stats.resolvedFromNames))
-            appendLine(("With valid root: %d"):format(stats.live))
-            appendLine(("Opened: %d"):format(stats.opened))
-            appendLine(("Selected by current filters: %d"):format(stats.selected))
-            appendLine(("Rejected by current filters: %d"):format(stats.rejectedFilter))
-            appendLine(("No target / unresolved: %d"):format(stats.noTarget))
-            appendLine(("No root: %d"):format(stats.noRoot))
+            appendLine("REPLICATEDSTORAGE SCAN:")
+            appendLine(("RS descendants: %d"):format(stats.rsDescendants))
+            appendLine(("RS models: %d"):format(stats.rsModels))
+            appendLine(("RS folders: %d"):format(stats.rsFolders))
+            appendLine(("RS BaseParts: %d"):format(stats.rsParts))
+            appendLine(("RS ProximityPrompts: %d"):format(stats.rsPrompts))
+            appendLine(("RS ClickDetectors: %d"):format(stats.rsClicks))
+            appendLine(("RS named chest models: %d"):format(stats.rsNamedChestModels))
             appendLine("")
 
             appendLine("TAGS:")
-            if #tagSamples == 0 then
+            appendLine(("Chests = %d"):format(stats.tagChests))
+            appendLine(("Prompt_Chest = %d"):format(stats.tagPromptChests))
+            appendLine(("BuriedChests = %d"):format(stats.tagBuriedChests))
+            appendLine(("Tagged objects total = %d"):format(stats.taggedObjects))
+            appendLine("")
+
+            appendLine("GLOBAL CHEST DISCOVERY:")
+            appendLine(("Unique chest candidates: %d"):format(stats.uniqueCandidates))
+            appendLine(("LIVE Workspace chest candidates: %d"):format(stats.liveWorkspaceCandidates))
+            appendLine(("ReplicatedStorage/template chest candidates: %d"):format(stats.templateCandidates))
+            appendLine(("Unresolved tagged chest objects: %d"):format(stats.unresolvedTagged))
+            appendLine(("Unresolved chest-like interactions: %d"):format(stats.unresolvedInteraction))
+            appendLine("")
+
+            appendLine("LIVE WORKSPACE ESP ANALYSIS:")
+            appendLine(("Live candidates with root: %d"):format(stats.workspaceWithRoot))
+            appendLine(("Live candidates WITHOUT root: %d"):format(stats.workspaceWithoutRoot))
+            appendLine(("Selected by chest filter: %d"):format(stats.workspaceSelected))
+            appendLine(("Rejected by chest filter: %d"):format(stats.workspaceRejected))
+            appendLine(("Pass current configured distance: %d"):format(stats.workspacePassDistance))
+            appendLine(("Fail current configured distance: %d"):format(stats.workspaceFailDistance))
+            appendLine(("ESP eligible IGNORING distance: %d"):format(
+                stats.workspaceEspEligibleIgnoringDistance
+            ))
+            appendLine(("ESP eligible WITH current distance: %d"):format(
+                stats.workspaceEspEligibleWithDistance
+            ))
+            appendLine(("Opened: %d"):format(stats.workspaceOpened))
+            appendLine("")
+
+            appendLine("DISTANCE BUCKETS (diagnostic only):")
+            appendLine(("0-500: %d"):format(distanceBuckets["0-500"]))
+            appendLine(("500-2000: %d"):format(distanceBuckets["500-2000"]))
+            appendLine(("2000-5000: %d"):format(distanceBuckets["2000-5000"]))
+            appendLine(("5000-10000: %d"):format(distanceBuckets["5000-10000"]))
+            appendLine(("10000+: %d"):format(distanceBuckets["10000+"]))
+            appendLine(("UNKNOWN: %d"):format(distanceBuckets.UNKNOWN))
+            appendLine("")
+
+            appendLine("DISCOVERY SOURCE COUNTS:")
+            local sortedSources = {}
+
+            for key, count in pairs(sourceCounts) do
+                sortedSources[#sortedSources + 1] = {
+                    key = key,
+                    count = count,
+                }
+            end
+
+            table.sort(sortedSources, function(a, b)
+                if a.count == b.count then
+                    return a.key < b.key
+                end
+
+                return a.count > b.count
+            end)
+
+            for index = 1, math.min(#sortedSources, 80) do
+                local item = sortedSources[index]
+                appendLine(("%s = %d"):format(item.key, item.count))
+            end
+
+            appendLine("")
+            appendLine("CHEST TYPE COUNTS:")
+            local sortedTypes = {}
+
+            for key, count in pairs(typeCounts) do
+                sortedTypes[#sortedTypes + 1] = {
+                    key = key,
+                    count = count,
+                }
+            end
+
+            table.sort(sortedTypes, function(a, b)
+                if a.count == b.count then
+                    return a.key < b.key
+                end
+
+                return a.count > b.count
+            end)
+
+            for index = 1, math.min(#sortedTypes, 60) do
+                local item = sortedTypes[index]
+                appendLine(("%s = %d"):format(item.key, item.count))
+            end
+
+            appendLine("")
+            appendLine("LIVE WORKSPACE CHESTS (max 600, NO DISTANCE FILTER):")
+            if #workspaceSamples == 0 then
                 appendLine("<none>")
             else
-                for _, line in ipairs(tagSamples) do
+                for _, line in ipairs(workspaceSamples) do
                     appendLine(line)
                 end
             end
 
             appendLine("")
-            appendLine("RESOLVED CHEST SAMPLES (max 300):")
-            if #samples == 0 then
+            appendLine("REPLICATED/TEMPLATE CHESTS (max 600, NO DISTANCE FILTER):")
+            if #templateSamples == 0 then
                 appendLine("<none>")
             else
-                for _, line in ipairs(samples) do
+                for _, line in ipairs(templateSamples) do
                     appendLine(line)
                 end
             end
 
             appendLine("")
-            appendLine("UNRESOLVED INTERACTIONS (max 120):")
-            if #promptSamples == 0 then
+            appendLine("UNRESOLVED CHEST-LIKE OBJECTS (max 250):")
+            if #unresolvedSamples == 0 then
                 appendLine("<none>")
             else
-                for _, line in ipairs(promptSamples) do
+                for _, line in ipairs(unresolvedSamples) do
                     appendLine(line)
                 end
             end
 
             appendLine("")
             appendLine("INTERPRETATION:")
-            appendLine("A) If distant chests are absent from Map descendants/prompts/tags, their client instances are not replicated/streamed in at that moment.")
-            appendLine("B) If distant chests are present in samples but not ESP, the bug is scanner/filter/ESP logic.")
-            appendLine("C) Distance is reported for diagnosis only; current ESP should not hide chests by distance.")
-            appendLine("D) Run this once near a known chest cluster and once far away; compare Map descendants, prompts and resolved chest counts.")
+            appendLine("1) This debug NEVER hides a chest because of distance.")
+            appendLine("2) Compare LIVE Workspace vs Replicated/template counts.")
+            appendLine("3) 'ESP eligible IGNORING distance' is the important count for the intended global ESP.")
+            appendLine("4) If LIVE is high and ESP-eligible is high, the renderer/update loop is the remaining issue.")
+            appendLine("5) If templates are high but LIVE is low, the game stores future chest locations in ReplicatedStorage and the ESP should use those static positions.")
+            appendLine("6) ATTR/VALUES entries show extra position/location data when the game exposes it.")
 
             local finalText = table.concat(out, "\n")
             setText(finalText)
 
             if type(setclipboard) == "function" then
-                pcall(setclipboard, finalText)
+                pcall(function()
+                    setclipboard(finalText)
+                end)
             elseif type(toclipboard) == "function" then
-                pcall(toclipboard, finalText)
+                pcall(function()
+                    toclipboard(finalText)
+                end)
             end
 
-            print("[SolarHub] Chest DEBUG v5 finished.")
+            print("[Arcane] Chest DEBUG v6 finished.")
             print(finalText)
         end, debug.traceback)
 
         if not ok then
-            setText("CHEST DEBUG v5 ERROR\n" .. tostring(err))
-            warn("[SolarHub] Chest DEBUG v5 error:", err)
+            setText("CHEST DEBUG v6 ERROR\n" .. tostring(err))
+            warn("[SolarHub] Chest DEBUG v6 error:", err)
         end
     end)
 end
