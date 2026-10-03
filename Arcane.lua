@@ -3331,6 +3331,7 @@ function Arcane.Init(Shared, UI)
     local staticChestLocationsScanned = false
     local chestCandidates = {}
     local openedChests = {}
+    local openedChestLocations = {}
 
 
     local sideQuestESPObjects = {}
@@ -4340,6 +4341,12 @@ local function createChestESP(target)
             return
         end
 
+        -- Do not recreate a marker for a chest location the local player
+        -- already opened, even if the game recreated the chest instance.
+        if isOpenedChestLocation(position) then
+            return
+        end
+
         -- Static chest markers are intentionally global. Their visibility must
         -- not depend on player distance.
         local key = cachedKey
@@ -4405,6 +4412,30 @@ local function createChestESP(target)
             snap(position.Z)
         )
     end
+
+    -- Session-only blacklist for chest locations that the local player has
+    -- already opened. This is deliberately separate from chest discovery:
+    -- it never changes scanning, scan distance, or candidate discovery.
+    local function getOpenedChestLocationKey(position)
+        local function snap(value)
+            return math.floor((value / 2) + 0.5) * 2
+        end
+
+        return ("OPENED|%d|%d|%d"):format(
+            snap(position.X),
+            snap(position.Y),
+            snap(position.Z)
+        )
+    end
+
+    local function isOpenedChestLocation(position)
+        if not position then
+            return false
+        end
+
+        return openedChestLocations[getOpenedChestLocationKey(position)] == true
+    end
+
 
     local function cacheStaticChestLocation(entry, chestType)
         if not entry then
@@ -4528,6 +4559,10 @@ local function createChestESP(target)
 
         local root = getChestRoot(chest)
         if root then
+            -- Store the physical location, not only the current Instance.
+            -- Arcane can remove/recreate a chest model after it is opened.
+            openedChestLocations[getOpenedChestLocationKey(root.Position)] = true
+
             destroyStaticChestESPNearPosition(
                 root.Position,
                 getChestTypeFast(chest) or getChestType(chest)
@@ -4629,6 +4664,20 @@ local proximityPromptService = game:GetService("ProximityPromptService")
         return
     end
 
+    local chestRoot = getChestRoot(chest)
+
+    -- Keep already-opened locations hidden across chest Instance recreation.
+    -- This does not touch or restrict the global scanner.
+    if chestRoot and isOpenedChestLocation(chestRoot.Position) then
+        chestCandidates[chest] = nil
+        destroyChestESP(chest)
+        destroyStaticChestESPNearPosition(
+            chestRoot.Position,
+            chestType
+        )
+        return
+    end
+
     if not isChestWithinScanDistance(chest, chestType) then
         chestCandidates[chest] = nil
         destroyChestESP(chest)
@@ -4641,7 +4690,6 @@ local proximityPromptService = game:GetService("ProximityPromptService")
     createChestESP(chest)
 
     -- Prefer the live chest marker while the actual chest model is loaded.
-    local chestRoot = getChestRoot(chest)
     if chestRoot then
         destroyStaticChestESPNearPosition(
             chestRoot.Position,
