@@ -894,23 +894,26 @@ local function getSideQuestNPCInfo(model)
         return nil
     end
 
-    if not model:FindFirstChildOfClass("Humanoid") then
-        return nil
-    end
-
     local localPlayer = game:GetService("Players").LocalPlayer
 
     if localPlayer and model == localPlayer.Character then
         return nil
     end
 
+    -- Workspace.NPCs contains persistent NPC records even when the visible
+    -- humanoid model is unloaded. These records are keyed by the real NPC name.
     local knownName = NORMALIZED_SIDE_QUEST_NPCS[normalizeName(model.Name)]
 
     if knownName then
         return {
             name = knownName,
-            detectionType = "Known NPC",
+            detectionType = "Known NPC Record",
         }
+    end
+
+    -- Only live-model detection needs a Humanoid.
+    if not model:FindFirstChildOfClass("Humanoid") then
+        return nil
     end
 
     if hasSideQuestMarker(model) then
@@ -2879,6 +2882,57 @@ function Arcane.Init(Shared, UI)
         }
     end
 
+    local function scanWorkspaceNPCRecords()
+        if not Config.ArcaneSideQuestESP then
+            return
+        end
+
+        local npcFolder = workspace:FindFirstChild("NPCs")
+
+        if not npcFolder then
+            return
+        end
+
+        for _, record in ipairs(npcFolder:GetChildren()) do
+            if record:IsA("Model") then
+                local knownName = NORMALIZED_SIDE_QUEST_NPCS[normalizeName(record.Name)]
+
+                if knownName then
+                    local cfValue = record:FindFirstChild("CF")
+
+                    if cfValue and cfValue:IsA("CFrameValue") then
+                        local position = cfValue.Value.Position
+                        local key = "NPCRECORD|" .. record:GetFullName()
+
+                        -- If the live visual NPC exists, let the normal model ESP
+                        -- handle it. Otherwise use the game's own CF record.
+                        local modelValue = record:FindFirstChild("Model")
+                        local liveModel = modelValue
+                            and modelValue:IsA("ObjectValue")
+                            and modelValue.Value
+                            or nil
+
+                        local hasLiveModel = liveModel
+                            and liveModel:IsA("Model")
+                            and liveModel:IsDescendantOf(workspace)
+                            and liveModel:FindFirstChildOfClass("Humanoid") ~= nil
+
+                        if hasLiveModel then
+                            destroySideQuestVirtualESP(key)
+                        else
+                            createSideQuestLocationVirtualESP(
+                                knownName,
+                                position,
+                                key,
+                                record
+                            )
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     local function findKnownSideQuestName(value)
         local text = normalizeName(value)
 
@@ -3107,8 +3161,11 @@ function Arcane.Init(Shared, UI)
             scanFolder(rs and rs:FindFirstChild("UnloadEnemies"), false)
         end
 
-        -- Location registry is cheap compared with template discovery, so
-        -- re-check it periodically for late-created ObjectValue links.
+        -- Use the game's persistent Workspace.NPCs records first. Their CF
+        -- values are the actual NPC spawn CFrames, even without a Humanoid.
+        scanWorkspaceNPCRecords()
+
+        -- Keep the older registry scan as a secondary source.
         scanSideQuestLocationRegistry()
     end
 
