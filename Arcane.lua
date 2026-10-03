@@ -3946,8 +3946,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                     local chestType = data.chestType or getChestType(target)
 
                     if not isChestFilterEnabled(Config, chestType)
-                        or not hasLiveChestInteraction(target)
-                        or not isChestWithinScanDistance(target, chestType) then
+                        or not hasLiveChestInteraction(target) then
 
                         destroyChestESP(target)
                     else
