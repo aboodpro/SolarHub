@@ -381,6 +381,7 @@ local CHEST_TYPE_ORDER = {
     "BRONZE_SEALED",
     "NIMBUS_SEALED",
     "DARK_SEALED",
+    "TREASURE_MAP",
     "OTHER",
 }
 
@@ -396,6 +397,7 @@ local CHEST_DISPLAY_NAMES = {
     BRONZE_SEALED = "Bronze Sealed Chest",
     NIMBUS_SEALED = "Nimbus Sealed Chest",
     DARK_SEALED = "Dark Sealed Chest",
+    TREASURE_MAP = "Treasure Map Chest",
     OTHER = "Other Chest",
 }
 
@@ -411,6 +413,7 @@ local CHEST_COLORS = {
     BRONZE_SEALED = Color3.fromRGB(175, 175, 185),
     NIMBUS_SEALED = Color3.fromRGB(175, 175, 185),
     DARK_SEALED = Color3.fromRGB(175, 175, 185),
+    TREASURE_MAP = Color3.fromRGB(255, 200, 70),
     OTHER = Color3.fromRGB(175, 175, 185),
 }
 
@@ -484,6 +487,42 @@ local function classifyChestText(value)
     return nil
 end
 
+local function isTreasureMapChest(target)
+    if not target then
+        return false
+    end
+
+    local collectionService = game:GetService("CollectionService")
+    local current = target
+
+    while current and current ~= workspace do
+        local okTags, tags = pcall(function()
+            return collectionService:GetTags(current)
+        end)
+
+        if okTags and type(tags) == "table" then
+            for _, tag in ipairs(tags) do
+                if normalizeName(tag) == "buriedchests" then
+                    return true
+                end
+            end
+        end
+
+        if current:IsA("Model") or current:IsA("BasePart") then
+            local normalized = normalizeName(current.Name)
+
+            if normalized:find("buriedtreasure", 1, true)
+                or normalized:find("buriedchest", 1, true) then
+                return true
+            end
+        end
+
+        current = current.Parent
+    end
+
+    return false
+end
+
 local function collectChestTextSources(target)
     local sources = {}
 
@@ -539,6 +578,10 @@ end
 local function getChestType(target)
     if not target or not target.Parent then
         return nil
+    end
+
+    if isTreasureMapChest(target) then
+        return "TREASURE_MAP"
     end
 
     -- Prefer specific rarity/type data over the generic "Treasure Chest"
@@ -2817,9 +2860,11 @@ local function createChestESP(target)
             return
         end
 
-        if getLocalPlayerRoot() then
+        local playerRoot = getLocalPlayerRoot()
+
+        if playerRoot then
             local maxDistance = getChestScanDistance(chestType)
-            local playerPosition = getLocalPlayerRoot().Position
+            local playerPosition = playerRoot.Position
 
             if (playerPosition - position).Magnitude > maxDistance then
                 return
@@ -2875,23 +2920,29 @@ local function createChestESP(target)
         }
     end
 
-    local function scanStaticChestLocations()
+    local function scanStaticChestLocations(root)
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
         end
 
-        for _, object in ipairs(workspace:GetDescendants()) do
+        root = root or workspace:FindFirstChild("Map")
+        if not root then
+            return
+        end
+
+        -- Initial discovery only. Do not repeat a Workspace:GetDescendants()
+        -- scan every 2 seconds; DescendantAdded handles new/streamed entries.
+        for _, object in ipairs(root:GetDescendants()) do
             if (object:IsA("Folder") or object:IsA("Model"))
                 and normalizeName(object.Name) == "chests" then
 
                 for _, entry in ipairs(object:GetChildren()) do
                     if entry:IsA("Model") or entry:IsA("BasePart") then
-                        local chestType = getChestType(entry) or "OTHER"
+                        local chestType = getChestTypeFast(entry)
+                            or getChestType(entry)
+                            or "OTHER"
 
-                        -- A generic Treasure Chest has no static rarity in the
-                        -- replicated record, so it is intentionally classified
-                        -- as OTHER until a live chest exposes its actual type.
                         createStaticChestESP(entry, chestType)
                     end
                 end
@@ -3020,8 +3071,8 @@ local function scanAllWorkspaceChests()
             return
         end
 
-        -- Tags are useful, but they are not sufficient to guarantee that
-        -- every live chest is discovered. Scan the replicated Workspace too.
+        -- This function is an INITIAL scan only. Re-running a complete
+        -- Workspace:GetDescendants() walk was the main source of client lag.
         local seen = {}
 
         local function inspectOnce(object)
@@ -3048,21 +3099,30 @@ local function scanAllWorkspaceChests()
             end
         end
 
-        -- Then scan every replicated Workspace model for the actual chest
-        -- shape/name. This catches chests that have no useful CollectionService
-        -- tag, including nested chests in ships and underwater structures.
-        scanStaticChestLocations()
+        -- Scan only the actual game map once. New objects are handled
+        -- incrementally by Workspace.DescendantAdded.
+        local map = workspace:FindFirstChild("Map")
 
-        for index, object in ipairs(workspace:GetDescendants()) do
-            if index % 350 == 0 then
-                task.wait()
-            end
+        if map then
+            scanStaticChestLocations(map)
 
-            if object:IsA("Model") then
-                local normalized = normalizeName(object.Name)
+            for index, object in ipairs(map:GetDescendants()) do
+                if index % 500 == 0 then
+                    task.wait()
+                end
 
-                if looksLikeChestModel(object) then
-                    inspectOnce(object)
+                if object:IsA("Model") then
+                    local normalized = normalizeName(object.Name)
+
+                    if normalized:find("chest", 1, true)
+                        or normalized:find("treasure", 1, true)
+                        or normalized:find("sealed", 1, true)
+                        or normalized == "rare"
+                        or normalized == "uncommon"
+                        or normalized == "legendary"
+                        or normalized == "mystic" then
+                        inspectOnce(object)
+                    end
                 end
             end
         end
@@ -3902,6 +3962,26 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             and instance
             or instance:FindFirstAncestorOfClass("Model")
 
+        local parent = instance.Parent
+
+        if parent
+            and (parent:IsA("Folder") or parent:IsA("Model"))
+            and normalizeName(parent.Name) == "chests"
+            and (instance:IsA("Model") or instance:IsA("BasePart"))
+            and Config.ArcaneChestESP
+            and hasAnyChestFilterEnabled(Config) then
+            task.defer(function()
+                if instance.Parent then
+                    createStaticChestESP(
+                        instance,
+                        getChestTypeFast(instance)
+                            or getChestType(instance)
+                            or "OTHER"
+                    )
+                end
+            end)
+        end
+
         if model then
             inspectModel(model)
             inspectChest(model)
@@ -3964,7 +4044,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
             scanAllWorkspaceChests()
-            scanStaticChestLocations()
         end
 
         if Config.ArcaneSideQuestESP then
@@ -4045,17 +4124,10 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 end
             end
 
-            -- Re-scan the whole replicated Workspace for chests periodically.
-            -- This covers newly spawned chests and containers that are not
-            -- represented by the known tags.
-            if chestScanAccumulator >= 2 then
-                chestScanAccumulator = 0
-
-                if Config.ArcaneChestESP
-                    and hasAnyChestFilterEnabled(Config) then
-                    pcall(scanAllWorkspaceChests)
-                end
-            end
+            -- Chest discovery is event-driven after the initial scan.
+            -- Workspace.DescendantAdded + CollectionService tag signals catch
+            -- streamed/spawned chests without repeatedly walking the whole Map.
+            chestScanAccumulator = 0
         end
     end)
 
@@ -4318,7 +4390,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     task.spawn(function()
         while true do
-            task.wait(0.25)
+            task.wait(0.5)
 
             local playerRoot = getLocalPlayerRoot()
 
