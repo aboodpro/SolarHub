@@ -4011,6 +4011,41 @@ local function scanAllWorkspaceChests()
         end)
     end
 
+    -- Arcane can stream/create chest models after the initial scan. Do not
+    -- depend on model names or tags in that case: an interaction appearing
+    -- inside a generic hidden chest is enough to discover its real parent.
+    workspace.DescendantAdded:Connect(function(instance)
+        if not Config.ArcaneChestESP
+            or not hasAnyChestFilterEnabled(Config) then
+            return
+        end
+
+        if instance:IsA("ProximityPrompt")
+            or instance:IsA("ClickDetector") then
+            task.defer(function()
+                if instance.Parent and instance:IsDescendantOf(workspace) then
+                    inspectChest(instance)
+                end
+            end)
+        elseif instance:IsA("Model") then
+            local normalized = normalizeName(instance.Name)
+
+            if normalized:find("chest", 1, true)
+                or normalized:find("treasure", 1, true)
+                or normalized:find("sealed", 1, true)
+                or normalized == "rare"
+                or normalized == "uncommon"
+                or normalized == "legendary"
+                or normalized == "mystic" then
+                task.defer(function()
+                    if instance.Parent and instance:IsDescendantOf(workspace) then
+                        inspectChest(instance)
+                    end
+                end)
+            end
+        end
+    end)
+
     local function destroySideQuestESP(model)
         local data = sideQuestESPObjects[model]
 
