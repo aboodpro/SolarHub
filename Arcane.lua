@@ -3333,6 +3333,7 @@ function Arcane.Init(Shared, UI)
     local openedChests = {}
     local chestLocationStates = {}
     local chestAvailabilityWatchers = {}
+    local isChestLocationUnavailable
 
 
     local sideQuestESPObjects = {}
@@ -4436,7 +4437,7 @@ local function createChestESP(target)
         )
     end
 
-    local function isChestLocationUnavailable(position)
+    isChestLocationUnavailable = function(position)
         local key = getChestLocationStateKey(position)
 
         if not key then
