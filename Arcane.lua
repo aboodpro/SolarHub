@@ -3900,9 +3900,12 @@ local function scanAllWorkspaceChests()
             return
         end
 
-        -- This function is an INITIAL scan only. Re-running a complete
-        -- Workspace:GetDescendants() walk was the main source of client lag.
+        -- Initial discovery pass. We do NOT rely only on chest/model names:
+        -- hidden chests can use generic names or live inside other structures.
+        -- The game's actual interaction objects (ProximityPrompt/ClickDetector)
+        -- are much stronger discovery signals.
         local seen = {}
+        local resolvedChests = {}
 
         local function inspectOnce(object)
             if not object
@@ -3913,6 +3916,26 @@ local function scanAllWorkspaceChests()
 
             seen[object] = true
             inspectChest(object)
+        end
+
+        local function inspectInteraction(object)
+            if not object or not object:IsDescendantOf(workspace) then
+                return
+            end
+
+            -- Avoid repeatedly resolving the same chest from multiple prompts.
+            local chest = getChestTarget(object)
+
+            if chest then
+                if not resolvedChests[chest] then
+                    resolvedChests[chest] = true
+                    inspectChest(chest)
+                end
+            else
+                -- Keep the generic fallback for unusual chest structures that
+                -- are recognized only after their interaction appears.
+                inspectOnce(object)
+            end
         end
 
         -- First use the game's known chest-related tags.
@@ -3928,11 +3951,10 @@ local function scanAllWorkspaceChests()
             end
         end
 
-        -- Scan only the actual game map once. New objects are handled
-        -- incrementally by Workspace.DescendantAdded.
         local map = workspace:FindFirstChild("Map")
 
         if map then
+            -- Keep the existing static cache for known chest-location folders.
             scanStaticChestLocations(map)
 
             for index, object in ipairs(map:GetDescendants()) do
@@ -3940,7 +3962,17 @@ local function scanAllWorkspaceChests()
                     task.wait()
                 end
 
-                if object:IsA("Model") then
+                -- Strongest generic discovery path. This catches chests that:
+                --   * have a generic/non-chest model name
+                --   * are hidden inside another model/folder
+                --   * are not covered by the known chest tags
+                if object:IsA("ProximityPrompt")
+                    or object:IsA("ClickDetector") then
+                    inspectInteraction(object)
+
+                elseif object:IsA("Model") then
+                    -- Keep named-model discovery as a fallback for chest models
+                    -- that do not expose their interaction immediately.
                     local normalized = normalizeName(object.Name)
 
                     if normalized:find("chest", 1, true)
