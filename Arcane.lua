@@ -1861,7 +1861,7 @@ local function runChestDebug(setText, Config)
             setText("Running CHEST DEBUG...\\nScanning chest folders, tags and live models.")
 
             local player = Players.LocalPlayer
-            local character = Shared.player.Character
+            local character = player and player.Character
             local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
 
             local summary = {
