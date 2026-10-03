@@ -3041,7 +3041,7 @@ local function scanAllWorkspaceChests()
         scanStaticChestLocations()
 
         for index, object in ipairs(workspace:GetDescendants()) do
-            if index % 350 == 0
+            if index % 350 == 0 then
                 task.wait()
             end
 
@@ -3894,6 +3894,23 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             inspectChest(model)
             inspectSideQuestModel(model)
 
+            local parent = instance.Parent
+            if parent
+                and (parent:IsA("Folder") or parent:IsA("Model"))
+                and normalizeName(parent.Name) == "chests"
+                and (instance:IsA("Model") or instance:IsA("BasePart")) then
+                if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
+                    task.defer(function()
+                        if instance.Parent then
+                            createStaticChestESP(
+                                instance,
+                                getChestType(instance) or "OTHER"
+                            )
+                        end
+                    end)
+                end
+            end
+
             task.delay(0.15, function()
                 if model and model.Parent then
                     inspectModel(model)
@@ -3917,19 +3934,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             destroyChestESP(instance)
             sideQuestCandidates[instance] = nil
             destroySideQuestESP(instance)
-        end
-
-        local parent = instance.Parent
-        if parent and (parent:IsA("Folder") or parent:IsA("Model"))
-            and normalizeName(parent.Name) == "chests"
-            and (instance:IsA("Model") or instance:IsA("BasePart")) then
-            if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
-                task.defer(function()
-                    if instance.Parent then
-                        createStaticChestESP(instance, getChestType(instance) or "OTHER")
-                    end
-                end)
-            end
         end
 
         local removedStaticKey = instance:GetFullName()
