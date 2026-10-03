@@ -457,6 +457,196 @@ function UI.Init(Shared)
         end)
     end
 
+
+    local function createSlider(parent, title, configKey, minValue, maxValue, posX, posY, width)
+        minValue = tonumber(minValue) or 0
+        maxValue = tonumber(maxValue) or 100
+
+        if maxValue < minValue then
+            minValue, maxValue = maxValue, minValue
+        end
+
+        local value = tonumber(Config[configKey])
+        if value == nil then
+            value = maxValue
+        end
+
+        value = math.clamp(value, minValue, maxValue)
+        Config[configKey] = value
+
+        local container = Instance.new("Frame")
+        container.Size = UDim2.fromOffset(width, 42)
+        container.Position = UDim2.fromOffset(posX, posY)
+        container.BackgroundTransparency = 1
+        container.Parent = parent
+
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Size = UDim2.new(1, -74, 0, 16)
+        titleLabel.Position = UDim2.fromOffset(0, 0)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Font = Enum.Font.GothamBold
+        titleLabel.Text = title
+        titleLabel.TextColor3 = Color3.fromRGB(185, 185, 195)
+        titleLabel.TextSize = 8
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.Parent = container
+
+        local valueBox = Instance.new("TextBox")
+        valueBox.Size = UDim2.fromOffset(68, 18)
+        valueBox.Position = UDim2.new(1, -68, 0, -2)
+        valueBox.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+        valueBox.BorderSizePixel = 0
+        valueBox.Text = tostring(math.floor(value + 0.5))
+        valueBox.TextColor3 = Color3.fromRGB(220, 140, 40)
+        valueBox.PlaceholderText = tostring(math.floor(maxValue))
+        valueBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
+        valueBox.Font = Enum.Font.GothamBold
+        valueBox.TextSize = 8
+        valueBox.TextXAlignment = Enum.TextXAlignment.Center
+        valueBox.ClearTextOnFocus = false
+        valueBox.Parent = container
+        Instance.new("UICorner", valueBox).CornerRadius = UDim.new(0, 6)
+
+        local bar = Instance.new("TextButton")
+        bar.Size = UDim2.new(1, 0, 0, 8)
+        bar.Position = UDim2.fromOffset(0, 24)
+        bar.BackgroundColor3 = Color3.fromRGB(48, 48, 58)
+        bar.BorderSizePixel = 0
+        bar.AutoButtonColor = false
+        bar.Text = ""
+        bar.Parent = container
+        Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+
+        local fill = Instance.new("Frame")
+        fill.Size = UDim2.fromScale(0, 1)
+        fill.BackgroundColor3 = Color3.fromRGB(220, 140, 40)
+        fill.BorderSizePixel = 0
+        fill.Parent = bar
+        Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+        local knob = Instance.new("TextButton")
+        knob.Size = UDim2.fromOffset(14, 14)
+        knob.AnchorPoint = Vector2.new(0.5, 0.5)
+        knob.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
+        knob.BorderSizePixel = 0
+        knob.AutoButtonColor = false
+        knob.Text = ""
+        knob.ZIndex = 3
+        knob.Parent = bar
+        Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+        local dragging = false
+        local dragInput = nil
+
+        local function setValue(newValue)
+            newValue = tonumber(newValue)
+
+            if newValue == nil then
+                return
+            end
+
+            newValue = math.clamp(newValue, minValue, maxValue)
+            newValue = math.floor(newValue + 0.5)
+
+            Config[configKey] = newValue
+
+            local alpha = 0
+            if maxValue > minValue then
+                alpha = (newValue - minValue) / (maxValue - minValue)
+            end
+
+            fill.Size = UDim2.fromScale(alpha, 1)
+            knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+            valueBox.Text = tostring(newValue)
+        end
+
+        local function setFromMouseX(x)
+            local left = bar.AbsolutePosition.X
+            local widthAbsolute = math.max(1, bar.AbsoluteSize.X)
+            local alpha = math.clamp((x - left) / widthAbsolute, 0, 1)
+
+            setValue(
+                minValue + ((maxValue - minValue) * alpha)
+            )
+        end
+
+        setValue(value)
+
+        local function beginDrag(input)
+            dragging = true
+            setFromMouseX(input.Position.X)
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+
+        bar.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                beginDrag(input)
+            end
+        end)
+
+        bar.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragInput = input
+            end
+        end)
+
+        knob.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                beginDrag(input)
+            end
+        end)
+
+        knob.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragInput = input
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging
+                and dragInput == input then
+                setFromMouseX(input.Position.X)
+            end
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end)
+
+        valueBox.FocusLost:Connect(function()
+            local typed = tonumber(
+                valueBox.Text:gsub("[^%d%.%-]", "")
+            )
+
+            if typed == nil then
+                valueBox.Text = tostring(math.floor(Config[configKey] + 0.5))
+            else
+                setValue(typed)
+            end
+        end)
+
+        return {
+            container = container,
+            bar = bar,
+            fill = fill,
+            knob = knob,
+            valueBox = valueBox,
+            setValue = setValue,
+        }
+    end
+
     return {
         screenGui = screenGui,
         toggleBtn = toggleBtn,
@@ -467,6 +657,7 @@ function UI.Init(Shared)
         createToggle = createToggle,
         createDropdown = createDropdown,
         createInput = createInput,
+        createSlider = createSlider,
         setTabError = function(name, message)
             local label = tabErrors[name]
             if label then
