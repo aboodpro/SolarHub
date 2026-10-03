@@ -2088,6 +2088,7 @@ function Arcane.Init(Shared, UI)
     Config.ArcaneBossESP = Config.ArcaneBossESP == true
     Config.ArcaneBossDebug = Config.ArcaneBossDebug == true
     Config.ArcaneChestESP = Config.ArcaneChestESP == true
+    Config.ArcaneTreasureChartESP = Config.ArcaneTreasureChartESP == true
     Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
     Config.ArcaneAutoFishing = Config.ArcaneAutoFishing == true
 
@@ -2544,6 +2545,38 @@ function Arcane.Init(Shared, UI)
 
 
     -------------------------------------------------
+    -- TREASURE CHART ESP
+    -------------------------------------------------
+
+    local treasureChartSection = UI.createSection(
+        miscTab,
+        "Treasure Chart ESP",
+        150
+    )
+
+    UI.createToggle(
+        treasureChartSection,
+        "Treasure Chart ESP",
+        "Reads your active chart, shows STUDS to the search area, then highlights dig parts green.",
+        "ArcaneTreasureChartESP",
+        32
+    )
+
+    local treasureChartStatus = Instance.new("TextLabel")
+    treasureChartStatus.Size = UDim2.new(1, -16, 0, 54)
+    treasureChartStatus.Position = UDim2.fromOffset(8, 78)
+    treasureChartStatus.BackgroundTransparency = 1
+    treasureChartStatus.Text = "Treasure Chart: not detected."
+    treasureChartStatus.TextColor3 = Color3.fromRGB(150, 150, 160)
+    treasureChartStatus.Font = Enum.Font.Gotham
+    treasureChartStatus.TextSize = 9
+    treasureChartStatus.TextWrapped = true
+    treasureChartStatus.TextXAlignment = Enum.TextXAlignment.Left
+    treasureChartStatus.TextYAlignment = Enum.TextYAlignment.Top
+    treasureChartStatus.Parent = treasureChartSection
+
+
+    -------------------------------------------------
     -- SIDE QUEST NPC ESP
     -------------------------------------------------
 
@@ -2605,7 +2638,626 @@ function Arcane.Init(Shared, UI)
     local sideQuestESPObjects = {}
     local sideQuestCandidates = {}
 
+    local treasureChartESP = nil
+    local treasureChartCurrentObject = nil
+    local treasureChartLastKey = nil
+    local treasureChartCandidateParts = {}
+    local treasureChartHighlights = {}
+    local treasureChartIslandModel = nil
+    local treasureChartLastObjectScan = 0
+    local treasureChartNeedsScan = true
+
     local autoFishingBusy = false
+
+    -------------------------------------------------
+    -- TREASURE CHART TRACKER
+    -------------------------------------------------
+
+    local TREASURE_CHART_DIRECTIONS = {
+        "East", "East Southeast", "Southeast", "South Southeast",
+        "South", "South Southwest", "Southwest", "West Southwest",
+        "West", "West Northwest", "Northwest", "North Northwest",
+        "North", "North Northeast", "Northeast", "East Northeast",
+    }
+
+    local TREASURE_CHART_DISTANCE_BANDS = {
+        ["Few paces"] = {0, 1 / 3},
+        Halfway = {1 / 3, 2 / 3},
+        ["On the edge"] = {2 / 3, 1.10},
+    }
+
+    local TREASURE_CHART_ISLANDS = {
+        "Frostmill Island", "Ravenna", "Forest of Cernunno", "Shell Island",
+        "Harvest Island", "Whitesummit", "Munera Garden", "Wind-Row Island",
+        "Palo Town", "Blasted Rock", "Thorin's Refuge", "Limestone Key",
+        "Akursius Keep", "Blackreach Island", "Thrylos Crossing", "Cedar Arch",
+        "Ierochos", "Sameria", "Shale Reef", "Drakos Arch", "Claw Island",
+        "Makrinaos",
+    }
+
+    local TREASURE_CHART_DIRECTION_ANGLES = {
+        East = 0,
+        ["East Southeast"] = 22.5,
+        Southeast = 45,
+        ["South Southeast"] = 67.5,
+        South = 90,
+        ["South Southwest"] = 112.5,
+        Southwest = 135,
+        ["West Southwest"] = 157.5,
+        West = 180,
+        ["West Northwest"] = 202.5,
+        Northwest = 225,
+        ["North Northwest"] = 247.5,
+        North = 270,
+        ["North Northeast"] = 292.5,
+        Northeast = 315,
+        ["East Northeast"] = 337.5,
+    }
+
+    local function treasureNormalize(value)
+        return tostring(value or ""):lower():gsub("[^%w]+", "")
+    end
+
+    local function treasureDirectionVector(direction)
+        local degrees = TREASURE_CHART_DIRECTION_ANGLES[direction]
+
+        if degrees == nil then
+            return nil
+        end
+
+        local angle = math.rad(degrees)
+
+        -- Arcane's common chart locators use +X = East and +Z = South.
+        return Vector3.new(math.cos(angle), 0, math.sin(angle))
+    end
+
+    local function destroyTreasureChartESP()
+        if treasureChartESP then
+            if treasureChartESP.highlight then
+                pcall(function() treasureChartESP.highlight:Destroy() end)
+            end
+
+            if treasureChartESP.billboard then
+                pcall(function() treasureChartESP.billboard:Destroy() end)
+            end
+
+            if treasureChartESP.anchor then
+                pcall(function() treasureChartESP.anchor:Destroy() end)
+            end
+
+            treasureChartESP = nil
+        end
+
+        for _, highlight in ipairs(treasureChartHighlights) do
+            pcall(function() highlight:Destroy() end)
+        end
+
+        table.clear(treasureChartHighlights)
+        table.clear(treasureChartCandidateParts)
+        treasureChartIslandModel = nil
+    end
+
+    local function addTreasureChartObjectText(object, sources)
+        if not object then
+            return
+        end
+
+        table.insert(sources, tostring(object.Name))
+
+        local okAttrs, attrs = pcall(function()
+            return object:GetAttributes()
+        end)
+
+        if okAttrs and type(attrs) == "table" then
+            for key, value in pairs(attrs) do
+                table.insert(sources, tostring(key))
+
+                if typeof(value) == "string" then
+                    table.insert(sources, value)
+                end
+            end
+        end
+
+        for _, child in ipairs(object:GetDescendants()) do
+            if child:IsA("StringValue") then
+                table.insert(sources, tostring(child.Value))
+            elseif child:IsA("TextLabel") or child:IsA("TextBox") then
+                table.insert(sources, tostring(child.Text))
+            end
+        end
+    end
+
+    local function getTreasureChartInfo(chart)
+        local sources = {}
+        addTreasureChartObjectText(chart, sources)
+
+        local text = table.concat(sources, " | ")
+        local normalized = treasureNormalize(text)
+
+        local island
+        local islandNameLength = 0
+
+        for _, name in ipairs(TREASURE_CHART_ISLANDS) do
+            local normalizedName = treasureNormalize(name)
+
+            if normalized:find(normalizedName, 1, true)
+                and #normalizedName > islandNameLength then
+                island = name
+                islandNameLength = #normalizedName
+            end
+        end
+
+        local direction
+        local directionLength = 0
+
+        for _, name in ipairs(TREASURE_CHART_DIRECTIONS) do
+            local normalizedName = treasureNormalize(name)
+
+            if normalized:find(normalizedName, 1, true)
+                and #normalizedName > directionLength then
+                direction = name
+                directionLength = #normalizedName
+            end
+        end
+
+        local distance
+
+        if normalized:find("fewpaces", 1, true) then
+            distance = "Few paces"
+        elseif normalized:find("halfway", 1, true) then
+            distance = "Halfway"
+        elseif normalized:find("ontheedge", 1, true)
+            or normalized:find("edge", 1, true) then
+            distance = "On the edge"
+        end
+
+        local surface
+
+        if normalized:find("snow", 1, true) then
+            surface = "SNOW"
+        elseif normalized:find("sand", 1, true) then
+            surface = "SAND"
+        elseif normalized:find("ground", 1, true) then
+            surface = "GROUND"
+        end
+
+        return {
+            island = island,
+            direction = direction,
+            distance = distance,
+            surface = surface,
+            rawText = text,
+        }
+    end
+
+    local function findTreasureIslandModel(islandName)
+        local map = workspace:FindFirstChild("Map")
+
+        if not map or not islandName then
+            return nil
+        end
+
+        local wanted = treasureNormalize(islandName)
+
+        for _, child in ipairs(map:GetChildren()) do
+            if treasureNormalize(child.Name) == wanted then
+                if child:IsA("Model") then
+                    return child
+                end
+
+                local model = child:FindFirstChildWhichIsA("Model", true)
+
+                if model then
+                    return model
+                end
+            end
+        end
+
+        -- This fallback runs only when a new Chart needs a new island.
+        for index, child in ipairs(map:GetDescendants()) do
+            if index % 700 == 0 then
+                task.wait()
+            end
+
+            if (child:IsA("Model") or child:IsA("Folder"))
+                and treasureNormalize(child.Name) == wanted then
+
+                if child:IsA("Model") then
+                    return child
+                end
+
+                return child:FindFirstChildWhichIsA("Model", true)
+            end
+        end
+
+        return nil
+    end
+
+    local function treasurePartMatchesSurface(part, surface)
+        if not surface then
+            return true
+        end
+
+        local material = part.Material
+        local name = treasureNormalize(part.Name)
+
+        if surface == "SAND" then
+            return material == Enum.Material.Sand
+                or name:find("sand", 1, true) ~= nil
+        end
+
+        if surface == "SNOW" then
+            return material == Enum.Material.Snow
+                or material == Enum.Material.Glacier
+                or name:find("snow", 1, true) ~= nil
+        end
+
+        if surface == "GROUND" then
+            return material == Enum.Material.Ground
+                or material == Enum.Material.Grass
+                or material == Enum.Material.LeafyGrass
+                or material == Enum.Material.Mud
+                or name:find("ground", 1, true) ~= nil
+                or name:find("grass", 1, true) ~= nil
+        end
+
+        return true
+    end
+
+    local function getTreasureIslandBounds(model)
+        if not model then
+            return nil
+        end
+
+        local ok, cf, size = pcall(function()
+            return model:GetBoundingBox()
+        end)
+
+        if not ok or not cf or not size then
+            return nil
+        end
+
+        return cf.Position, size
+    end
+
+    local function buildTreasureChartCandidates(islandModel, info)
+        local center, size = getTreasureIslandBounds(islandModel)
+
+        if not center or not size or not info.direction or not info.distance then
+            return {}
+        end
+
+        local directionVector = treasureDirectionVector(info.direction)
+        local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
+
+        if not directionVector or not band then
+            return {}
+        end
+
+        local islandRadius = math.max(size.X, size.Z) * 0.5
+
+        if islandRadius <= 10 then
+            return {}
+        end
+
+        local minRadius = islandRadius * band[1]
+        local maxRadius = islandRadius * band[2]
+        local targetAngle = math.atan2(directionVector.Z, directionVector.X)
+        local candidates = {}
+
+        for index, part in ipairs(islandModel:GetDescendants()) do
+            if index % 800 == 0 then
+                task.wait()
+            end
+
+            if part:IsA("BasePart")
+                and part.Transparency < 0.85
+                and part.CanCollide
+                and math.max(part.Size.X, part.Size.Z) >= 2 then
+
+                local offset = Vector3.new(
+                    part.Position.X - center.X,
+                    0,
+                    part.Position.Z - center.Z
+                )
+
+                local radial = offset.Magnitude
+
+                if radial >= minRadius and radial <= maxRadius then
+                    local angle = math.atan2(offset.Z, offset.X)
+                    local difference = math.abs(angle - targetAngle)
+
+                    while difference > math.pi do
+                        difference = math.abs(difference - (math.pi * 2))
+                    end
+
+                    if difference <= math.rad(13.5)
+                        and treasurePartMatchesSurface(part, info.surface) then
+                        table.insert(candidates, part)
+                    end
+                end
+            end
+        end
+
+        -- Prefer larger land/path parts; they are fewer and easier to inspect.
+        table.sort(candidates, function(a, b)
+            return (a.Size.X * a.Size.Z) > (b.Size.X * b.Size.Z)
+        end)
+
+        return candidates
+    end
+
+    local function createTreasureChartMarker(position, info)
+        if not position then
+            return
+        end
+
+        local anchor = Instance.new("Part")
+        anchor.Name = "SolarTreasureChartMarker"
+        anchor.Anchored = true
+        anchor.CanCollide = false
+        anchor.CanTouch = false
+        anchor.CanQuery = false
+        anchor.Transparency = 1
+        anchor.Size = Vector3.new(2, 2, 2)
+        anchor.CFrame = CFrame.new(position)
+        anchor.Parent = workspace
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "SolarTreasureChartInfo"
+        billboard.Adornee = anchor
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = 0
+        billboard.Size = UDim2.fromOffset(320, 54)
+        billboard.StudsOffset = Vector3.new(0, 4, 0)
+        billboard.Parent = Shared.playerGui
+
+        local label = Instance.new("TextLabel")
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.Font = Enum.Font.GothamBold
+        label.TextColor3 = Color3.fromRGB(255, 205, 80)
+        label.TextStrokeTransparency = 0.15
+        label.TextSize = 12
+        label.TextWrapped = true
+        label.Text = "TREASURE CHART | "
+            .. tostring(info.island or "?")
+            .. "
+GO TO DIG AREA"
+        label.Parent = billboard
+
+        treasureChartESP = {
+            anchor = anchor,
+            billboard = billboard,
+            label = label,
+            position = position,
+            greenShown = false,
+        }
+    end
+
+    local function setTreasureChartGreenArea(visible)
+        if not visible then
+            for _, highlight in ipairs(treasureChartHighlights) do
+                pcall(function() highlight:Destroy() end)
+            end
+
+            table.clear(treasureChartHighlights)
+
+            if treasureChartESP then
+                treasureChartESP.greenShown = false
+            end
+
+            return
+        end
+
+        if not treasureChartESP or treasureChartESP.greenShown then
+            return
+        end
+
+        -- Hard cap to avoid turning a large island's entire terrain into
+        -- hundreds of Highlight instances.
+        local limit = math.min(#treasureChartCandidateParts, 90)
+
+        for index = 1, limit do
+            local part = treasureChartCandidateParts[index]
+
+            if part and part.Parent then
+                local highlight = Instance.new("Highlight")
+                highlight.Name = "SolarTreasureDigArea"
+                highlight.Adornee = part
+                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                highlight.FillColor = Color3.fromRGB(35, 255, 80)
+                highlight.OutlineColor = Color3.fromRGB(35, 255, 80)
+                highlight.FillTransparency = 0.82
+                highlight.OutlineTransparency = 0
+                highlight.Parent = part
+
+                table.insert(treasureChartHighlights, highlight)
+            end
+        end
+
+        treasureChartESP.greenShown = true
+    end
+
+    local function findTreasureChartObject()
+        local player = Shared.player
+        local character = player.Character
+        local backpack = player:FindFirstChildOfClass("Backpack")
+
+        for _, container in ipairs({backpack, character}) do
+            if container then
+                for _, child in ipairs(container:GetChildren()) do
+                    if child:IsA("Tool") or child:IsA("Model") then
+                        local normalized = treasureNormalize(child.Name)
+
+                        if normalized:find("treasurechart", 1, true)
+                            or normalized:find("treasuremap", 1, true)
+                            or normalized == "chart" then
+                            return child
+                        end
+                    end
+                end
+            end
+        end
+
+        return nil
+    end
+
+    local function refreshTreasureChart()
+        if not Config.ArcaneTreasureChartESP then
+            destroyTreasureChartESP()
+            treasureChartCurrentObject = nil
+            treasureChartLastKey = nil
+            treasureChartNeedsScan = true
+
+            if treasureChartStatus then
+                treasureChartStatus.Text = "Treasure Chart ESP: OFF"
+            end
+
+            return
+        end
+
+        local chart = findTreasureChartObject()
+
+        if not chart then
+            destroyTreasureChartESP()
+            treasureChartCurrentObject = nil
+            treasureChartLastKey = nil
+            treasureChartNeedsScan = true
+
+            if treasureChartStatus then
+                treasureChartStatus.Text =
+                    "Treasure Chart: not detected. Keep it in your Backpack."
+            end
+
+            return
+        end
+
+        local info = getTreasureChartInfo(chart)
+
+        if not info.island or not info.direction or not info.distance then
+            if treasureChartStatus then
+                treasureChartStatus.Text =
+                    "Chart detected, but its clue text is not readable yet."
+            end
+
+            return
+        end
+
+        local chartKey = table.concat({
+            tostring(chart:GetFullName()),
+            tostring(info.island),
+            tostring(info.direction),
+            tostring(info.distance),
+            tostring(info.surface),
+        }, "|")
+
+        if chartKey ~= treasureChartLastKey then
+            treasureChartLastKey = chartKey
+            treasureChartCurrentObject = chart
+            treasureChartNeedsScan = true
+        end
+
+        if treasureChartNeedsScan then
+            destroyTreasureChartESP()
+
+            local islandModel = findTreasureIslandModel(info.island)
+
+            if islandModel then
+                treasureChartIslandModel = islandModel
+                treasureChartCandidateParts =
+                    buildTreasureChartCandidates(islandModel, info)
+
+                local markerPart = treasureChartCandidateParts[1]
+                local markerPosition
+
+                if markerPart then
+                    markerPosition = markerPart.Position
+                else
+                    local center, size = getTreasureIslandBounds(islandModel)
+                    local directionVector = treasureDirectionVector(info.direction)
+                    local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
+
+                    if center and size and directionVector and band then
+                        local radius = math.max(size.X, size.Z) * 0.5
+                        local middleRadius =
+                            radius * ((band[1] + band[2]) * 0.5)
+
+                        markerPosition =
+                            center + directionVector * middleRadius
+                    end
+                end
+
+                createTreasureChartMarker(markerPosition, info)
+            end
+
+            treasureChartNeedsScan = false
+        end
+
+        local playerRoot = getLocalPlayerRoot()
+        local nearest
+        local nearestDistance = math.huge
+
+        if playerRoot then
+            for _, part in ipairs(treasureChartCandidateParts) do
+                if part and part.Parent then
+                    local distance =
+                        (playerRoot.Position - part.Position).Magnitude
+
+                    if distance < nearestDistance then
+                        nearestDistance = distance
+                        nearest = part
+                    end
+                end
+            end
+        end
+
+        if treasureChartESP and nearest then
+            treasureChartESP.position = nearest.Position
+            treasureChartESP.anchor.CFrame = CFrame.new(nearest.Position)
+
+            local arrived = nearestDistance <= 350
+
+            setTreasureChartGreenArea(arrived)
+
+            treasureChartESP.label.Text =
+                "TREASURE CHART | "
+                .. tostring(info.island)
+                .. "
+"
+                .. tostring(math.floor(nearestDistance))
+                .. " STUDS | "
+                .. (arrived and "GREEN DIG AREA" or "GO TO AREA")
+        end
+
+        if treasureChartStatus then
+            treasureChartStatus.Text =
+                "Chart: "
+                .. tostring(info.island)
+                .. " | "
+                .. tostring(info.direction)
+                .. " | "
+                .. tostring(info.distance)
+                .. "
+Candidates: "
+                .. tostring(#treasureChartCandidateParts)
+                .. (info.surface and (" | " .. info.surface) or "")
+        end
+    end
+
+    task.spawn(function()
+        task.wait(1)
+
+        while true do
+            task.wait(0.5)
+
+            if Config.ArcaneTreasureChartESP then
+                pcall(refreshTreasureChart)
+            else
+                destroyTreasureChartESP()
+            end
+        end
+    end)
 
     -- Boss lifecycle state is tracked by boss name, not by spawn position.
     -- This means a boss can die at Point A and respawn at Point B.
