@@ -2790,13 +2790,15 @@ function Arcane.Init(Shared, UI)
     Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
     Config.ArcaneAutoFishing = Config.ArcaneAutoFishing == true
 
-    -- Chest filters intentionally start OFF every time SolarHub initializes.
+    -- Start with every chest type selected so Chest ESP immediately means
+    -- "show every chest". CLEAR ALL still disables everything until a type is
+    -- selected again.
     if type(Config.ArcaneChestFilter) ~= "table" then
         Config.ArcaneChestFilter = {}
     end
 
     for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-        Config.ArcaneChestFilter[chestType] = false
+        Config.ArcaneChestFilter[chestType] = true
     end
 
     -- Start every SolarHub session with an effectively unlimited chest
@@ -3074,7 +3076,7 @@ function Arcane.Init(Shared, UI)
     UI.createToggle(
         chestSection,
         "Chest ESP",
-        "Shows selected chests within each type's scan distance.",
+        "Shows selected chests globally across the map; scan distance is kept only for compatibility.",
         "ArcaneChestESP",
         32
     )
@@ -3178,7 +3180,7 @@ function Arcane.Init(Shared, UI)
 
         local slider = UI.createSlider(
             row,
-            "Scan Distance (0 - 1,000,000)",
+            "Legacy Scan Distance (ignored - global ESP)",
             "ArcaneChestScanDistance_" .. chestType,
             0,
             1000000,
@@ -4170,16 +4172,9 @@ function Arcane.Init(Shared, UI)
     end
 
     local function isChestWithinScanDistance(target, chestType)
-        local maxDistance = getChestScanDistance(chestType)
-        local playerRoot = getLocalPlayerRoot()
-        local chestRoot = getChestRoot(target)
-
-        if not playerRoot or not chestRoot then
-            return true
-        end
-
-        return (playerRoot.Position - chestRoot.Position).Magnitude
-            <= maxDistance
+        -- Chest ESP is intentionally global. Player distance must never remove
+        -- or block a chest marker.
+        return true
     end
 
     local function hasLiveChestInteraction(chest)
@@ -4212,11 +4207,6 @@ local function createChestESP(target)
         end
 
         if not hasLiveChestInteraction(target) then
-            destroyChestESP(target)
-            return
-        end
-
-        if not isChestWithinScanDistance(target, chestType) then
             destroyChestESP(target)
             return
         end
@@ -4331,12 +4321,9 @@ local function createChestESP(target)
             return
         end
 
-        if entry
-            and entry.Parent
-            and not entry:IsDescendantOf(workspace) then
-            return
-        end
-
+        -- Static entries may come from Workspace or ReplicatedStorage. The
+        -- cached world position is what matters, not whether the source is
+        -- currently parented to Workspace.
         if entry
             and not (entry:IsA("Model") or entry:IsA("BasePart")) then
             return
@@ -4408,23 +4395,42 @@ local function createChestESP(target)
         }
     end
 
+    local function getStaticChestLocationKey(position, chestType)
+        local function snap(value)
+            return math.floor((value / 2) + 0.5) * 2
+        end
+
+        return ("STATIC|%s|%d|%d|%d"):format(
+            tostring(chestType or "OTHER"),
+            snap(position.X),
+            snap(position.Y),
+            snap(position.Z)
+        )
+    end
+
     local function cacheStaticChestLocation(entry, chestType)
         if not entry then
             return
         end
 
-        local key = entry:GetFullName()
         local position = getStaticChestPosition(entry)
 
         if not position then
             return
         end
 
-        staticChestLocationCache[key] = {
-            source = entry,
-            position = position,
-            chestType = chestType or "OTHER",
-        }
+        local key = getStaticChestLocationKey(
+            position,
+            chestType or "OTHER"
+        )
+
+        if not staticChestLocationCache[key] then
+            staticChestLocationCache[key] = {
+                source = entry,
+                position = position,
+                chestType = chestType or "OTHER",
+            }
+        end
     end
 
     local function refreshStaticChestESP()
@@ -4451,30 +4457,67 @@ local function createChestESP(target)
             return
         end
 
-        root = root or workspace:FindFirstChild("Map")
-        if not root then
-            return
-        end
-
         staticChestLocationsScanned = true
 
-        for _, object in ipairs(root:GetDescendants()) do
-            if (object:IsA("Folder") or object:IsA("Model"))
-                and normalizeName(object.Name) == "chests" then
+        local function scanRoot(scanRoot)
+            if not scanRoot then
+                return
+            end
 
-                for _, entry in ipairs(object:GetChildren()) do
-                    if entry:IsA("Model") or entry:IsA("BasePart") then
-                        local chestType = getChestTypeFast(entry)
-                            or getChestType(entry)
-                            or "OTHER"
+            local descendants = scanRoot:GetDescendants()
 
-                        cacheStaticChestLocation(entry, chestType)
+            for index, object in ipairs(descendants) do
+                if index % 750 == 0 then
+                    task.wait()
+                end
+
+                if (object:IsA("Folder") or object:IsA("Model"))
+                    and (
+                        normalizeName(object.Name) == "chests"
+                        or normalizeName(object.Name) == "tempchests"
+                    ) then
+
+                    for _, entry in ipairs(object:GetChildren()) do
+                        if entry:IsA("Model") or entry:IsA("BasePart") then
+                            local chestType = getChestTypeFast(entry)
+                                or getChestType(entry)
+                                or "OTHER"
+
+                            cacheStaticChestLocation(entry, chestType)
+                        end
                     end
                 end
             end
         end
 
+        -- Workspace contains the currently loaded chests. ReplicatedStorage
+        -- contains Arcane Odyssey's unloaded-island chest locations, allowing
+        -- the ESP to remain visible even after the game removes the live model.
+        scanRoot(root or workspace:FindFirstChild("Map"))
+
+        local rs = game:GetService("ReplicatedStorage")
+        local unloadIslands = rs:FindFirstChild("RS")
+            and rs.RS:FindFirstChild("UnloadIslands")
+
+        scanRoot(unloadIslands)
+
         refreshStaticChestESP()
+    end
+
+    local function destroyStaticChestESPNearPosition(position, chestType, radius)
+        if not position then
+            return
+        end
+
+        radius = radius or 24
+
+        for key, data in pairs(staticChestESPObjects) do
+            if data.position
+                and (not chestType or data.chestType == chestType)
+                and (data.position - position).Magnitude <= radius then
+                destroyStaticChestESP(key)
+            end
+        end
     end
 
     local function markChestOpened(chest)
@@ -4484,6 +4527,14 @@ local function createChestESP(target)
 
         openedChests[chest] = true
         chestCandidates[chest] = nil
+
+        local root = getChestRoot(chest)
+        if root then
+            destroyStaticChestESPNearPosition(
+                root.Position,
+                getChestTypeFast(chest) or getChestType(chest)
+            )
+        end
 
         destroyChestESP(chest)
     end
@@ -4590,6 +4641,15 @@ local proximityPromptService = game:GetService("ProximityPromptService")
     chestCandidates[chest] = true
 
     createChestESP(chest)
+
+    -- Prefer the live chest marker while the actual chest model is loaded.
+    local chestRoot = getChestRoot(chest)
+    if chestRoot then
+        destroyStaticChestESPNearPosition(
+            chestRoot.Position,
+            chestType
+        )
+    end
 end
 
 local function scanAllWorkspaceChests()
@@ -5651,8 +5711,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 and "1"
                 or "0"
 
-            parts[#parts + 1] = ":"
-            parts[#parts + 1] = tostring(getChestScanDistance(chestType))
             parts[#parts + 1] = ";"
         end
 
@@ -5986,15 +6044,12 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 else
                     if playerRoot then
                         local distance = (playerRoot.Position - data.position).Magnitude
-                        local maxDistance = getChestScanDistance(data.chestType)
 
-                        if distance > maxDistance then
-                            destroyStaticChestESP(key)
-                        else
-                            data.label.Text = (CHEST_DISPLAY_NAMES[data.chestType] or "Chest Location")
-                                .. " | STUDS: "
-                                .. tostring(math.floor(distance))
-                        end
+                        -- Static markers are global. Do not destroy them when
+                        -- the player moves away from the chest.
+                        data.label.Text = (CHEST_DISPLAY_NAMES[data.chestType] or "Chest Location")
+                            .. " | STUDS: "
+                            .. tostring(math.floor(distance))
                     end
                 end
             end
