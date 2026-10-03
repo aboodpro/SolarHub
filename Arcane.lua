@@ -3331,9 +3331,8 @@ function Arcane.Init(Shared, UI)
     local staticChestLocationsScanned = false
     local chestCandidates = {}
     local openedChests = {}
-    local chestLocationStates = {}
-    local chestAvailabilityWatchers = {}
-    local isChestLocationUnavailable
+    local openedChestLocations = {}
+    local chestLifecycleWatchers = {}
 
 
     local sideQuestESPObjects = {}
@@ -4343,9 +4342,7 @@ local function createChestESP(target)
             return
         end
 
-        -- Hide the static location while a live chest at this position is
-        -- currently opened/unavailable. A respawned chest clears this state.
-        if isChestLocationUnavailable(position) then
+        if isOpenedChestLocation(position) then
             return
         end
 
@@ -4415,13 +4412,9 @@ local function createChestESP(target)
         )
     end
 
-    -- Dynamic availability state keyed only by physical position.
-    -- true  = a live/available chest is present.
-    -- false = a live chest at the location is currently opened/hidden.
-    -- nil   = no live state is known; static discovery remains visible.
-    --
-    -- This state never limits or changes the global chest scanner.
-    local function getChestLocationStateKey(position)
+    -- Confirmed-consumed chest locations for this client session.
+    -- This is only a display-state layer; it never limits global discovery.
+    local function getOpenedChestLocationKey(position)
         if not position then
             return nil
         end
@@ -4430,21 +4423,56 @@ local function createChestESP(target)
             return math.floor((value / 2) + 0.5) * 2
         end
 
-        return ("STATE|%d|%d|%d"):format(
+        return ("OPENED|%d|%d|%d"):format(
             snap(position.X),
             snap(position.Y),
             snap(position.Z)
         )
     end
 
-    isChestLocationUnavailable = function(position)
-        local key = getChestLocationStateKey(position)
+    local function isOpenedChestLocation(position)
+        local key = getOpenedChestLocationKey(position)
+        return key ~= nil and openedChestLocations[key] == true
+    end
 
-        if not key then
+    local function clearOpenedChestLocation(position)
+        local key = getOpenedChestLocationKey(position)
+        if key then
+            openedChestLocations[key] = nil
+        end
+    end
+
+    local function isChestCurrentlyConsumed(chest)
+        if not chest or not chest.Parent then
             return false
         end
 
-        return chestLocationStates[key] == false
+        for _, descendant in ipairs(chest:GetDescendants()) do
+            if descendant:IsA("BoolValue") then
+                local normalized = normalizeChestText(descendant.Name)
+
+                if descendant.Value == true
+                    and (
+                        normalized == "open"
+                        or normalized == "opened"
+                        or normalized == "chestopened"
+                        or normalized == "openedchest"
+                    ) then
+                    return true
+                end
+            end
+        end
+
+        local base = chest:FindFirstChild("Base", true)
+        local lid = chest:FindFirstChild("Lid", true)
+
+        return base
+            and lid
+            and base:IsA("BasePart")
+            and lid:IsA("BasePart")
+            and base.Transparency >= 0.999
+            and lid.Transparency >= 0.999
+            or false
     end
 
 
@@ -4560,207 +4588,31 @@ local function createChestESP(target)
         end
     end
 
-    local function setChestLocationAvailability(chest, available)
-        if not chest then
-            return
-        end
-
-        local root = getChestRoot(chest)
-
-        if not root then
-            return
-        end
-
-        local key = getChestLocationStateKey(root.Position)
-
-        if not key then
-            return
-        end
-
-        chestLocationStates[key] = available == true
-
-        if not available then
-            chestCandidates[chest] = nil
-
-            destroyStaticChestESPNearPosition(
-                root.Position,
-                getChestTypeFast(chest) or getChestType(chest)
-            )
-
-            destroyChestESP(chest)
-        end
-    end
-
-    local function getChestAvailability(chest)
-        if not chest or not chest.Parent then
-            return false
-        end
-
-        local root = getChestRoot(chest)
-
-        if not root or not root:IsDescendantOf(workspace) then
-            return false
-        end
-
-        local hasPrompt = false
-        local hasEnabledPrompt = false
-        local hasVisibleChestPart = false
-        local hasInvisibleChestPart = false
-
-        for _, descendant in ipairs(chest:GetDescendants()) do
-            if descendant:IsA("ProximityPrompt") then
-                hasPrompt = true
-
-                if descendant.Enabled then
-                    hasEnabledPrompt = true
-                end
-            elseif descendant:IsA("BasePart") then
-                if descendant.Name == "Base"
-                    or descendant.Name == "Lid" then
-
-                    if descendant.Transparency >= 0.999 then
-                        hasInvisibleChestPart = true
-                    else
-                        hasVisibleChestPart = true
-                    end
-                end
-            elseif descendant:IsA("BoolValue") then
-                local normalized = normalizeChestText(descendant.Name)
-
-                if (normalized == "open"
-                    or normalized == "opened"
-                    or normalized == "chestopened"
-                    or normalized == "openedchest")
-                    and descendant.Value == true then
-
-                    return false
-                end
-            end
-        end
-
-        -- Arcane disables the prompt immediately when a chest is taken.
-        if hasPrompt and not hasEnabledPrompt then
-            return false
-        end
-
-        -- Arcane fades Base/Lid completely when the chest is consumed.
-        if hasInvisibleChestPart and not hasVisibleChestPart then
-            return false
-        end
-
-        return true
-    end
-
     local function markChestOpened(chest)
         if not chest then
             return
         end
 
-        -- Keep this instance flag for existing debug/reporting code.
         openedChests[chest] = true
-
-        setChestLocationAvailability(chest, false)
-    end
-
-    local function refreshChestAvailability(chest)
-        if not chest or not chest.Parent then
-            return
-        end
+        chestCandidates[chest] = nil
 
         local root = getChestRoot(chest)
 
-        if not root then
-            return
+        if root then
+            local key = getOpenedChestLocationKey(root.Position)
+
+            if key then
+                openedChestLocations[key] = true
+            end
+
+            destroyStaticChestESPNearPosition(
+                root.Position,
+                getChestTypeFast(chest) or getChestType(chest)
+            )
         end
 
-        local available = getChestAvailability(chest)
-
-        setChestLocationAvailability(chest, available)
-
-        if not available then
-            return
-        end
-
-        if not Config.ArcaneChestESP
-            or not hasAnyChestFilterEnabled(Config) then
-            return
-        end
-
-        local chestType = getChestTypeFast(chest) or getChestType(chest)
-
-        if not chestType
-            or not isChestFilterEnabled(Config, chestType) then
-            return
-        end
-
-        -- This may be the same Instance becoming available again or a new
-        -- Instance spawning at the same physical location.
-        chestCandidates[chest] = true
-        createChestESP(chest)
-
-        destroyStaticChestESPNearPosition(
-            root.Position,
-            chestType
-        )
+        destroyChestESP(chest)
     end
-
-    local function watchChestAvailability(chest)
-        if not chest
-            or chestAvailabilityWatchers[chest] then
-            return
-        end
-
-        chestAvailabilityWatchers[chest] = true
-
-        local function refresh()
-            if chest and chest.Parent then
-                refreshChestAvailability(chest)
-            end
-        end
-
-        local function watchDescendant(descendant)
-            if descendant:IsA("ProximityPrompt") then
-                descendant:GetPropertyChangedSignal("Enabled"):Connect(refresh)
-            elseif descendant:IsA("BasePart")
-                and (descendant.Name == "Base"
-                    or descendant.Name == "Lid") then
-
-                descendant:GetPropertyChangedSignal("Transparency"):Connect(function()
-                    local transparency = descendant.Transparency
-
-                    if transparency >= 0.999
-                        or transparency <= 0.001 then
-                        refresh()
-                    end
-                end)
-            end
-        end
-
-        for _, descendant in ipairs(chest:GetDescendants()) do
-            watchDescendant(descendant)
-        end
-
-        chest.DescendantAdded:Connect(function(descendant)
-            watchDescendant(descendant)
-
-            if descendant:IsA("BoolValue")
-                or descendant.Name == "Open"
-                or descendant.Name == "PromptHighlight" then
-                task.defer(refresh)
-            end
-        end)
-
-        chest.DescendantRemoving:Connect(function(descendant)
-            if descendant:IsA("ProximityPrompt")
-                or descendant.Name == "Open"
-                or descendant.Name == "PromptHighlight" then
-                task.defer(refresh)
-            end
-        end)
-
-        refresh()
-    end
-
 
 
     local function hasChestOpenedMarker(chest)
@@ -4818,74 +4670,177 @@ local proximityPromptService = game:GetService("ProximityPromptService")
         end
     end)
 
-    local function inspectChest(target)
-        if not Config.ArcaneChestESP
-            or not hasAnyChestFilterEnabled(Config) then
-            return
-        end
-
-        -- Resolve the real chest first. Do not reject a candidate using only
-        -- the scanned object's name.
-        local chest = getChestTarget(target)
-
-        if not chest then
+    local function refreshChestLifecycle(chest)
+        if not chest or not chest.Parent then
             return
         end
 
         local root = getChestRoot(chest)
-
-        if not root or not hasLiveChestInteraction(chest) then
-            chestCandidates[chest] = nil
-            destroyChestESP(chest)
+        if not root then
             return
         end
 
-        local chestType = getChestType(chest)
-
-        if not isChestFilterEnabled(Config, chestType) then
-            return
-        end
-
-        watchChestAvailability(chest)
-
-        local available = getChestAvailability(chest)
-
-        setChestLocationAvailability(chest, available)
-
-        if not available then
-            chestCandidates[chest] = nil
-            destroyChestESP(chest)
-
-            destroyStaticChestESPNearPosition(
-                root.Position,
-                chestType
-            )
-
-            return
-        end
-
-        if hasChestOpenedMarker(chest) then
+        if isChestCurrentlyConsumed(chest) then
             markChestOpened(chest)
             return
         end
 
-        if not isChestWithinScanDistance(chest, chestType) then
-            chestCandidates[chest] = nil
-            destroyChestESP(chest)
+        local base = chest:FindFirstChild("Base", true)
+        local lid = chest:FindFirstChild("Lid", true)
+
+        if base
+            and lid
+            and base:IsA("BasePart")
+            and lid:IsA("BasePart")
+            and base.Transparency < 0.999
+            and lid.Transparency < 0.999 then
+
+            clearOpenedChestLocation(root.Position)
+            openedChests[chest] = nil
+
+            if Config.ArcaneChestESP
+                and hasAnyChestFilterEnabled(Config) then
+
+                local chestType =
+                    getChestTypeFast(chest) or getChestType(chest)
+
+                if chestType
+                    and isChestFilterEnabled(Config, chestType) then
+
+                    chestCandidates[chest] = true
+                    createChestESP(chest)
+
+                    destroyStaticChestESPNearPosition(
+                        root.Position,
+                        chestType
+                    )
+                end
+            end
+        end
+    end
+
+    local function watchChestLifecycle(chest)
+        if not chest or chestLifecycleWatchers[chest] then
             return
         end
 
-        localChestTagObjects[chest] = true
-        chestCandidates[chest] = true
+        chestLifecycleWatchers[chest] = true
 
-        createChestESP(chest)
+        local function refresh()
+            task.defer(function()
+                if chest and chest.Parent then
+                    refreshChestLifecycle(chest)
+                end
+            end)
+        end
 
-        -- Prefer the live chest marker while the actual chest model is loaded.
+        local function watchPart(part)
+            if not part:IsA("BasePart")
+                or (part.Name ~= "Base" and part.Name ~= "Lid") then
+                return
+            end
+
+            part:GetPropertyChangedSignal("Transparency"):Connect(function()
+                if part.Transparency <= 0.001
+                    or part.Transparency >= 0.999 then
+                    refresh()
+                end
+            end)
+        end
+
+        for _, descendant in ipairs(chest:GetDescendants()) do
+            watchPart(descendant)
+        end
+
+        chest.DescendantAdded:Connect(function(descendant)
+            watchPart(descendant)
+
+            if descendant:IsA("BoolValue")
+                or descendant.Name == "Open"
+                or descendant.Name == "PromptHighlight" then
+                refresh()
+            end
+        end)
+
+        chest.DescendantRemoving:Connect(function(descendant)
+            if descendant.Name == "Open"
+                or descendant.Name == "PromptHighlight" then
+                refresh()
+            end
+        end)
+
+        refresh()
+    end
+
+    local function inspectChest(target)
+    if not Config.ArcaneChestESP
+        or not hasAnyChestFilterEnabled(Config) then
+        return
+    end
+
+    local chest = getChestTarget(target)
+
+    if not chest then
+        return
+    end
+
+    if not hasLiveChestInteraction(chest) then
+        chestCandidates[chest] = nil
+        destroyChestESP(chest)
+        return
+    end
+
+    local chestType = getChestType(chest)
+
+    if not isChestFilterEnabled(Config, chestType) then
+        return
+    end
+
+    watchChestLifecycle(chest)
+
+    -- Only explicit Open markers or fully faded Base/Lid mean consumed.
+    -- Prompt.Enabled == false alone is intentionally NOT treated as consumed.
+    if isChestCurrentlyConsumed(chest) then
+        markChestOpened(chest)
+        return
+    end
+
+    local chestRoot = getChestRoot(chest)
+
+    -- A visible chest at this physical location is available again.
+    if chestRoot then
+        local base = chest:FindFirstChild("Base", true)
+        local lid = chest:FindFirstChild("Lid", true)
+
+        if base
+            and lid
+            and base:IsA("BasePart")
+            and lid:IsA("BasePart")
+            and base.Transparency < 0.999
+            and lid.Transparency < 0.999 then
+            clearOpenedChestLocation(chestRoot.Position)
+            openedChests[chest] = nil
+        end
+    end
+
+    if not isChestWithinScanDistance(chest, chestType) then
+        chestCandidates[chest] = nil
+        destroyChestESP(chest)
+        return
+    end
+
+    localChestTagObjects[chest] = true
+    chestCandidates[chest] = true
+
+    createChestESP(chest)
+
+    if chestRoot then
         destroyStaticChestESPNearPosition(
-            root.Position,
+            chestRoot.Position,
             chestType
         )
     end
+end
 
 local function scanAllWorkspaceChests()
         if not Config.ArcaneChestESP
@@ -6114,21 +6069,16 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                         chestCandidates[target] = nil
                         destroyChestESP(target)
                     else
-                        watchChestAvailability(target)
+                        watchChestLifecycle(target)
 
-                        local available = getChestAvailability(target)
-                        local root = getChestRoot(target)
-
-                        setChestLocationAvailability(target, available)
-
-                        if not available
-                            or not root
-                            or not hasLiveChestInteraction(target) then
-
+                        if isChestCurrentlyConsumed(target) then
+                            markChestOpened(target)
+                        elseif not hasLiveChestInteraction(target) then
                             chestCandidates[target] = nil
                             destroyChestESP(target)
                         else
-                            local chestType = getChestTypeFast(target) or getChestType(target)
+                            local chestType =
+                                getChestTypeFast(target) or getChestType(target)
 
                             if isChestFilterEnabled(Config, chestType) then
                                 createChestESP(target)
@@ -6282,8 +6232,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
                 if not Config.ArcaneChestESP
                     or not hasAnyChestFilterEnabled(Config)
-                    or not isChestFilterEnabled(Config, data.chestType)
-                    or isChestLocationUnavailable(data.position) then
+                    or not isChestFilterEnabled(Config, data.chestType) then
                     destroyStaticChestESP(key)
                 else
                     if playerRoot then
