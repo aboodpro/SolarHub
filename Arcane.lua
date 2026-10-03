@@ -3627,46 +3627,41 @@ local function createChestESP(target)
         staticChestESPObjects[key] = nil
     end
 
-    local function createStaticChestESP(entry, chestType)
+    local function createStaticChestESP(entry, chestType, cachedPosition, cachedKey)
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
         end
 
-        if not entry
-            or not entry.Parent
-            or not entry:IsDescendantOf(workspace) then
+        if entry
+            and entry.Parent
+            and not entry:IsDescendantOf(workspace) then
             return
         end
 
-        if not (entry:IsA("Model") or entry:IsA("BasePart")) then
+        if entry
+            and not (entry:IsA("Model") or entry:IsA("BasePart")) then
             return
         end
 
-        chestType = chestType or getChestType(entry) or "OTHER"
+        chestType = chestType or (entry and getChestType(entry)) or "OTHER"
 
         if not isChestFilterEnabled(Config, chestType) then
             return
         end
 
-        local position = getStaticChestPosition(entry)
+        local position = cachedPosition
+            or getStaticChestPosition(entry)
 
         if not position then
             return
         end
 
-        local playerRoot = getLocalPlayerRoot()
-
-        if playerRoot then
-            local maxDistance = getChestScanDistance(chestType)
-            local playerPosition = playerRoot.Position
-
-            if (playerPosition - position).Magnitude > maxDistance then
-                return
-            end
-        end
-
-        local key = entry:GetFullName()
+        -- Static chest markers are intentionally global. Their visibility must
+        -- not depend on player distance.
+        local key = cachedKey
+            or (entry and entry:GetFullName())
+            or ("STATIC|" .. tostring(position.X) .. "|" .. tostring(position.Y) .. "|" .. tostring(position.Z))
 
         if staticChestESPObjects[key] then
             return
@@ -3740,10 +3735,15 @@ local function createChestESP(target)
             return
         end
 
-        for _, data in pairs(staticChestLocationCache) do
-            if data.source and data.source.Parent then
-                createStaticChestESP(data.source, data.chestType)
-            end
+        for key, data in pairs(staticChestLocationCache) do
+            -- Keep the cached position alive even when Roblox streams the
+            -- original chest instance out of the client's Workspace.
+            createStaticChestESP(
+                data.source,
+                data.chestType,
+                data.position,
+                key
+            )
         end
     end
 
