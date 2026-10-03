@@ -983,381 +983,575 @@ end
 
 local function runDebugScan(setText)
     task.spawn(function()
-        setText("Scanning targeted Arcane world structures...\nThis avoids freezing on the full Workspace.")
+        local CollectionService = game:GetService("CollectionService")
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local Players = game:GetService("Players")
+
+        setText(
+            "Running Arcane DEEP DEBUG...\\n"
+            .. "Targeted only to known systems; large traversals yield periodically."
+        )
 
         local results = {
+            environment = {},
+            folders = {},
             activeNPCs = {},
-            sideQuestNPCs = {},
-            activeBosses = {},
+            sideQuest = {},
+            knownMissing = {},
+            npcLocations = {},
+            bosses = {},
             bossTemplates = {},
-            activeChests = {},
-            spawnLocations = {},
-            questObjects = {},
+            chests = {},
             remotes = {},
-            scripts = {},
+            fishing = {},
+            config = {},
         }
 
-        local function addLimited(list, value, limit)
+        local function add(list, value, limit)
             if #list < limit then
-                table.insert(list, value)
+                table.insert(list, tostring(value))
             end
         end
 
-        local function inspectNPCModel(model, sourceName)
-            if not model:IsA("Model") then
-                return
+        local function pos(root)
+            if not root then
+                return "<NO_POS>"
             end
 
-            local humanoid = model:FindFirstChildOfClass("Humanoid")
-            if not humanoid then
+            local p = root.Position
+            return ("%.0f %.0f %.0f"):format(p.X, p.Y, p.Z)
+        end
+
+        local function attrs(instance)
+            local ok, data = pcall(function()
+                return instance:GetAttributes()
+            end)
+
+            if not ok or type(data) ~= "table" then
+                return "ATTRS=<ERROR>"
+            end
+
+            local parts = {}
+
+            for key, value in pairs(data) do
+                local normalized = normalizeName(key)
+
+                if normalized:find("quest",1,true)
+                    or normalized:find("npc",1,true)
+                    or normalized:find("boss",1,true)
+                    or normalized:find("chest",1,true)
+                    or normalized:find("open",1,true)
+                    or normalized:find("name",1,true)
+                    or normalized:find("type",1,true)
+                    or normalized:find("rarity",1,true) then
+                    table.insert(parts, tostring(key) .. "=" .. tostring(value))
+                end
+            end
+
+            table.sort(parts)
+            return #parts > 0 and "ATTRS=" .. table.concat(parts, ";") or "ATTRS=<none>"
+        end
+
+        local function tags(instance)
+            local ok, data = pcall(function()
+                return CollectionService:GetTags(instance)
+            end)
+
+            if not ok or type(data) ~= "table" or #data == 0 then
+                return "TAGS=<none>"
+            end
+
+            table.sort(data)
+            return "TAGS=" .. table.concat(data, ",")
+        end
+
+        local function interaction(chest)
+            local parts = {}
+
+            for _, child in ipairs(chest:GetDescendants()) do
+                if child:IsA("ProximityPrompt") then
+                    table.insert(
+                        parts,
+                        ("PROMPT=%s|Action=%s|Object=%s|Enabled=%s"):format(
+                            child.Name,
+                            child.ActionText,
+                            child.ObjectText,
+                            tostring(child.Enabled)
+                        )
+                    )
+                elseif child:IsA("ClickDetector") then
+                    table.insert(parts, "CLICK=" .. child.Name)
+                end
+            end
+
+            return #parts > 0
+                and table.concat(parts, " || ")
+                or "INTERACTION=<none>"
+        end
+
+        local function opened(chest)
+            if openedChests[chest] then
+                return "OPENED=tracked"
+            end
+
+            local ok = pcall(function()
+                return hasChestOpenedMarker(chest)
+            end)
+
+            if ok and hasChestOpenedMarker(chest) then
+                return "OPENED=marker"
+            end
+
+            return "OPENED=no"
+        end
+
+        table.insert(results.environment, "Player=" .. tostring(Players.LocalPlayer))
+        table.insert(results.environment, "PlaceId=" .. tostring(game.PlaceId))
+        table.insert(results.environment, "GameId=" .. tostring(game.GameId))
+        table.insert(results.environment, "JobId=" .. tostring(game.JobId))
+        table.insert(results.environment, "GameLoaded=" .. tostring(game:IsLoaded()))
+
+        for _, chestType in ipairs(CHEST_TYPE_ORDER) do
+            table.insert(
+                results.config,
+                ("%s | Filter=%s | ScanDistance=%d"):format(
+                    chestType,
+                    tostring(Config.ArcaneChestFilter[chestType] == true),
+                    getChestScanDistance(chestType)
+                )
+            )
+        end
+
+        table.insert(
+            results.config,
+            "BossESP=" .. tostring(Config.ArcaneBossESP)
+                .. " | ChestESP=" .. tostring(Config.ArcaneChestESP)
+                .. " | SideQuestESP=" .. tostring(Config.ArcaneSideQuestESP)
+                .. " | AutoFishing=" .. tostring(Config.ArcaneAutoFishing)
+        )
+
+        local npcFolder = workspace:FindFirstChild("NPCs")
+        local enemiesFolder = workspace:FindFirstChild("Enemies")
+        local map = workspace:FindFirstChild("Map")
+        local seaContent = map and map:FindFirstChild("SeaContent")
+        local npcLocationsFolder = seaContent and seaContent:FindFirstChild("NPCLocations")
+        local questObjectsFolder = map and map:FindFirstChild("QuestObjects")
+
+        local rs = ReplicatedStorage:FindFirstChild("RS")
+        local objects = rs and rs:FindFirstChild("Objects")
+        local unloadEnemies = rs and rs:FindFirstChild("UnloadEnemies")
+        local remotesFolder = rs and rs:FindFirstChild("Remotes")
+
+        local function folderLine(name, folder)
+            if not folder then
+                return name .. " = <MISSING>"
+            end
+
+            return ("%s | Children=%d | Descendants=%d | %s"):format(
+                name,
+                #folder:GetChildren(),
+                #folder:GetDescendants(),
+                folder:GetFullName()
+            )
+        end
+
+        add(results.folders, folderLine("Workspace.NPCs", npcFolder), 50)
+        add(results.folders, folderLine("Workspace.Enemies", enemiesFolder), 50)
+        add(results.folders, folderLine("Workspace.Map", map), 50)
+        add(results.folders, folderLine("Workspace.Map.SeaContent", seaContent), 50)
+        add(results.folders, folderLine("Workspace.Map.SeaContent.NPCLocations", npcLocationsFolder), 50)
+        add(results.folders, folderLine("Workspace.Map.QuestObjects", questObjectsFolder), 50)
+        add(results.folders, folderLine("RS", rs), 50)
+        add(results.folders, folderLine("RS.Objects", objects), 50)
+        add(results.folders, folderLine("RS.UnloadEnemies", unloadEnemies), 50)
+        add(results.folders, folderLine("RS.Remotes", remotesFolder), 50)
+
+        local function inspectNPC(model, source)
+            if not model:IsA("Model")
+                or not model:FindFirstChildOfClass("Humanoid") then
                 return
             end
 
             local root = getRoot(model)
-            local position = root and root.Position
-            local questInfo = getSideQuestNPCInfo(model)
+            local info = getSideQuestNPCInfo(model)
 
-            local line = ("%s | %s | %s"):format(
-                model.Name,
-                sourceName,
-                position
-                    and ("POS %.0f %.0f %.0f"):format(
-                        position.X, position.Y, position.Z
-                    )
-                    or "NO POS"
+            add(
+                results.activeNPCs,
+                ("%s | SOURCE=%s | POS=%s | %s | %s | %s"):format(
+                    model.Name,
+                    source,
+                    pos(root),
+                    attrs(model),
+                    tags(model),
+                    model:GetFullName()
+                ),
+                350
             )
 
-            addLimited(results.activeNPCs, line, 150)
-
-            if questInfo then
-                local questLine = ("%s | %s | %s"):format(
-                    questInfo.name,
-                    questInfo.detectionType,
-                    model:GetFullName()
+            if info then
+                add(
+                    results.sideQuest,
+                    ("%s | TYPE=%s | SOURCE=%s | POS=%s | %s"):format(
+                        info.name,
+                        info.detectionType,
+                        source,
+                        pos(root),
+                        model:GetFullName()
+                    ),
+                    500
                 )
-
-                addLimited(results.sideQuestNPCs, questLine, 150)
             end
         end
 
-        local npcFolder = workspace:FindFirstChild("NPCs")
         if npcFolder then
             for _, model in ipairs(npcFolder:GetChildren()) do
-                inspectNPCModel(model, "Workspace.NPCs")
+                inspectNPC(model, "Workspace.NPCs")
             end
         end
 
-        local enemiesFolder = workspace:FindFirstChild("Enemies")
         if enemiesFolder then
             for _, model in ipairs(enemiesFolder:GetChildren()) do
-                inspectNPCModel(model, "Workspace.Enemies")
+                inspectNPC(model, "Workspace.Enemies")
             end
         end
 
-        local replicatedStorage = game:GetService("ReplicatedStorage")
-        local rs = replicatedStorage:FindFirstChild("RS")
-
-        local objects = rs and rs:FindFirstChild("Objects")
+        task.wait()
 
         local spawningEnemies = objects and objects:FindFirstChild("SpawningEnemies")
+        local bossFigures = objects and objects:FindFirstChild("BossFigures")
+
         if spawningEnemies then
             for _, model in ipairs(spawningEnemies:GetChildren()) do
-                local humanoid = model:FindFirstChildOfClass("Humanoid")
-                if humanoid then
-                    local bossInfo = getBossInfo(model)
-                    if bossInfo then
-                        addLimited(
+                if model:IsA("Model") then
+                    local info = getBossInfo(model)
+                    local bossValue = model:FindFirstChild("Boss")
+                    local miniValue = model:FindFirstChild("Miniboss")
+
+                    if info or bossValue or miniValue then
+                        add(
                             results.bossTemplates,
-                            ("%s | %s | %s"):format(
+                            ("%s | CLASS=%s | Boss=%s | Mini=%s | %s"):format(
                                 model.Name,
-                                bossInfo.bossClass,
+                                info and info.bossClass or "?",
+                                tostring(bossValue and bossValue.Value),
+                                tostring(miniValue and miniValue.Value),
                                 model:GetFullName()
                             ),
-                            150
+                            400
                         )
                     end
                 end
             end
         end
 
-        local bossFigures = objects and objects:FindFirstChild("BossFigures")
         if bossFigures then
             for _, model in ipairs(bossFigures:GetChildren()) do
-                local bossValue = model:FindFirstChild("Boss")
-                local minibossValue = model:FindFirstChild("Miniboss")
+                if model:IsA("Model") then
+                    local bossValue = model:FindFirstChild("Boss")
+                    local miniValue = model:FindFirstChild("Miniboss")
 
-                if bossValue or minibossValue then
-                    addLimited(
-                        results.bossTemplates,
-                        ("%s | Boss=%s | Mini=%s | %s"):format(
-                            model.Name,
-                            tostring(bossValue and bossValue.Value),
-                            tostring(minibossValue and minibossValue.Value),
-                            model:GetFullName()
-                        ),
-                        150
-                    )
+                    if bossValue or miniValue then
+                        add(
+                            results.bossTemplates,
+                            ("%s | Boss=%s | Mini=%s | %s"):format(
+                                model.Name,
+                                tostring(bossValue and bossValue.Value),
+                                tostring(miniValue and miniValue.Value),
+                                model:GetFullName()
+                            ),
+                            400
+                        )
+                    end
                 end
             end
         end
 
         if enemiesFolder then
             for _, model in ipairs(enemiesFolder:GetChildren()) do
-                local bossInfo = model:IsA("Model") and getBossInfo(model)
-                if bossInfo then
-                    local root = bossInfo.root
-                    local hp = bossInfo.humanoid
+                if model:IsA("Model") then
+                    local info = getBossInfo(model)
 
-                    addLimited(
-                        results.activeBosses,
-                        ("%s | %s | HP %d/%d | POS %.0f %.0f %.0f"):format(
-                            bossInfo.name,
-                            bossInfo.bossClass,
-                            math.floor(hp.Health),
-                            math.floor(hp.MaxHealth),
-                            root.Position.X,
-                            root.Position.Y,
-                            root.Position.Z
-                        ),
-                        100
-                    )
+                    if info then
+                        add(
+                            results.bosses,
+                            ("%s | %s | HP=%d/%d | POS=%s | %s"):format(
+                                info.name,
+                                info.bossClass,
+                                math.floor(info.humanoid.Health),
+                                math.floor(info.humanoid.MaxHealth),
+                                pos(info.root),
+                                model:GetFullName()
+                            ),
+                            250
+                        )
+                    end
                 end
             end
         end
 
-        local collectionService = game:GetService("CollectionService")
+        task.wait()
 
-        local function addTaggedChests(tag)
-            local tagged = collectionService:GetTagged(tag)
+        -- Chest diagnosis: only tagged objects in Workspace, deduplicated.
+        local chestSeen = {}
+
+        for _, tagName in ipairs({"Chests", "Prompt_Chest", "BuriedChests"}) do
+            local tagged = CollectionService:GetTagged(tagName)
 
             for _, object in ipairs(tagged) do
                 local chest = getChestTarget(object)
 
-                if chest then
+                if chest
+                    and chest:IsDescendantOf(workspace)
+                    and not chestSeen[chest] then
+
+                    chestSeen[chest] = true
+
                     local root = getChestRoot(chest)
-                    if root then
-                        addLimited(
-                            results.activeChests,
-                            ("%s | %s | POS %.0f %.0f %.0f | %s"):format(
-                                chest.Name,
-                                getChestType(chest) or "OTHER",
-                                root.Position.X,
-                                root.Position.Y,
-                                root.Position.Z,
-                                chest:GetFullName()
-                            ),
-                            200
+                    local chestType = getChestType(chest)
+                    local live = hasLiveChestInteraction(chest)
+                    local distance = "DIST=?"
+                    local playerRoot = getLocalPlayerRoot()
+
+                    if playerRoot and root then
+                        distance = ("DIST=%.0f"):format(
+                            (playerRoot.Position - root.Position).Magnitude
                         )
                     end
-                end
-            end
-        end
 
-        addTaggedChests("Chests")
-        addTaggedChests("Prompt_Chest")
-        addTaggedChests("BuriedChests")
-
-        local map = workspace:FindFirstChild("Map")
-
-        if map then
-            local seaContent = map:FindFirstChild("SeaContent")
-            local npcLocations = seaContent and seaContent:FindFirstChild("NPCLocations")
-
-            if npcLocations then
-                for _, object in ipairs(npcLocations:GetDescendants()) do
-                    if object:IsA("BasePart") then
-                        addLimited(
-                            results.spawnLocations,
-                            ("%s | POS %.0f %.0f %.0f | %s"):format(
-                                object.Name,
-                                object.Position.X,
-                                object.Position.Y,
-                                object.Position.Z,
-                                object:GetFullName()
-                            ),
-                            200
-                        )
-                    end
-                end
-            end
-
-            local questObjects = map:FindFirstChild("QuestObjects")
-            if questObjects then
-                for _, object in ipairs(questObjects:GetChildren()) do
-                    addLimited(
-                        results.questObjects,
-                        object:GetFullName(),
-                        120
+                    add(
+                        results.chests,
+                        ("%s | TYPE=%s | LIVE=%s | %s | %s | %s | %s | %s | %s"):format(
+                            chest.Name,
+                            tostring(chestType),
+                            tostring(live),
+                            distance,
+                            opened(chest),
+                            pos(root),
+                            attrs(chest),
+                            tags(chest),
+                            interaction(chest)
+                        ),
+                        600
                     )
                 end
             end
         end
 
-        if rs then
-            local remotesFolder = rs:FindFirstChild("Remotes")
-            if remotesFolder then
-                for _, instance in ipairs(remotesFolder:GetDescendants()) do
-                    if instance:IsA("RemoteEvent")
-                        or instance:IsA("RemoteFunction") then
+        task.wait()
 
-                        local keyword = containsKeyword(instance.Name)
+        -- NPC location registry with every ObjectValue link.
+        if npcLocationsFolder then
+            for index, object in ipairs(npcLocationsFolder:GetDescendants()) do
+                if index % 150 == 0 then
+                    task.wait()
+                end
 
-                        if keyword
-                            or normalizeName(instance.Name):find("fish", 1, true)
-                            or normalizeName(instance.Name):find("chest", 1, true)
-                            or normalizeName(instance.Name):find("quest", 1, true) then
+                if object:IsA("BasePart") then
+                    local links = {}
 
-                            addLimited(
-                                results.remotes,
-                                ("%s | %s"):format(
-                                    instance.ClassName,
-                                    instance:GetFullName()
+                    for _, child in ipairs(object:GetChildren()) do
+                        if child:IsA("ObjectValue") then
+                            local valueName = child.Value and child.Value.Name or "nil"
+
+                            table.insert(
+                                links,
+                                child.Name .. "=" .. valueName
+                            )
+                        end
+                    end
+
+                    local p = object.Position
+
+                    add(
+                        results.npcLocations,
+                        ("%s | POS=%.0f %.0f %.0f | LINKS=[%s] | %s"):format(
+                            object.Name,
+                            p.X, p.Y, p.Z,
+                            table.concat(links, ","),
+                            object:GetFullName()
+                        ),
+                        600
+                    )
+                end
+            end
+        end
+
+        if questObjectsFolder then
+            for _, object in ipairs(questObjectsFolder:GetChildren()) do
+                add(results.sideQuest, "QUEST_OBJECT | " .. object:GetFullName(), 500)
+            end
+        end
+
+        task.wait()
+
+        -- Every RemoteEvent/RemoteFunction under RS.Remotes plus fishing references.
+        if remotesFolder then
+            for index, instance in ipairs(remotesFolder:GetDescendants()) do
+                if index % 200 == 0 then
+                    task.wait()
+                end
+
+                if instance:IsA("RemoteEvent")
+                    or instance:IsA("RemoteFunction") then
+
+                    add(
+                        results.remotes,
+                        instance.ClassName .. " | " .. instance:GetFullName(),
+                        700
+                    )
+                end
+            end
+
+            for _, name in ipairs({
+                "FishEvent",
+                "ToolAction",
+                "ChangeToolState",
+                "Notification",
+            }) do
+                local found = nil
+
+                pcall(function()
+                    found = remotesFolder:FindFirstChild(name, true)
+                end)
+
+                add(
+                    results.fishing,
+                    name .. " | " .. (
+                        found
+                            and (found.ClassName .. " | " .. found:GetFullName())
+                            or "<MISSING>"
+                    ),
+                    20
+                )
+            end
+        end
+
+        task.wait()
+
+        -- Deep side-quest template discovery.
+        local templateSeen = {}
+
+        local function scanTemplates(folder, recursive)
+            if not folder then
+                return
+            end
+
+            local source = recursive
+                and folder:GetDescendants()
+                or folder:GetChildren()
+
+            for index, model in ipairs(source) do
+                if index % 150 == 0 then
+                    task.wait()
+                end
+
+                if model:IsA("Model")
+                    and model:FindFirstChildOfClass("Humanoid") then
+
+                    local info = getSideQuestNPCInfo(model)
+
+                    if info then
+                        local key = model:GetFullName()
+
+                        if not templateSeen[key] then
+                            templateSeen[key] = true
+
+                            add(
+                                results.sideQuest,
+                                ("%s | TEMPLATE=%s | POS=%s | %s"):format(
+                                    info.name,
+                                    info.detectionType,
+                                    pos(getRoot(model)),
+                                    key
                                 ),
-                                200
+                                700
                             )
                         end
                     end
                 end
             end
-
-            -- Intentionally skip RS.Modules here.
-            -- It is very large and is not needed to diagnose world ESP.
         end
 
-        -- Directly inspect quest-capable NPC templates. This includes models
-        -- that are not currently streamed into Workspace.
-        local function scanQuestModelFolder(folder)
-            if not folder then
-                return
-            end
+        scanTemplates(objects, true)
+        scanTemplates(unloadEnemies, false)
 
-            for _, model in ipairs(folder:GetChildren()) do
-                if model:IsA("Model") and model:FindFirstChildOfClass("Humanoid") then
-                    local info = getSideQuestNPCInfo(model)
+        -- Report which hardcoded known side quest names have no hit anywhere
+        -- in the targeted model/location sources.
+        local knownFound = {}
 
-                    if info then
-                        addLimited(
-                            results.sideQuestNPCs,
-                            ("%s | TEMPLATE %s | POS=%s | %s"):format(
-                                info.name,
-                                info.detectionType,
-                                (getRoot(model)
-                                    and tostring(getRoot(model).Position)
-                                    or "NO POS"),
-                                model:GetFullName()
-                            ),
-                            150
-                        )
-                    end
+        for _, line in ipairs(results.sideQuest) do
+            local lower = normalizeName(line)
+
+            for _, knownName in ipairs(SIDE_QUEST_NPC_NAMES) do
+                if lower:find(normalizeName(knownName), 1, true) then
+                    knownFound[normalizeName(knownName)] = true
                 end
             end
         end
 
-        scanQuestModelFolder(objects)
-        scanQuestModelFolder(rs and rs:FindFirstChild("UnloadEnemies"))
+        for _, knownName in ipairs(SIDE_QUEST_NPC_NAMES) do
+            if not knownFound[normalizeName(knownName)] then
+                add(
+                    results.knownMissing,
+                    knownName .. " | NO TARGETED MATCH",
+                    100
+                )
+            end
+        end
 
         local lines = {
-            "SOLARHUB ARCANE TARGETED DEBUG",
-            "==============================",
-            "This scanner only checks Arcane's relevant folders/tags.",
+            "SOLARHUB ARCANE DEEP DEBUG",
+            "===========================",
+            "Targeted diagnostic: world models, quest locations, chest validity, remotes, and config.",
             "",
-            ("ACTIVE NPC MODELS (%d):"):format(#results.activeNPCs),
+            "ENVIRONMENT:",
         }
 
-        if #results.activeNPCs == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.activeNPCs) do
-                table.insert(lines, line)
+        local sections = {
+            {"ENVIRONMENT", results.environment},
+            {"CONFIG / CHEST DISTANCES", results.config},
+            {"FOLDERS / COUNTS", results.folders},
+            {"ACTIVE NPC MODELS", results.activeNPCs},
+            {"SIDE QUEST NPCS / TEMPLATES / QUEST OBJECTS", results.sideQuest},
+            {"KNOWN SIDE QUEST NPCS NOT FOUND", results.knownMissing},
+            {"ACTIVE BOSSES", results.bosses},
+            {"BOSS TEMPLATES", results.bossTemplates},
+            {"LIVE / TAGGED CHESTS", results.chests},
+            {"STATIC NPC LOCATIONS", results.npcLocations},
+            {"ALL RS.REMOTES", results.remotes},
+            {"FISHING REMOTES", results.fishing},
+        }
+
+        table.clear(lines)
+
+        table.insert(lines, "SOLARHUB ARCANE DEEP DEBUG")
+        table.insert(lines, "===========================")
+
+        for _, sectionData in ipairs(sections) do
+            local title = sectionData[1]
+            local list = sectionData[2]
+
+            table.insert(lines, "")
+            table.insert(lines, ("%s (%d):"):format(title, #list))
+
+            if #list == 0 then
+                table.insert(lines, "<none>")
+            else
+                for _, line in ipairs(list) do
+                    table.insert(lines, line)
+                end
             end
         end
 
         table.insert(lines, "")
-        table.insert(lines, ("SIDE QUEST NPC CANDIDATES (%d):"):format(#results.sideQuestNPCs))
-        if #results.sideQuestNPCs == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.sideQuestNPCs) do
-                table.insert(lines, line)
-            end
-        end
+        table.insert(lines, "DIAGNOSTIC NOTES:")
+        table.insert(lines, "1) Chest LIVE=false means SolarHub intentionally rejects that target.")
+        table.insert(lines, "2) OPENED=tracked means this client saw the chest interaction and will not show it again.")
+        table.insert(lines, "3) Static NPCLocations are checked for NPC/NPC2/NPC3 ObjectValue links.")
+        table.insert(lines, "4) A live ESP cannot render a model that Roblox has not replicated/streamed to this client.")
+        table.insert(lines, "5) Template/location data can be used for a virtual marker when a valid world position exists.")
 
-        table.insert(lines, "")
-        table.insert(lines, ("ACTIVE BOSSES (%d):"):format(#results.activeBosses))
-        if #results.activeBosses == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.activeBosses) do
-                table.insert(lines, line)
-            end
-        end
-
-        table.insert(lines, "")
-        table.insert(lines, ("BOSS TEMPLATES (%d):"):format(#results.bossTemplates))
-        if #results.bossTemplates == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.bossTemplates) do
-                table.insert(lines, line)
-            end
-        end
-
-        table.insert(lines, "")
-        table.insert(lines, ("ACTIVE/TAGGED CHESTS (%d):"):format(#results.activeChests))
-        if #results.activeChests == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.activeChests) do
-                table.insert(lines, line)
-            end
-        end
-
-        table.insert(lines, "")
-        table.insert(lines, ("NPC LOCATION / SPAWN PARTS (%d):"):format(#results.spawnLocations))
-        if #results.spawnLocations == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.spawnLocations) do
-                table.insert(lines, line)
-            end
-        end
-
-        table.insert(lines, "")
-        table.insert(lines, ("QUEST OBJECTS (%d):"):format(#results.questObjects))
-        if #results.questObjects == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.questObjects) do
-                table.insert(lines, line)
-            end
-        end
-
-        table.insert(lines, "")
-        table.insert(lines, ("RELEVANT REMOTES (%d):"):format(#results.remotes))
-        if #results.remotes == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.remotes) do
-                table.insert(lines, line)
-            end
-        end
-
-        table.insert(lines, "")
-        table.insert(lines, ("RELEVANT MODULES (%d):"):format(#results.scripts))
-        if #results.scripts == 0 then
-            table.insert(lines, "<none>")
-        else
-            for _, line in ipairs(results.scripts) do
-                table.insert(lines, line)
-            end
-        end
-
-        table.insert(lines, "")
-        table.insert(lines, "NOTE:")
-        table.insert(lines, "Live ESP still depends on objects being present/renderable on the client.")
-        table.insert(lines, "Replicated NPC templates can provide static world positions for virtual markers.")
-
-        local finalText = table.concat(lines, "\n")
+        local finalText = table.concat(lines, "\\n")
         setText(finalText)
 
         if type(setclipboard) == "function" then
@@ -1370,7 +1564,7 @@ local function runDebugScan(setText)
             end)
         end
 
-        print("[Arcane] Targeted debug scan finished.")
+        print("[Arcane] Deep debug scan finished.")
         print(finalText)
     end)
 end
@@ -1793,7 +1987,14 @@ function Arcane.Init(Shared, UI)
             1000000,
             0,
             31,
-            220
+            220,
+            function(value)
+                Config.ArcaneChestScanDistance[chestType] = math.clamp(
+                    math.floor(tonumber(value) or 1000000),
+                    0,
+                    1000000
+                )
+            end
         )
 
         slider.setValue(
@@ -1801,28 +2002,6 @@ function Arcane.Init(Shared, UI)
         )
 
         chestDistanceSliders[chestType] = slider
-
-        -- Keep a simple UI key because the generic slider writes to Config[key].
-        -- The scanner reads the grouped ArcaneChestScanDistance table.
-        task.spawn(function()
-            while slider.container
-                and slider.container.Parent do
-
-                local current = tonumber(
-                    Config["ArcaneChestScanDistance_" .. chestType]
-                )
-
-                if current ~= nil then
-                    Config.ArcaneChestScanDistance[chestType] = math.clamp(
-                        math.floor(current + 0.5),
-                        0,
-                        1000000
-                    )
-                end
-
-                task.wait(0.1)
-            end
-        end)
     end
 
     local buttonsY = rowStartY + (#CHEST_TYPE_ORDER * rowHeight) + 4
@@ -2011,6 +2190,34 @@ function Arcane.Init(Shared, UI)
             <= maxDistance
     end
 
+    local function hasLiveChestInteraction(chest)
+        if not chest or not chest:IsDescendantOf(workspace) then
+            return false
+        end
+
+        local root = getChestRoot(chest)
+        if not root or not root:IsDescendantOf(workspace) then
+            return false
+        end
+
+        -- A live chest must expose an actual interaction object on the client.
+        -- This rejects stale/template-tagged models and opened objects whose
+        -- interaction was removed.
+        local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
+
+        if prompt and prompt.Enabled then
+            return true
+        end
+
+        local clickDetector = chest:FindFirstChildWhichIsA("ClickDetector", true)
+
+        if clickDetector then
+            return true
+        end
+
+        return false
+    end
+
     local function createChestESP(target)
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
@@ -2020,6 +2227,11 @@ function Arcane.Init(Shared, UI)
         local chestType = getChestTypeFast(target) or getChestType(target)
 
         if not chestType or not isChestFilterEnabled(Config, chestType) then
+            destroyChestESP(target)
+            return
+        end
+
+        if not hasLiveChestInteraction(target) then
             destroyChestESP(target)
             return
         end
@@ -2175,6 +2387,12 @@ function Arcane.Init(Shared, UI)
             return
         end
 
+        if not hasLiveChestInteraction(chest) then
+            chestCandidates[chest] = nil
+            destroyChestESP(chest)
+            return
+        end
+
         local chestType = fastType or getChestType(chest)
 
         if not isChestFilterEnabled(Config, chestType) then
@@ -2221,7 +2439,10 @@ function Arcane.Init(Shared, UI)
             for _, object in ipairs(collectionService:GetTagged(tag)) do
                 if not seen[object] then
                     seen[object] = true
-                    inspectChest(object)
+
+                    if object:IsDescendantOf(workspace) then
+                        inspectChest(object)
+                    end
                 end
             end
         end
@@ -2457,6 +2678,74 @@ function Arcane.Init(Shared, UI)
         }
     end
 
+    local function createSideQuestLocationVirtualESP(name, position, key, sourceLocation)
+        if not Config.ArcaneSideQuestESP then
+            return
+        end
+
+        if not name or not position then
+            return
+        end
+
+        key = tostring(key)
+
+        if sideQuestVirtualESPObjects[key] then
+            return
+        end
+
+        local anchor = Instance.new("Part")
+        anchor.Name = "SolarSideQuestLocationAnchor"
+        anchor.Anchored = true
+        anchor.CanCollide = false
+        anchor.CanTouch = false
+        anchor.CanQuery = false
+        anchor.Transparency = 1
+        anchor.Size = Vector3.new(1, 1, 1)
+        anchor.CFrame = CFrame.new(position)
+        anchor.Parent = workspace
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "SolarSideQuestLocationESPInfo"
+        billboard.Adornee = anchor
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = 0
+        billboard.Size = UDim2.fromOffset(300, 34)
+        billboard.StudsOffset = Vector3.new(0, 3.8, 0)
+        billboard.Parent = Shared.playerGui
+
+        local label = Instance.new("TextLabel")
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.Font = Enum.Font.GothamBold
+        label.TextColor3 = Color3.fromRGB(220, 140, 40)
+        label.TextStrokeTransparency = 0.15
+        label.TextSize = 11
+        label.Text = "SIDE QUEST NPC | " .. tostring(name) .. " | STUDS: ?"
+        label.Parent = billboard
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "SolarSideQuestLocationHighlight"
+        highlight.Adornee = anchor
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = Color3.fromRGB(220, 140, 40)
+        highlight.OutlineColor = Color3.fromRGB(220, 140, 40)
+        highlight.FillTransparency = 0.84
+        highlight.OutlineTransparency = 0
+        highlight.Parent = workspace
+
+        sideQuestVirtualESPObjects[key] = {
+            source = nil,
+            location = sourceLocation,
+            anchor = anchor,
+            billboard = billboard,
+            label = label,
+            highlight = highlight,
+            position = position,
+            name = name,
+            static = true,
+        }
+    end
+
     local function scanSideQuestTemplateSources()
         if not Config.ArcaneSideQuestESP
             or sideQuestTemplatesScanned then
@@ -2478,7 +2767,11 @@ function Arcane.Init(Shared, UI)
                 and folder:GetDescendants()
                 or folder:GetChildren()
 
-            for _, model in ipairs(source) do
+            for index, model in ipairs(source) do
+                if index % 150 == 0 then
+                    task.wait()
+                end
+
                 if model:IsA("Model")
                     and model:FindFirstChildOfClass("Humanoid") then
                     createSideQuestVirtualESP(model)
@@ -2488,8 +2781,66 @@ function Arcane.Init(Shared, UI)
 
         scanFolder(objects, true)
         scanFolder(rs and rs:FindFirstChild("UnloadEnemies"), false)
-    end
 
+        -- Static NPC location registry. This is checked before live NPC Models
+        -- stream in, allowing known quest NPCs to have a marker immediately.
+        local map = workspace:FindFirstChild("Map")
+        local seaContent = map and map:FindFirstChild("SeaContent")
+        local npcLocations = seaContent and seaContent:FindFirstChild("NPCLocations")
+
+        if npcLocations then
+            for index, object in ipairs(npcLocations:GetDescendants()) do
+                if index % 150 == 0 then
+                    task.wait()
+                end
+
+                if object:IsA("BasePart") then
+                    local position = object.Position
+
+                    for _, child in ipairs(object:GetChildren()) do
+                        if child:IsA("ObjectValue") then
+                            local value = child.Value
+
+                            if value and value:IsA("Model") then
+                                local info = getSideQuestNPCInfo(value)
+                                local knownName = info
+                                    and info.name
+                                    or NORMALIZED_SIDE_QUEST_NPCS[
+                                        normalizeName(value.Name)
+                                    ]
+
+                                if knownName then
+                                    createSideQuestLocationVirtualESP(
+                                        knownName,
+                                        position,
+                                        "NPCLOCATION|" .. object:GetFullName() .. "|" .. child.Name,
+                                        object
+                                    )
+                                end
+                            end
+                        end
+                    end
+
+                    local attrs = object:GetAttributes()
+
+                    for key, value in pairs(attrs) do
+                        local knownName = NORMALIZED_SIDE_QUEST_NPCS[
+                            normalizeName(value)
+                        ]
+
+                        if knownName then
+                            createSideQuestLocationVirtualESP(
+                                knownName,
+                                position,
+                                "NPCLOCATION_ATTR|" .. object:GetFullName() .. "|" .. tostring(key),
+                                object
+                            )
+                        end
+                    end
+                end
+            end
+        end
+    end
 
     local function markBossDead(model, bossName)
         if not initializedBossState then
@@ -2772,6 +3123,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     local lastChestFilterSignature = nil
     local lastChestESPEnabled = Config.ArcaneChestESP == true
+    local targetedScanAccumulator = 0
 
     local function getChestFilterSignature()
         local parts = {}
@@ -2789,28 +3141,21 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         return table.concat(parts, "")
     end
 
-    -- Keep a lightweight targeted world scan running. This is intentionally
-    -- separate from the 2-second status/lifecycle loop so detection
-    -- continues even when Arcane adds/rebuilds streamed objects.
     task.spawn(function()
         while true do
-            task.wait(1.5)
+            task.wait(0.25)
 
             local currentChestFilterSignature = getChestFilterSignature()
-            local chestFilterChanged = currentChestFilterSignature ~= lastChestFilterSignature
-            local chestESPChanged = Config.ArcaneChestESP ~= lastChestESPEnabled
+            local chestSettingsChanged =
+                currentChestFilterSignature ~= lastChestFilterSignature
 
-            lastChestFilterSignature = currentChestFilterSignature
-            lastChestESPEnabled = Config.ArcaneChestESP == true
+            local chestESPChanged =
+                Config.ArcaneChestESP ~= lastChestESPEnabled
 
-            if Config.ArcaneBossESP
-                or Config.ArcaneSideQuestESP then
-                pcall(scanTargetedWorldSources)
-            end
+            if chestSettingsChanged or chestESPChanged then
+                lastChestFilterSignature = currentChestFilterSignature
+                lastChestESPEnabled = Config.ArcaneChestESP == true
 
-            -- Chest scanning is isolated from NPC/Boss scanning.
-            -- It happens only when the selected filter or Chest ESP state changes.
-            if chestFilterChanged or chestESPChanged then
                 if Config.ArcaneChestESP
                     and hasAnyChestFilterEnabled(Config) then
                     pcall(scanSelectedChests)
@@ -2823,8 +3168,19 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 end
             end
 
-            if Config.ArcaneSideQuestESP then
-                pcall(scanSideQuestTemplateSources)
+            targetedScanAccumulator += 0.25
+
+            if targetedScanAccumulator >= 1.5 then
+                targetedScanAccumulator = 0
+
+                if Config.ArcaneBossESP
+                    or Config.ArcaneSideQuestESP then
+                    pcall(scanTargetedWorldSources)
+                end
+
+                if Config.ArcaneSideQuestESP then
+                    pcall(scanSideQuestTemplateSources)
+                end
             end
         end
     end)
@@ -2939,6 +3295,9 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                     else
                         if openedChests[target] then
                             markChestOpened(target)
+                        elseif not hasLiveChestInteraction(target) then
+                            chestCandidates[target] = nil
+                            destroyChestESP(target)
                         else
                             local chestType = getChestTypeFast(target) or getChestType(target)
 
@@ -2978,9 +3337,24 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 for key, data in pairs(sideQuestVirtualESPObjects) do
                     if not data.anchor
                         or not data.anchor.Parent
-                        or not data.source
-                        or not data.source.Parent then
+                        or (data.static and data.location and not data.location.Parent)
+                        or (not data.static and (not data.source or not data.source.Parent)) then
                         destroySideQuestVirtualESP(key)
+                    elseif data.static then
+                        local distanceText = "STUDS: ?"
+
+                        if playerRoot then
+                            distanceText = ("STUDS: %d"):format(
+                                math.floor(
+                                    (playerRoot.Position - data.position).Magnitude
+                                )
+                            )
+                        end
+
+                        data.label.Text = "SIDE QUEST NPC | "
+                            .. tostring(data.name)
+                            .. " | "
+                            .. distanceText
                     else
                         local sourceRoot = getRoot(data.source)
 
@@ -3082,10 +3456,15 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
                 if not target.Parent or not root then
                     destroyChestESP(target)
-                elseif not Config.ArcaneChestESP
-                    or not isChestFilterEnabled(Config, getChestType(target)) then
-                    destroyChestESP(target)
                 else
+                    local chestType = data.chestType or getChestType(target)
+
+                    if not Config.ArcaneChestESP
+                        or not isChestFilterEnabled(Config, chestType)
+                        or not hasLiveChestInteraction(target)
+                        or not isChestWithinScanDistance(target, chestType) then
+                        destroyChestESP(target)
+                    else
                     local distanceText = "STUDS: ?"
 
                     if playerRoot then
@@ -3096,7 +3475,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                         )
                     end
 
-                    local chestType = data.chestType or getChestType(target)
                     local chestDisplayName = CHEST_DISPLAY_NAMES[chestType]
                         or "Other Chest"
 
