@@ -2530,6 +2530,7 @@ function Arcane.Init(Shared, UI)
     local candidateModels = {}
 
     local chestESPObjects = {}
+    local staticChestESPObjects = {}
     local chestCandidates = {}
     local openedChests = {}
 
@@ -2723,6 +2724,168 @@ local function createChestESP(target)
 
     local localChestTagObjects = {}
 
+    local function getStaticChestPosition(entry)
+        if not entry then
+            return nil
+        end
+
+        if entry:IsA("BasePart") then
+            return entry.Position
+        end
+
+        if entry:IsA("Model") then
+            local root = entry.PrimaryPart
+                or entry:FindFirstChild("Base", true)
+                or entry:FindFirstChildWhichIsA("BasePart", true)
+
+            if root and root:IsA("BasePart") then
+                return root.Position
+            end
+
+            local okPivot, pivot = pcall(function()
+                return entry:GetPivot()
+            end)
+
+            if okPivot then
+                return pivot.Position
+            end
+        end
+
+        return nil
+    end
+
+    local function destroyStaticChestESP(key)
+        local data = staticChestESPObjects[key]
+
+        if not data then
+            return
+        end
+
+        if data.billboard then
+            pcall(function()
+                data.billboard:Destroy()
+            end)
+        end
+
+        if data.anchor then
+            pcall(function()
+                data.anchor:Destroy()
+            end)
+        end
+
+        staticChestESPObjects[key] = nil
+    end
+
+    local function createStaticChestESP(entry, chestType)
+        if not Config.ArcaneChestESP
+            or not hasAnyChestFilterEnabled(Config) then
+            return
+        end
+
+        if not entry
+            or not entry.Parent
+            or not entry:IsDescendantOf(workspace) then
+            return
+        end
+
+        if not (entry:IsA("Model") or entry:IsA("BasePart")) then
+            return
+        end
+
+        chestType = chestType or getChestType(entry) or "OTHER"
+
+        if not isChestFilterEnabled(Config, chestType) then
+            return
+        end
+
+        local position = getStaticChestPosition(entry)
+
+        if not position then
+            return
+        end
+
+        if getLocalPlayerRoot() then
+            local maxDistance = getChestScanDistance(chestType)
+            local playerPosition = getLocalPlayerRoot().Position
+
+            if (playerPosition - position).Magnitude > maxDistance then
+                return
+            end
+        end
+
+        local key = entry:GetFullName()
+
+        if staticChestESPObjects[key] then
+            return
+        end
+
+        local anchor = Instance.new("Part")
+        anchor.Name = "SolarChestStaticAnchor"
+        anchor.Anchored = true
+        anchor.CanCollide = false
+        anchor.CanTouch = false
+        anchor.CanQuery = false
+        anchor.Transparency = 1
+        anchor.Size = Vector3.new(1, 1, 1)
+        anchor.CFrame = CFrame.new(position)
+        anchor.Parent = workspace
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "SolarChestStaticESPInfo"
+        billboard.Adornee = anchor
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = 0
+        billboard.Size = UDim2.fromOffset(270, 32)
+        billboard.StudsOffset = Vector3.new(0, 2.8, 0)
+        billboard.Parent = Shared.playerGui
+
+        local chestColor = CHEST_COLORS[chestType] or CHEST_COLORS.OTHER
+        local chestDisplayName = CHEST_DISPLAY_NAMES[chestType] or "Chest Location"
+
+        local label = Instance.new("TextLabel")
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.Font = Enum.Font.GothamBold
+        label.TextColor3 = chestColor
+        label.TextStrokeTransparency = 0.15
+        label.TextSize = 11
+        label.Text = chestDisplayName .. " | STUDS: ?"
+        label.Parent = billboard
+
+        staticChestESPObjects[key] = {
+            source = entry,
+            anchor = anchor,
+            billboard = billboard,
+            label = label,
+            position = position,
+            chestType = chestType,
+        }
+    end
+
+    local function scanStaticChestLocations()
+        if not Config.ArcaneChestESP
+            or not hasAnyChestFilterEnabled(Config) then
+            return
+        end
+
+        for _, object in ipairs(workspace:GetDescendants()) do
+            if (object:IsA("Folder") or object:IsA("Model"))
+                and normalizeName(object.Name) == "chests" then
+
+                for _, entry in ipairs(object:GetChildren()) do
+                    if entry:IsA("Model") or entry:IsA("BasePart") then
+                        local chestType = getChestType(entry) or "OTHER"
+
+                        -- A generic Treasure Chest has no static rarity in the
+                        -- replicated record, so it is intentionally classified
+                        -- as OTHER until a live chest exposes its actual type.
+                        createStaticChestESP(entry, chestType)
+                    end
+                end
+            end
+        end
+    end
+
     local function markChestOpened(chest)
         if not chest then
             return
@@ -2875,8 +3038,10 @@ local function scanAllWorkspaceChests()
         -- Then scan every replicated Workspace model for the actual chest
         -- shape/name. This catches chests that have no useful CollectionService
         -- tag, including nested chests in ships and underwater structures.
+        scanStaticChestLocations()
+
         for index, object in ipairs(workspace:GetDescendants()) do
-            if index % 350 == 0 then
+            if index % 350 == 0
                 task.wait()
             end
 
@@ -3754,6 +3919,24 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             destroySideQuestESP(instance)
         end
 
+        local parent = instance.Parent
+        if parent and (parent:IsA("Folder") or parent:IsA("Model"))
+            and normalizeName(parent.Name) == "chests"
+            and (instance:IsA("Model") or instance:IsA("BasePart")) then
+            if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
+                task.defer(function()
+                    if instance.Parent then
+                        createStaticChestESP(instance, getChestType(instance) or "OTHER")
+                    end
+                end)
+            end
+        end
+
+        local removedStaticKey = instance:GetFullName()
+        if staticChestESPObjects[removedStaticKey] then
+            destroyStaticChestESP(removedStaticKey)
+        end
+
         if instance:IsA("BasePart") then
             local chest = getChestTarget(instance)
 
@@ -3769,6 +3952,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
             scanAllWorkspaceChests()
+            scanStaticChestLocations()
         end
 
         if Config.ArcaneSideQuestESP then
@@ -3825,6 +4009,10 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
                     for target in pairs(chestESPObjects) do
                         destroyChestESP(target)
+                    end
+
+                    for key in pairs(staticChestESPObjects) do
+                        destroyStaticChestESP(key)
                     end
                 end
             end
@@ -3992,6 +4180,10 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                     destroyChestESP(target)
                 end
 
+                for key in pairs(staticChestESPObjects) do
+                    destroyStaticChestESP(key)
+                end
+
                 -- Keep openedChests intact while ESP is OFF or filters are cleared.
                 -- This prevents already-opened chests from returning after re-enable.
 
@@ -4111,6 +4303,39 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
     end)
 
+
+    task.spawn(function()
+        while true do
+            task.wait(0.25)
+
+            local playerRoot = getLocalPlayerRoot()
+
+            for key, data in pairs(staticChestESPObjects) do
+                local source = data.source
+
+                if not source or not source.Parent then
+                    destroyStaticChestESP(key)
+                elseif not Config.ArcaneChestESP
+                    or not hasAnyChestFilterEnabled(Config)
+                    or not isChestFilterEnabled(Config, data.chestType) then
+                    destroyStaticChestESP(key)
+                else
+                    if playerRoot then
+                        local distance = (playerRoot.Position - data.position).Magnitude
+                        local maxDistance = getChestScanDistance(data.chestType)
+
+                        if distance > maxDistance then
+                            destroyStaticChestESP(key)
+                        else
+                            data.label.Text = (CHEST_DISPLAY_NAMES[data.chestType] or "Chest Location")
+                                .. " | STUDS: "
+                                .. tostring(math.floor(distance))
+                        end
+                    end
+                end
+            end
+        end
+    end)
 
     task.spawn(function()
         while true do
