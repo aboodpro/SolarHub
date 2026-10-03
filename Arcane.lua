@@ -2172,13 +2172,13 @@ local function runChestDebug(setText, Config)
                 "LocalPlayer: " .. safeString(player),
                 "Character: " .. safeString(character),
                 "HRP: " .. safeString(hrp),
-                "Workspace.StreamingEnabled: " .. safeString(
+                "Workspace.StreamingEnabled: " .. (function()
+                    local value = "<unavailable>"
                     pcall(function()
-                        return WorkspaceService.StreamingEnabled
+                        value = tostring(WorkspaceService.StreamingEnabled)
                     end)
-                        and WorkspaceService.StreamingEnabled
-                        or "<unavailable>"
-                ),
+                    return value
+                end)(),
                 "Map: " .. safeString(map),
                 "ReplicatedStorage.RS.UnloadIslands: " .. safeString(unloadIslands),
                 "DISTANCE FILTER: DISABLED FOR THIS DEBUG",
@@ -2964,7 +2964,7 @@ function Arcane.Init(Shared, UI)
     scanButton.Position = UDim2.fromOffset(8, 124)
     scanButton.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
     scanButton.BorderSizePixel = 0
-    scanButton.Text = "CHEST DEBUG"
+    scanButton.Text = "CHEST DEBUG v6"
     scanButton.TextColor3 = Color3.fromRGB(235, 235, 240)
     scanButton.Font = Enum.Font.GothamBold
     scanButton.TextSize = 10
