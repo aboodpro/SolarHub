@@ -2807,17 +2807,7 @@ function Arcane.Init(Shared, UI)
         return table.concat(parts, " | ")
     end
 
-    local function getTreasureChartInfo(chart)
-        local sources = {}
-        addTreasureChartObjectText(chart, sources)
-
-        local guiText = collectTreasureChartGuiText()
-
-        if guiText ~= "" then
-            table.insert(sources, guiText)
-        end
-
-        local text = table.concat(sources, " | ")
+    local function parseTreasureChartText(text)
         local normalized = treasureNormalize(text)
 
         local island
@@ -2863,7 +2853,8 @@ function Arcane.Init(Shared, UI)
             surface = "SNOW"
         elseif normalized:find("sand", 1, true) then
             surface = "SAND"
-        elseif normalized:find("ground", 1, true) then
+        elseif normalized:find("ground", 1, true)
+            or normalized:find("grass", 1, true) then
             surface = "GROUND"
         end
 
@@ -2874,6 +2865,28 @@ function Arcane.Init(Shared, UI)
             surface = surface,
             rawText = text,
         }
+    end
+
+    local function getTreasureChartInfo(chart)
+        local sources = {}
+        addTreasureChartObjectText(chart, sources)
+
+        local text = table.concat(sources, " | ")
+        local info = parseTreasureChartText(text)
+
+        -- Only scan PlayerGui when the equipped Tool does not contain enough
+        -- clue data by itself. This keeps the normal 0.5s update lightweight.
+        if not info.island or not info.direction or not info.distance then
+            local guiText = collectTreasureChartGuiText()
+
+            if guiText ~= "" then
+                text = text .. " | " .. guiText
+                info = parseTreasureChartText(text)
+            end
+        end
+
+        info.rawText = text
+        return info
     end
 
     local function findTreasureIslandModel(islandName)
@@ -3238,7 +3251,7 @@ GO TO DIG AREA"
             treasureChartNeedsScan = true
 
             if treasureChartStatus then
-                treasureChartStatus.Text = "Treasure Chart ESP: OFF"
+                treasureChartStatus.Text = "Treasure Chart Finder: OFF"
             end
 
             return
