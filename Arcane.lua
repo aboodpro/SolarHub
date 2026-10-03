@@ -3164,10 +3164,13 @@ local function scanAllWorkspaceChests()
         end
     end
 
-    -- Keep the old function name as a compatibility wrapper for existing
-    -- callers in this module.
+    -- Filter changes use the location cache instead of rescanning the map.
     local function scanSelectedChests()
-        scanAllWorkspaceChests()
+        if not staticChestLocationsScanned then
+            scanStaticChestLocations()
+        else
+            refreshStaticChestESP()
+        end
     end
     local collectionService = game:GetService("CollectionService")
 
