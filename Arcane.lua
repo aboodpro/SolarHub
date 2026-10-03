@@ -466,6 +466,11 @@ local function classifyChestText(value)
         return "UNCOMMON"
     end
 
+    if text:find("treasurechest", 1, true)
+        or text == "treasure" then
+        return "COMMON"
+    end
+
     if text:find("common", 1, true)
         and not text:find("uncommon", 1, true) then
         return "COMMON"
@@ -635,13 +640,12 @@ local function looksLikeChestModel(model)
     end
 
     local base = model:FindFirstChild("Base")
-    if not base or not base:IsA("BasePart") then
-        return false
-    end
+    local anyBasePart = model:FindFirstChildWhichIsA("BasePart", true)
 
     local normalized = normalizeName(model.Name)
 
-    -- Strong identity from the model name.
+    -- Strong identity from the model name. A named chest is enough to identify
+    -- it; the actual root can be any BasePart when the model has no direct Base.
     if normalized:find("chest", 1, true)
         or normalized:find("treasure", 1, true)
         or normalized:find("sealed", 1, true)
@@ -654,7 +658,7 @@ local function looksLikeChestModel(model)
         or normalized == "sky"
         or normalized == "steel" then
 
-        return true
+        return anyBasePart ~= nil
     end
 
     -- Strong identity from the game's exact tag.
@@ -664,11 +668,16 @@ local function looksLikeChestModel(model)
 
     -- Generic chests: look for an interaction attached to THIS chest's Base,
     -- not a prompt somewhere inside an outer underwater structure.
-    if base:FindFirstChildWhichIsA("ProximityPrompt", true) then
+    local interactionRoot = base
+        or anyBasePart
+
+    if interactionRoot
+        and interactionRoot:FindFirstChildWhichIsA("ProximityPrompt", true) then
         return true
     end
 
-    if base:FindFirstChildWhichIsA("ClickDetector", true) then
+    if interactionRoot
+        and interactionRoot:FindFirstChildWhichIsA("ClickDetector", true) then
         return true
     end
 
@@ -3936,11 +3945,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             destroySideQuestESP(instance)
         end
 
-        local removedStaticKey = instance:GetFullName()
-        if staticChestESPObjects[removedStaticKey] then
-            destroyStaticChestESP(removedStaticKey)
-        end
-
         if instance:IsA("BasePart") then
             local chest = getChestTarget(instance)
 
@@ -4317,9 +4321,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             for key, data in pairs(staticChestESPObjects) do
                 local source = data.source
 
-                if not source or not source.Parent then
-                    destroyStaticChestESP(key)
-                elseif not Config.ArcaneChestESP
+                if not Config.ArcaneChestESP
                     or not hasAnyChestFilterEnabled(Config)
                     or not isChestFilterEnabled(Config, data.chestType) then
                     destroyStaticChestESP(key)
