@@ -601,13 +601,47 @@ local function isChestFilterEnabled(Config, chestType)
     return filter[chestType] == true
 end
 
+local function getChestTagState(model)
+    if not model then
+        return false
+    end
+
+    local collectionService = game:GetService("CollectionService")
+    local okTags, tags = pcall(function()
+        return collectionService:GetTags(model)
+    end)
+
+    if not okTags or type(tags) ~= "table" then
+        return false
+    end
+
+    for _, tag in ipairs(tags) do
+        local normalizedTag = normalizeName(tag)
+
+        if normalizedTag == "chests"
+            or normalizedTag == "promptchest"
+            or normalizedTag == "buriedchests"
+            or normalizedTag == "chest" then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function looksLikeChestModel(model)
     if not model or not model:IsA("Model") then
         return false
     end
 
+    local base = model:FindFirstChild("Base")
+    if not base or not base:IsA("BasePart") then
+        return false
+    end
+
     local normalized = normalizeName(model.Name)
 
+    -- Strong identity from the model name.
     if normalized:find("chest", 1, true)
         or normalized:find("treasure", 1, true)
         or normalized:find("sealed", 1, true)
@@ -619,11 +653,26 @@ local function looksLikeChestModel(model)
         or normalized == "privatestorage"
         or normalized == "sky"
         or normalized == "steel" then
+
         return true
     end
 
-    -- Some chest models are generically named but expose their type through
-    -- attributes or replicated Value objects.
+    -- Strong identity from the game's exact tag.
+    if getChestTagState(model) then
+        return true
+    end
+
+    -- Generic chests: look for an interaction attached to THIS chest's Base,
+    -- not a prompt somewhere inside an outer underwater structure.
+    if base:FindFirstChildWhichIsA("ProximityPrompt", true) then
+        return true
+    end
+
+    if base:FindFirstChildWhichIsA("ClickDetector", true) then
+        return true
+    end
+
+    -- Generic chests can expose their rarity through exact model attributes.
     local okAttrs, attrs = pcall(function()
         return model:GetAttributes()
     end)
@@ -631,56 +680,14 @@ local function looksLikeChestModel(model)
     if okAttrs and type(attrs) == "table" then
         for key, value in pairs(attrs) do
             local keyText = normalizeChestText(key)
-            local valueType = typeof(value)
 
-            if keyText:find("chest", 1, true)
-                or keyText:find("rarity", 1, true)
+            if keyText:find("rarity", 1, true)
                 or keyText:find("tier", 1, true)
-                or keyText:find("type", 1, true) then
+                or keyText:find("chesttype", 1, true) then
 
-                if valueType == "string"
-                    or valueType == "number"
-                    or valueType == "boolean" then
-                    if classifyChestText(value) then
-                        return true
-                    end
+                if classifyChestText(value) then
+                    return true
                 end
-            end
-        end
-    end
-
-    local collectionService = game:GetService("CollectionService")
-    local okTags, tags = pcall(function()
-        return collectionService:GetTags(model)
-    end)
-
-    if okTags and type(tags) == "table" then
-        for _, tag in ipairs(tags) do
-            local tagName = normalizeName(tag)
-
-            if tagName:find("chest", 1, true)
-                or tagName:find("treasure", 1, true) then
-                return true
-            end
-        end
-    end
-
-    for _, child in ipairs(model:GetChildren()) do
-        local childName = normalizeName(child.Name)
-
-        if childName == "chest"
-            or childName == "chestmodel"
-            or childName == "treasurechest"
-            or childName == "sealedchest" then
-            return true
-        end
-
-        if child:IsA("ProximityPrompt") then
-            local promptText = normalizeChestText(child.ObjectText)
-
-            if promptText:find("chest", 1, true)
-                or promptText:find("treasure", 1, true) then
-                return true
             end
         end
     end
@@ -693,21 +700,44 @@ local function getChestTarget(object)
         return nil
     end
 
-    local model = object:IsA("Model")
-        and object
-        or object:FindFirstAncestorOfClass("Model")
+    -- Resolve the nearest actual chest model above the scanned object.
+    -- Outer structures are intentionally ignored because they do not satisfy
+    -- looksLikeChestModel unless they are themselves a real chest.
+    local current = object
 
-    if model and looksLikeChestModel(model) then
-        return model
+    while current and current ~= workspace do
+        if current:IsA("Model") and looksLikeChestModel(current) then
+            return current
+        end
+
+        current = current.Parent
     end
 
-    if object:IsA("BasePart") then
-        local normalized = normalizeName(object.Name)
+    -- Tagged/container objects may be the thing reported by CollectionService.
+    -- Find a concrete chest model inside rather than targeting the container.
+    if object:IsA("Model") then
+        local best = nil
+        local bestDepth = -1
 
-        if normalized:find("chest", 1, true)
-            or normalized:find("treasure", 1, true)
-            or normalized:find("sealedchest", 1, true) then
-            return object
+        for _, descendant in ipairs(object:GetDescendants()) do
+            if descendant:IsA("Model") and looksLikeChestModel(descendant) then
+                local depth = 0
+                local parent = descendant
+
+                while parent and parent ~= object do
+                    depth += 1
+                    parent = parent.Parent
+                end
+
+                if depth > bestDepth then
+                    best = descendant
+                    bestDepth = depth
+                end
+            end
+        end
+
+        if best then
+            return best
         end
     end
 
@@ -1689,24 +1719,15 @@ function Arcane.Init(Shared, UI)
         Config.ArcaneChestFilter[chestType] = false
     end
 
-    -- Each chest type has an independent scan distance.
-    -- 1,000,000 keeps the previous effectively-unlimited behavior.
+    -- Start every SolarHub session with an effectively unlimited chest
+    -- discovery radius. The user can then type/drag a smaller value (e.g. 4000)
+    -- for any specific chest type.
     if type(Config.ArcaneChestScanDistance) ~= "table" then
         Config.ArcaneChestScanDistance = {}
     end
 
     for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-        local distance = tonumber(Config.ArcaneChestScanDistance[chestType])
-
-        if distance == nil then
-            distance = 1000000
-        end
-
-        Config.ArcaneChestScanDistance[chestType] = math.clamp(
-            math.floor(distance + 0.5),
-            0,
-            1000000
-        )
+        Config.ArcaneChestScanDistance[chestType] = 1000000
     end
 
     local miscTab = tabs["Misc"]
