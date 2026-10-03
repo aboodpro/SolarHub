@@ -691,33 +691,98 @@ local function isChestFilterEnabled(Config, chestType)
     return filter[chestType] == true
 end
 
-local function hasChestTag(object)
-    if not object then
+local function hasExplicitChestIdentity(model)
+    if not model or not model:IsA("Model") then
         return false
     end
 
+    local normalized = normalizeName(model.Name)
+
+    -- Ignore structures that are only spawn/location containers.
+    local spawnLike =
+        normalized:find("spawn", 1, true) ~= nil
+        or normalized:find("spawnpoint", 1, true) ~= nil
+        or normalized:find("spawnlocation", 1, true) ~= nil
+        or normalized:find("chestpoint", 1, true) ~= nil
+        or normalized:find("chestlocation", 1, true) ~= nil
+        or normalized:find("chestmarker", 1, true) ~= nil
+        or normalized:find("chestzone", 1, true) ~= nil
+
+    if spawnLike then
+        return false
+    end
+
+    -- Explicit chest/rank names on this exact model.
+    if normalized == "chest"
+        or normalized == "treasurechest"
+        or normalized == "sealedchest"
+        or normalized:find("chest", 1, true) ~= nil
+        or normalized:find("treasure", 1, true) ~= nil
+        or normalized:find("sealed", 1, true) ~= nil
+        or normalized == "common"
+        or normalized == "uncommon"
+        or normalized == "rare"
+        or normalized == "mystic"
+        or normalized == "legendary"
+        or normalized == "privatestorage"
+        or normalized == "sky"
+        or normalized == "steel" then
+        return true
+    end
+
+    -- Explicit chest tag on this exact model.
     local collectionService = game:GetService("CollectionService")
-    local current = object
+    local okTags, tags = pcall(function()
+        return collectionService:GetTags(model)
+    end)
 
-    while current and current ~= workspace do
-        local okTags, tags = pcall(function()
-            return collectionService:GetTags(current)
-        end)
+    if okTags and type(tags) == "table" then
+        for _, tag in ipairs(tags) do
+            local tagName = normalizeName(tag)
 
-        if okTags and type(tags) == "table" then
-            for _, tag in ipairs(tags) do
-                local normalizedTag = normalizeName(tag)
+            if tagName == "chests"
+                or tagName == "promptchest"
+                or tagName == "buriedchests"
+                or tagName == "chest" then
+                return true
+            end
+        end
+    end
 
-                if normalizedTag == "chests"
-                    or normalizedTag == "promptchest"
-                    or normalizedTag == "buriedchests"
-                    or normalizedTag:find("chest", 1, true) then
+    -- Generic chest models can be identified by an interaction directly
+    -- attached under their own Base. This avoids accepting prompts belonging
+    -- to the surrounding underwater structure.
+    local base = model:FindFirstChild("Base")
+
+    if base and base:IsA("BasePart") then
+        local promptUnderBase = base:FindFirstChildWhichIsA(
+            "ProximityPrompt",
+            true
+        )
+
+        if promptUnderBase then
+            return true
+        end
+    end
+
+    -- Explicit rarity metadata on this exact model.
+    local okAttrs, attrs = pcall(function()
+        return model:GetAttributes()
+    end)
+
+    if okAttrs and type(attrs) == "table" then
+        for key, value in pairs(attrs) do
+            local keyText = normalizeChestText(key)
+
+            if keyText:find("rarity", 1, true)
+                or keyText:find("tier", 1, true)
+                or keyText:find("chesttype", 1, true) then
+
+                if classifyChestText(value) then
                     return true
                 end
             end
         end
-
-        current = current.Parent
     end
 
     return false
@@ -728,50 +793,13 @@ local function looksLikeChestModel(model)
         return false
     end
 
-    local normalized = normalizeName(model.Name)
+    local base = model:FindFirstChild("Base")
 
-    -- Models used only as chest spawn points can contain "chest" in their
-    -- name, but they are not the physical chest.
-    local spawnLike =
-        normalized:find("spawn", 1, true) ~= nil
-        or normalized:find("spawnpoint", 1, true) ~= nil
-        or normalized:find("spawnlocation", 1, true) ~= nil
-        or normalized:find("chestpoint", 1, true) ~= nil
-        or normalized:find("chestlocation", 1, true) ~= nil
-        or normalized:find("chestmarker", 1, true) ~= nil
-        or normalized:find("chestzone", 1, true) ~= nil
-
-    if not spawnLike
-        and (
-            normalized == "chest"
-            or normalized == "treasurechest"
-            or normalized == "sealedchest"
-            or normalized:find("chest", 1, true) ~= nil
-            or normalized:find("treasure", 1, true) ~= nil
-            or normalized:find("sealed", 1, true) ~= nil
-            or normalized == "common"
-            or normalized == "uncommon"
-            or normalized == "rare"
-            or normalized == "mystic"
-            or normalized == "legendary"
-            or normalized == "privatestorage"
-            or normalized == "sky"
-            or normalized == "steel"
-        ) then
-        return true
+    if not base or not base:IsA("BasePart") then
+        return false
     end
 
-    -- Generic live chest models are accepted only with an explicit chest
-    -- child/tag, not merely because they contain a Base part.
-    if model:FindFirstChild("Prompt", true)
-        or model:FindFirstChild("Chest", true)
-        or model:FindFirstChild("Treasure", true)
-        or model:FindFirstChild("SealedChest", true)
-        or hasChestTag(model) then
-        return true
-    end
-
-    return false
+    return hasExplicitChestIdentity(model)
 end
 
 local function getChestTarget(object)
@@ -779,39 +807,51 @@ local function getChestTarget(object)
         return nil
     end
 
-    -- Resolve to a real chest model only. Generic Base-only models are
-    -- intentionally ignored because Arcane uses them for chest spawn points.
+    -- Prefer the nearest actual chest model above the scanned object.
     local current = object
 
     while current and current ~= workspace do
-        if current:IsA("Model") then
-            local base = current:FindFirstChild("Base")
-
-            if base and base:IsA("BasePart") then
-                if looksLikeChestModel(current) or hasChestTag(object) then
-                    return current
-                end
-            elseif looksLikeChestModel(current) then
-                return current
-            end
+        if current:IsA("Model") and looksLikeChestModel(current) then
+            return current
         end
 
         current = current.Parent
     end
 
-    if object:IsA("BasePart") then
-        local normalized = normalizeName(object.Name)
+    -- A scan can hit an underwater structure/container instead of the chest
+    -- model itself. In that case find the actual chest models INSIDE it.
+    -- Pick the deepest candidate so the outer structure never becomes the ESP.
+    if object:IsA("Model") then
+        local best = nil
+        local bestDepth = -1
 
-        if normalized == "base"
-            or normalized == "chest"
-            or normalized == "treasure"
-            or normalized == "treasurechest"
-            or normalized == "sealedchest" then
+        for _, descendant in ipairs(object:GetDescendants()) do
+            if descendant:IsA("Model")
+                and looksLikeChestModel(descendant) then
 
-            if hasChestTag(object) then
-                return object:IsDescendantOf(workspace) and object or nil
+                local depth = 0
+                local parent = descendant
+
+                while parent and parent ~= object do
+                    depth += 1
+                    parent = parent.Parent
+                end
+
+                if depth > bestDepth then
+                    best = descendant
+                    bestDepth = depth
+                end
             end
         end
+
+        if best then
+            return best
+        end
+    end
+
+    -- Tagged BasePart-only chest variants.
+    if object:IsA("BasePart") and hasChestTag(object) then
+        return object:IsDescendantOf(workspace) and object or nil
     end
 
     return nil
