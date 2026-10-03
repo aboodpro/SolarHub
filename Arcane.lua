@@ -1855,414 +1855,162 @@ end
 local function runChestDebug(setText, Config)
     task.spawn(function()
         local ok, err = xpcall(function()
-            local CollectionService = game:GetService("CollectionService")
-            local Players = game:GetService("Players")
+            local ps = game:GetService("Players")
+            local cs = game:GetService("CollectionService")
 
-            setText("Running CHEST DEBUG...\\nScanning chest folders, tags and live models.")
+            setText("CHEST DEBUG v4 | BUILD 580 | STARTING...")
 
-            local player = Players.LocalPlayer
-            local character = player and player.Character
-            local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+            local lp = ps and ps.LocalPlayer
+            local char = lp and lp.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
 
-            local summary = {
-                chestFolders = 0,
-                folderEntries = 0,
-                taggedObjects = 0,
-                workspaceModels = 0,
-                modelsWithBase = 0,
-                namedCandidates = 0,
-                promptCandidates = 0,
-                resolved = 0,
-                rare = 0,
-                selected = 0,
-                withinDistance = 0,
-                opened = 0,
-                failedResolve = 0,
-                samples = {},
-                folderSamples = {},
+            local out = {
+                "SOLARHUB CHEST DEBUG v4",
+                "BUILD: 580dea37",
+                "========================",
+                "Players service: " .. tostring(ps ~= nil),
+                "LocalPlayer: " .. tostring(lp),
+                "Character: " .. tostring(char),
+                "HRP: " .. tostring(hrp),
+                "",
             }
 
-            local function addSample(list, line, limit)
-                if #list < limit then
-                    table.insert(list, tostring(line))
+            local folderCount = 0
+            local entryCount = 0
+            local folderSamples = {}
+
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Folder") or obj:IsA("Model") then
+                    if normalizeName(obj.Name) == "chests" then
+                        folderCount += 1
+                        local children = obj:GetChildren()
+                        entryCount += #children
+
+                        if #folderSamples < 50 then
+                            table.insert(folderSamples,
+                                ("FOLDER | %s | ENTRIES=%d"):format(
+                                    obj:GetFullName(), #children
+                                )
+                            )
+                        end
+
+                        for _, entry in ipairs(children) do
+                            if #folderSamples < 150 then
+                                local root = nil
+
+                                if entry:IsA("Model") then
+                                    root = entry.PrimaryPart
+                                        or entry:FindFirstChild("Base", true)
+                                        or entry:FindFirstChildWhichIsA("BasePart", true)
+                                elseif entry:IsA("BasePart") then
+                                    root = entry
+                                end
+
+                                local pos = root and root:IsA("BasePart")
+                                    and root.Position
+                                    or nil
+
+                                local ctype = "?"
+                                pcall(function()
+                                    if entry:IsA("Model") or entry:IsA("BasePart") then
+                                        ctype = tostring(getChestType(entry))
+                                    end
+                                end)
+
+                                table.insert(folderSamples,
+                                    ("ENTRY | %s | TYPE=%s | POS=%s | %s"):format(
+                                        entry.Name,
+                                        ctype,
+                                        pos and ("%d,%d,%d"):format(
+                                            pos.X, pos.Y, pos.Z
+                                        ) or "?",
+                                        entry:GetFullName()
+                                    )
+                                )
+                            end
+                        end
+                    end
                 end
             end
 
-            local function getPositionText(object)
-                if not object then
-                    return "POS=?"
-                end
+            table.insert(out, "Chest folders named Chests: " .. tostring(folderCount))
+            table.insert(out, "Entries inside them: " .. tostring(entryCount))
+            table.insert(out, "")
 
-                local root = getChestRoot(object)
-
-                if root and root:IsA("BasePart") then
-                    local p = root.Position
-                    return ("POS=%.0f %.0f %.0f"):format(p.X, p.Y, p.Z)
-                end
-
-                if object:IsA("BasePart") then
-                    local p = object.Position
-                    return ("POS=%.0f %.0f %.0f"):format(p.X, p.Y, p.Z)
-                end
-
-                return "POS=?"
-            end
-
-            local function isNamedCandidate(object)
-                local normalized = normalizeName(object.Name)
-
-                return normalized:find("chest", 1, true) ~= nil
-                    or normalized:find("treasure", 1, true) ~= nil
-                    or normalized:find("sealed", 1, true) ~= nil
-                    or normalized == "common"
-                    or normalized == "uncommon"
-                    or normalized == "rare"
-                    or normalized == "mystic"
-                    or normalized == "legendary"
-                    or normalized == "privatestorage"
-            end
-
-            local function hasTag(object)
-                local okTags, tags = pcall(function()
-                    return CollectionService:GetTags(object)
+            table.insert(out, "TAGS:")
+            for _, tagName in ipairs({"Chests", "Prompt_Chest", "BuriedChests"}) do
+                local tagged = {}
+                pcall(function()
+                    tagged = cs:GetTagged(tagName)
                 end)
 
-                if not okTags or type(tags) ~= "table" then
-                    return false
-                end
+                table.insert(out,
+                    ("%s = %d"):format(tagName, #tagged)
+                )
 
-                for _, tag in ipairs(tags) do
-                    local normalized = normalizeName(tag)
-
-                    if normalized == "chests"
-                        or normalized == "promptchest"
-                        or normalized == "buriedchests"
-                        or normalized:find("chest", 1, true) then
-                        return true
-                    end
-                end
-
-                return false
-            end
-
-            local function promptUnderBase(object)
-                local base = object:IsA("Model") and object:FindFirstChild("Base")
-                if not (base and base:IsA("BasePart")) then
-                    return false
-                end
-
-                return base:FindFirstChildWhichIsA(
-                    "ProximityPrompt",
-                    true
-                ) ~= nil
-            end
-
-            -- Static chest-location discovery.
-            -- Arcane's map can contain folders literally named "Chests";
-            -- those are useful even when the actual chest model is not spawned.
-            for _, object in ipairs(workspace:GetDescendants()) do
-                if object:IsA("Folder") or object:IsA("Model") then
-                    local normalized = normalizeName(object.Name)
-
-                    if normalized == "chests" then
-                        summary.chestFolders += 1
-
-                        local entries = object:GetChildren()
-                        summary.folderEntries += #entries
-
-                        addSample(
-                            summary.folderSamples,
-                            ("%s | ENTRIES=%d | %s"):format(
-                                object.Name,
-                                #entries,
-                                object:GetFullName()
-                            ),
-                            100
-                        )
-
-                        for _, entry in ipairs(entries) do
-                            local root = getChestRoot(entry)
-                            local entryPosition = root and root.Position
-                                or (entry:IsA("BasePart") and entry.Position or nil)
-
-                            local entryType = nil
-                            local entryPrompt = entry:FindFirstChildWhichIsA(
-                                "ProximityPrompt",
-                                true
-                            )
-                            local entryBase = entry:IsA("Model")
-                                and entry:FindFirstChild("Base")
-
-                            if entry:IsA("Model") or entry:IsA("BasePart") then
-                                pcall(function()
-                                    entryType = getChestType(entry)
-                                end)
-                            end
-
-                            addSample(
-                                summary.samples,
-                                ("FOLDER_ENTRY | %s | CLASS=%s | TYPE=%s | BASE=%s | PROMPT=%s | %s | %s"):format(
-                                    entry.Name,
-                                    entry.ClassName,
-                                    tostring(entryType),
-                                    tostring(entryBase and entryBase:IsA("BasePart")),
-                                    tostring(entryPrompt ~= nil),
-                                    entryPosition
-                                        and ("POS=%.0f %.0f %.0f"):format(
-                                            entryPosition.X,
-                                            entryPosition.Y,
-                                            entryPosition.Z
-                                        )
-                                        or "POS=?",
-                                    entry:GetFullName()
-                                ),
-                                300
-                            )
-                        end
-                    end
-                end
-            end
-
-            local seen = {}
-
-            -- Explicit chest tags.
-            for _, tagName in ipairs({
-                "Chests",
-                "Prompt_Chest",
-                "BuriedChests",
-            }) do
-                local tagged = CollectionService:GetTagged(tagName)
-
-                for _, object in ipairs(tagged) do
-                    summary.taggedObjects += 1
-
-                    local target = getChestTarget(object)
-                    if target then
-                        addSample(
-                            summary.samples,
-                            ("TAG | %s | TARGET=%s | TYPE=%s | %s"):format(
-                                tagName,
-                                target.Name,
-                                tostring(getChestType(target)),
-                                target:GetFullName()
-                            ),
-                            300
-                        )
-                    else
-                        addSample(
-                            summary.samples,
-                            ("TAG | %s | TARGET=<nil> | OBJECT=%s | %s"):format(
-                                tagName,
-                                object.Name,
-                                object:GetFullName()
-                            ),
-                            300
-                        )
-                    end
-                end
-            end
-
-            -- Live workspace model diagnosis.
-            local descendants = workspace:GetDescendants()
-
-            for index, object in ipairs(descendants) do
-                if index % 400 == 0 then
-                    task.wait()
-                end
-
-                if object:IsA("Model") then
-                    summary.workspaceModels += 1
-
-                    local base = object:FindFirstChild("Base")
-                    local hasBase = base and base:IsA("BasePart")
-                    local named = isNamedCandidate(object)
-                    local tagged = hasTag(object)
-                    local prompt = object:FindFirstChildWhichIsA(
-                        "ProximityPrompt",
-                        true
+                for i = 1, math.min(#tagged, 20) do
+                    local obj = tagged[i]
+                    table.insert(out,
+                        ("  %s"):format(obj:GetFullName())
                     )
-
-                    if hasBase then
-                        summary.modelsWithBase += 1
-                    end
-
-                    if named then
-                        summary.namedCandidates += 1
-                    end
-
-                    if promptUnderBase(object) then
-                        summary.promptCandidates += 1
-                    end
-
-                    local candidate = named or tagged or hasBase or prompt ~= nil
-
-                    if candidate and not seen[object] then
-                        seen[object] = true
-
-                        local target = getChestTarget(object)
-
-                        if target then
-                            summary.resolved += 1
-
-                            local chestType = getChestType(target)
-                            local selected = isChestFilterEnabled(
-                                Config,
-                                chestType
-                            )
-
-                            if chestType == "RARE" then
-                                summary.rare += 1
-                            end
-
-                            if selected then
-                                summary.selected += 1
-                            end
-
-                            local distance = "DIST=?"
-                            local within = false
-
-                            local root = getChestRoot(target)
-
-                            if playerRoot and root then
-                                local d = (
-                                    playerRoot.Position - root.Position
-                                ).Magnitude
-
-                                distance = ("DIST=%.0f"):format(d)
-                                within = isChestWithinScanDistance(
-                                    target,
-                                    chestType
-                                )
-
-                                if within then
-                                    summary.withinDistance += 1
-                                end
-                            end
-
-                            if openedChests[target]
-                                or hasChestOpenedMarker(target) then
-                                summary.opened += 1
-                            end
-
-                            addSample(
-                                summary.samples,
-                                ("MODEL | %s | TYPE=%s | SELECTED=%s | LIVE=%s | %s | %s"):format(
-                                    target.Name,
-                                    tostring(chestType),
-                                    tostring(selected),
-                                    tostring(hasLiveChestInteraction(target)),
-                                    distance,
-                                    target:GetFullName()
-                                ),
-                                500
-                            )
-                        else
-                            summary.failedResolve += 1
-
-                            addSample(
-                                summary.samples,
-                                ("NO_TARGET | NAME=%s | BASE=%s | TAG=%s | PROMPT=%s | %s"):format(
-                                    object.Name,
-                                    tostring(hasBase),
-                                    tostring(tagged),
-                                    tostring(prompt ~= nil),
-                                    object:GetFullName()
-                                ),
-                                300
-                            )
-                        end
-                    end
                 end
             end
 
-            local lines = {
-                "SOLARHUB CHEST DEBUG",
-                "====================",
-                "Player: " .. tostring(player),
-                "",
-                "SUMMARY:",
-                ("Chest folders named 'Chests': %d"):format(summary.chestFolders),
-                ("Entries inside Chests folders: %d"):format(summary.folderEntries),
-                ("Tagged chest objects: %d"):format(summary.taggedObjects),
-                ("Workspace Models: %d"):format(summary.workspaceModels),
-                ("Models with Base: %d"):format(summary.modelsWithBase),
-                ("Named chest candidates: %d"):format(summary.namedCandidates),
-                ("Prompt-under-Base candidates: %d"):format(summary.promptCandidates),
-                ("Resolved targets: %d"):format(summary.resolved),
-                ("Rare targets: %d"):format(summary.rare),
-                ("Selected by current filter: %d"):format(summary.selected),
-                ("Within current distance: %d"):format(summary.withinDistance),
-                ("Opened/Tracked: %d"):format(summary.opened),
-                ("Failed to resolve target: %d"):format(summary.failedResolve),
-                "",
-                "CHEST FOLDER LOCATIONS:",
-            }
+            table.insert(out, "")
+            table.insert(out, "CHEST FOLDER SAMPLES:")
 
-            if #summary.folderSamples == 0 then
-                table.insert(lines, "<none>")
+            if #folderSamples == 0 then
+                table.insert(out, "<NONE>")
             else
-                for _, line in ipairs(summary.folderSamples) do
-                    table.insert(lines, line)
+                for _, line in ipairs(folderSamples) do
+                    table.insert(out, line)
                 end
             end
 
-            table.insert(lines, "")
-            table.insert(lines, "CHEST SAMPLES:")
-
-            if #summary.samples == 0 then
-                table.insert(lines, "<none>")
-            else
-                for _, line in ipairs(summary.samples) do
-                    table.insert(lines, line)
-                end
-            end
-
-            table.insert(lines, "")
-            table.insert(lines, "CURRENT CONFIG:")
+            table.insert(out, "")
+            table.insert(out, "CONFIG:")
 
             for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-                table.insert(
-                    lines,
+                local enabled = type(Config) == "table"
+                    and type(Config.ArcaneChestFilter) == "table"
+                    and Config.ArcaneChestFilter[chestType] == true
+
+                local distance = 1000000
+                if type(Config) == "table"
+                    and type(Config.ArcaneChestScanDistance) == "table" then
+                    distance = tonumber(
+                        Config.ArcaneChestScanDistance[chestType]
+                    ) or 1000000
+                end
+
+                table.insert(out,
                     ("%s | Filter=%s | Distance=%d"):format(
                         chestType,
-                        tostring(Config.ArcaneChestFilter[chestType] == true),
-                        getChestScanDistance(chestType)
+                        tostring(enabled),
+                        math.floor(distance)
                     )
                 )
             end
 
-            table.insert(lines, "")
-            table.insert(lines, "IMPORTANT:")
-            table.insert(
-                lines,
-                "This debug distinguishes static Chests folders from live spawned chest Models."
-            )
-            table.insert(
-                lines,
-                "If Chests folders contain many entries but Resolved targets are low, the problem is target resolution."
-            )
-            table.insert(
-                lines,
-                "If Rare targets are low, the problem is rarity data/classification."
-            )
-            table.insert(
-                lines,
-                "If Selected/Within Distance are low, the problem is the filter or range."
-            )
+            local finalText = table.concat(out, "\n")
+            setText(finalText)
 
-            setText(table.concat(lines, "\\n"))
+            if type(setclipboard) == "function" then
+                pcall(setclipboard, finalText)
+            elseif type(toclipboard) == "function" then
+                pcall(toclipboard, finalText)
+            end
+
+            print("[SolarHub] Chest DEBUG v4 finished.")
+            print(finalText)
         end, debug.traceback)
 
         if not ok then
-            setText(
-                "CHEST DEBUG ERROR\\n"
-                .. tostring(err)
-            )
-            warn("[SolarHub] Chest debug error:", err)
+            setText("CHEST DEBUG v4 ERROR\n" .. tostring(err))
+            warn("[SolarHub] Chest DEBUG v4 error:", err)
         end
     end)
 end
-
 -------------------------------------------------
 -- ESP
 -------------------------------------------------
