@@ -1383,6 +1383,42 @@ local function runDebugScan(setText)
             end
         end
 
+        -- Manual structure scan: recursively inspect Workspace once so this
+        -- button can discover chests/NPCs even when they are not tagged.
+        local visitedWorkspace = {}
+
+        for index, instance in ipairs(workspace:GetDescendants()) do
+            if index % 250 == 0 then
+                task.wait()
+            end
+
+            if instance:IsA("Model") then
+                visitedWorkspace[instance] = true
+
+                local normalized = normalizeName(instance.Name)
+
+                if normalized:find("chest", 1, true)
+                    or instance:FindFirstChild("Base") then
+                    addChestDiagnosis(instance, "WORKSPACE_DEEP")
+                end
+
+                local info = getSideQuestNPCInfo(instance)
+
+                if info then
+                    add(
+                        results.sideQuest,
+                        ("%s | LIVE_MODEL | DETECT=%s | POS=%s | %s"):format(
+                            info.name,
+                            info.detectionType,
+                            pos(getRoot(instance)),
+                            instance:GetFullName()
+                        ),
+                        1000
+                    )
+                end
+            end
+        end
+
         task.wait()
 
         -- NPC location registry with every ObjectValue link.
@@ -1622,11 +1658,11 @@ local function runDebugScan(setText)
 
         table.insert(lines, "")
         table.insert(lines, "DIAGNOSTIC NOTES:")
-        table.insert(lines, "1) Chest LIVE=false means SolarHub intentionally rejects that target.")
+        table.insert(lines, "1) Chest LIVE=false means no Base+Prompt/Click interaction was found, or the chest is opened.")
         table.insert(lines, "2) OPENED=tracked means this client saw the chest interaction and will not show it again.")
-        table.insert(lines, "3) Static NPCLocations are checked for NPC/NPC2/NPC3 ObjectValue links.")
-        table.insert(lines, "4) A live ESP cannot render a model that Roblox has not replicated/streamed to this client.")
-        table.insert(lines, "5) Template/location data can be used for a virtual marker when a valid world position exists.")
+        table.insert(lines, "3) Static NPCLocations are checked for ObjectValues, value/attribute names, nested metadata and world positions.")
+        table.insert(lines, "4) A location entry with no NPC identity cannot be safely assigned to a specific quest giver without a name/id in the replicated data.")
+        table.insert(lines, "5) Known NPC/template/location data is used for virtual markers when an unambiguous world position exists.")
 
         local finalText = table.concat(lines, "\\n")
         setText(finalText)
@@ -1833,8 +1869,8 @@ function Arcane.Init(Shared, UI)
 
     UI.createToggle(
         section,
-        "Boss Debug",
-        "Shows detection information and discovery results.",
+        "Structure Scan",
+        "Scans bosses, chests, side quest NPCs/locations, templates and remotes.",
         "ArcaneBossDebug",
         80
     )
@@ -2299,13 +2335,16 @@ function Arcane.Init(Shared, UI)
             return true
         end
 
-        -- Fallback for versions/locations where the prompt is represented
-        -- by a normal ClickDetector or another prompt-like object.
-        if chest:FindFirstChildWhichIsA("ClickDetector", true) then
+        -- The public AO chest implementations also use a Prompt child to
+        -- distinguish an actually interactable chest from decorative/stale
+        -- chest models.
+        local clickDetector = chest:FindFirstChildWhichIsA("ClickDetector", true)
+
+        if clickDetector then
             return true
         end
 
-        return true
+        return false
     end
 
     local function createChestESP(target)
@@ -3288,6 +3327,27 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         spawningEnemies.ChildRemoved:Connect(function()
             task.defer(refreshBossTemplateRegistry)
         end)
+    end
+
+    do
+        local map = workspace:FindFirstChild("Map")
+        local seaContent = map and map:FindFirstChild("SeaContent")
+        local npcLocations = seaContent and seaContent:FindFirstChild("NPCLocations")
+
+        if npcLocations then
+            npcLocations.DescendantAdded:Connect(function()
+                if Config.ArcaneSideQuestESP then
+                    task.defer(scanSideQuestLocationRegistry)
+                end
+            end)
+
+            npcLocations.DescendantRemoving:Connect(function(instance)
+                if instance:IsA("BasePart")
+                    and Config.ArcaneSideQuestESP then
+                    task.defer(scanSideQuestLocationRegistry)
+                end
+            end)
+        end
     end
 
     workspace.DescendantAdded:Connect(function(instance)
