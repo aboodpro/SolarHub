@@ -2790,15 +2790,13 @@ function Arcane.Init(Shared, UI)
     Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
     Config.ArcaneAutoFishing = Config.ArcaneAutoFishing == true
 
-    -- Start with every chest type selected so Chest ESP immediately means
-    -- "show every chest". CLEAR ALL still disables everything until a type is
-    -- selected again.
+    -- Chest filters start OFF. The user selects the chest types they want.
     if type(Config.ArcaneChestFilter) ~= "table" then
         Config.ArcaneChestFilter = {}
     end
 
     for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-        Config.ArcaneChestFilter[chestType] = true
+        Config.ArcaneChestFilter[chestType] = false
     end
 
     -- Start every SolarHub session with an effectively unlimited chest
@@ -2809,7 +2807,7 @@ function Arcane.Init(Shared, UI)
     end
 
     for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-        Config.ArcaneChestScanDistance[chestType] = 1000000
+        Config.ArcaneChestScanDistance[chestType] = 100000
     end
 
     local miscTab = tabs["Misc"]
@@ -3076,7 +3074,7 @@ function Arcane.Init(Shared, UI)
     UI.createToggle(
         chestSection,
         "Chest ESP",
-        "Shows selected chests globally across the map; scan distance is kept only for compatibility.",
+        "Shows selected chests globally across the map. Select the chest types you want to display.",
         "ArcaneChestESP",
         32
     )
@@ -3180,18 +3178,18 @@ function Arcane.Init(Shared, UI)
 
         local slider = UI.createSlider(
             row,
-            "Legacy Scan Distance (ignored - global ESP)",
+            "Scan Distance (1 - 100,000)",
             "ArcaneChestScanDistance_" .. chestType,
-            0,
-            1000000,
-            0,
+            1,
+            100000,
+            1,
             31,
             220,
             function(value)
                 Config.ArcaneChestScanDistance[chestType] = math.clamp(
-                    math.floor(tonumber(value) or 1000000),
-                    0,
-                    1000000
+                    math.floor(tonumber(value) or 100000),
+                    1,
+                    100000
                 )
             end
         )
@@ -4159,8 +4157,8 @@ function Arcane.Init(Shared, UI)
 
         return math.clamp(
             math.floor(distance + 0.5),
-            0,
-            1000000
+            1,
+            100000
         )
     end
 
