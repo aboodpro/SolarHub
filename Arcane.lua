@@ -1414,7 +1414,7 @@ local function runDebugScan(setText)
             local chestType = getChestType(chest)
             local live = hasLiveChestInteraction(chest)
             local selected = isChestFilterEnabled(Config, chestType)
-            local character = Shared.player.Character
+            local character = player and player.Character
             local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
             local distanceValue = nil
 
@@ -1852,7 +1852,7 @@ local function runDebugScan(setText)
         print(finalText)
     end)
 end
-local function runChestDebug(setText)
+local function runChestDebug(setText, Config)
     task.spawn(function()
         local ok, err = xpcall(function()
             local CollectionService = game:GetService("CollectionService")
@@ -2502,7 +2502,7 @@ function Arcane.Init(Shared, UI)
         end
 
         scanButton.Text = "SCANNING..."
-        runChestDebug(setDebugText)
+        runChestDebug(setDebugText, Config)
 
         task.delay(0.2, function()
             while scanButton and scanButton.Parent and debugBox.Text:find("Scanning", 1, true) do
