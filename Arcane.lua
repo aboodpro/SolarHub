@@ -541,12 +541,25 @@ local function getChestType(target)
         return nil
     end
 
+    -- Prefer specific rarity/type data over the generic "Treasure Chest"
+    -- name. A live Rare Chest can still be named Treasure Chest while its
+    -- actual rarity is exposed by a value, attribute, prompt, or child.
+    local genericCommon = false
+
     for _, source in ipairs(collectChestTextSources(target)) do
         local chestType = classifyChestText(source)
 
         if chestType then
-            return chestType
+            if chestType == "COMMON" then
+                genericCommon = true
+            else
+                return chestType
+            end
         end
+    end
+
+    if genericCommon then
+        return "COMMON"
     end
 
     return "OTHER"
@@ -575,20 +588,20 @@ local function getChestTypeFast(target)
 
     local text = target.Name
 
-    -- Most live Arcane chest instances expose the exact type in their name.
+    -- Generic Treasure Chest is deliberately deferred to getChestType(),
+    -- because its real live rarity may be stored in metadata/prompt values.
     local chestType = classifyChestText(text)
-    if chestType then
+    if chestType and chestType ~= "COMMON" then
         return chestType
     end
 
-    -- For generic "Treasure Chest"/"Chest" models, use the nearest model name.
     local model = target:IsA("Model")
         and target
         or target:FindFirstAncestorOfClass("Model")
 
     if model then
         chestType = classifyChestText(model.Name)
-        if chestType then
+        if chestType and chestType ~= "COMMON" then
             return chestType
         end
     end
@@ -2643,18 +2656,9 @@ function Arcane.Init(Shared, UI)
         return false
     end
 
-    -- The only structural requirement for ESP discovery is the live chest Base.
-    -- Do not require Prompt/ClickDetector/Open here: those objects can be absent,
-    -- delayed, or used differently by different chest variants.
-    local base = chest:IsA("Model") and chest:FindFirstChild("Base")
-    if not (
-        base
-        and base:IsA("BasePart")
-        and base:IsDescendantOf(workspace)
-    ) then
-        return false
-    end
-
+    -- A live chest only needs a valid world root. Different chest variants
+    -- can use PrimaryPart or another BasePart instead of a direct "Base".
+    -- Prompt/ClickDetector are not required for ESP discovery.
     return true
 end
 
