@@ -2450,7 +2450,7 @@ function Arcane.Init(Shared, UI)
     scanButton.Position = UDim2.fromOffset(8, 124)
     scanButton.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
     scanButton.BorderSizePixel = 0
-    scanButton.Text = "SCAN ARCANE STRUCTURE"
+    scanButton.Text = "CHEST DEBUG"
     scanButton.TextColor3 = Color3.fromRGB(235, 235, 240)
     scanButton.Font = Enum.Font.GothamBold
     scanButton.TextSize = 10
