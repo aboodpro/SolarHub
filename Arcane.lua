@@ -2744,6 +2744,14 @@ function Arcane.Init(Shared, UI)
 
         table.insert(sources, tostring(object.Name))
 
+        if object:IsA("Tool") then
+            pcall(function()
+                if object.ToolTip and object.ToolTip ~= "" then
+                    table.insert(sources, tostring(object.ToolTip))
+                end
+            end)
+        end
+
         local okAttrs, attrs = pcall(function()
             return object:GetAttributes()
         end)
@@ -2767,9 +2775,47 @@ function Arcane.Init(Shared, UI)
         end
     end
 
+    local function collectTreasureChartGuiText()
+        local playerGui = Shared.playerGui
+        if not playerGui then
+            return ""
+        end
+
+        local parts = {}
+
+        for _, object in ipairs(playerGui:GetDescendants()) do
+            if object:IsA("TextLabel")
+                or object:IsA("TextButton")
+                or object:IsA("TextBox") then
+
+                local text = tostring(object.Text or "")
+
+                if text ~= "" then
+                    local normalized = treasureNormalize(text)
+
+                    if normalized:find("fewpaces", 1, true)
+                        or normalized:find("halfway", 1, true)
+                        or normalized:find("ontheedge", 1, true)
+                        or normalized:find("buried", 1, true)
+                        or normalized:find("treasure", 1, true) then
+                        table.insert(parts, text)
+                    end
+                end
+            end
+        end
+
+        return table.concat(parts, " | ")
+    end
+
     local function getTreasureChartInfo(chart)
         local sources = {}
         addTreasureChartObjectText(chart, sources)
+
+        local guiText = collectTreasureChartGuiText()
+
+        if guiText ~= "" then
+            table.insert(sources, guiText)
+        end
 
         local text = table.concat(sources, " | ")
         local normalized = treasureNormalize(text)
@@ -2920,6 +2966,76 @@ function Arcane.Init(Shared, UI)
         return cf.Position, size
     end
 
+    local function getTreasureChartExplicitSpot(islandModel)
+        if not islandModel then
+            return nil
+        end
+
+        local collectionService = game:GetService("CollectionService")
+
+        local wantedTags = {
+            "TreasureSpot",
+            "TreasureSpots",
+            "BuriedChests",
+        }
+
+        for _, tagName in ipairs(wantedTags) do
+            local ok, tagged = pcall(function()
+                return collectionService:GetTagged(tagName)
+            end)
+
+            if ok and type(tagged) == "table" then
+                for _, object in ipairs(tagged) do
+                    if object
+                        and object.Parent
+                        and object:IsDescendantOf(islandModel) then
+
+                        local root = nil
+
+                        if object:IsA("BasePart") then
+                            root = object
+                        elseif object:IsA("Model") then
+                            root = object.PrimaryPart
+                                or object:FindFirstChild("Base", true)
+                                or object:FindFirstChildWhichIsA("BasePart", true)
+                        end
+
+                        if root and root:IsA("BasePart") then
+                            return root, "TAG:" .. tagName
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Some versions may expose the target by an explicit object name.
+        for _, object in ipairs(islandModel:GetDescendants()) do
+            local normalized = treasureNormalize(object.Name)
+
+            if (object:IsA("BasePart") or object:IsA("Model"))
+                and (
+                    normalized:find("treasurespot", 1, true)
+                    or normalized:find("buriedtreasure", 1, true)
+                    or normalized:find("buriedchest", 1, true)
+                ) then
+
+                local root = object:IsA("BasePart")
+                    and object
+                    or (
+                        object.PrimaryPart
+                            or object:FindFirstChild("Base", true)
+                            or object:FindFirstChildWhichIsA("BasePart", true)
+                    )
+
+                if root and root:IsA("BasePart") then
+                    return root, "NAME"
+                end
+            end
+        end
+
+        return nil, nil
+    end
+
     local function buildTreasureChartCandidates(islandModel, info)
         local center, size = getTreasureIslandBounds(islandModel)
 
@@ -2932,6 +3048,11 @@ function Arcane.Init(Shared, UI)
 
         if not directionVector or not band then
             return {}
+        end
+
+        local explicitPart = getTreasureChartExplicitSpot(islandModel)
+        if explicitPart then
+            return {explicitPart}
         end
 
         local islandRadius = math.max(size.X, size.Z) * 0.5
@@ -3056,7 +3177,7 @@ GO TO DIG AREA"
 
         -- Hard cap to avoid turning a large island's entire terrain into
         -- hundreds of Highlight instances.
-        local limit = math.min(#treasureChartCandidateParts, 90)
+        local limit = math.min(#treasureChartCandidateParts, 8)
 
         for index = 1, limit do
             local part = treasureChartCandidateParts[index]
@@ -3079,24 +3200,30 @@ GO TO DIG AREA"
         treasureChartESP.greenShown = true
     end
 
+    local function isTreasureChartTool(object)
+        if not object or not object:IsA("Tool") then
+            return false
+        end
+
+        local normalized = treasureNormalize(object.Name)
+
+        return normalized:find("treasurechart", 1, true) ~= nil
+            or normalized:find("treasuremap", 1, true) ~= nil
+            or normalized == "chart"
+    end
+
     local function findTreasureChartObject()
-        local player = Shared.player
-        local character = player.Character
-        local backpack = player:FindFirstChildOfClass("Backpack")
+        -- IMPORTANT: do not inspect the Backpack. The Finder becomes active
+        -- only when the chart is actually equipped in Character.
+        local character = Shared.player.Character
 
-        for _, container in ipairs({backpack, character}) do
-            if container then
-                for _, child in ipairs(container:GetChildren()) do
-                    if child:IsA("Tool") or child:IsA("Model") then
-                        local normalized = treasureNormalize(child.Name)
+        if not character then
+            return nil
+        end
 
-                        if normalized:find("treasurechart", 1, true)
-                            or normalized:find("treasuremap", 1, true)
-                            or normalized == "chart" then
-                            return child
-                        end
-                    end
-                end
+        for _, child in ipairs(character:GetChildren()) do
+            if isTreasureChartTool(child) then
+                return child
             end
         end
 
@@ -3127,7 +3254,7 @@ GO TO DIG AREA"
 
             if treasureChartStatus then
                 treasureChartStatus.Text =
-                    "Treasure Chart: not detected. Keep it in your Backpack."
+                    "Treasure Chart Finder: equip a Treasure Chart to activate."
             end
 
             return
@@ -3216,7 +3343,7 @@ GO TO DIG AREA"
             treasureChartESP.position = nearest.Position
             treasureChartESP.anchor.CFrame = CFrame.new(nearest.Position)
 
-            local arrived = nearestDistance <= 350
+            local arrived = nearestDistance <= 30
 
             setTreasureChartGreenArea(arrived)
 
