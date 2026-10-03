@@ -3469,32 +3469,33 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 else
                     local chestType = data.chestType or getChestType(target)
 
-                    if not Config.ArcaneChestESP
-                        or not isChestFilterEnabled(Config, chestType)
+                    if not isChestFilterEnabled(Config, chestType)
                         or not hasLiveChestInteraction(target)
                         or not isChestWithinScanDistance(target, chestType) then
+
                         destroyChestESP(target)
                     else
-                    local distanceText = "STUDS: ?"
+                        local distanceText = "STUDS: ?"
 
-                    if playerRoot then
-                        distanceText = ("STUDS: %d"):format(
-                            math.floor(
-                                (playerRoot.Position - root.Position).Magnitude
+                        if playerRoot then
+                            distanceText = ("STUDS: %d"):format(
+                                math.floor(
+                                    (playerRoot.Position - root.Position).Magnitude
+                                )
                             )
-                        )
+                        end
+
+                        local chestDisplayName =
+                            CHEST_DISPLAY_NAMES[chestType] or "Other Chest"
+
+                        local chestColor =
+                            CHEST_COLORS[chestType] or CHEST_COLORS.OTHER
+
+                        data.label.TextColor3 = chestColor
+                        data.label.Text = chestDisplayName
+                            .. " | "
+                            .. distanceText
                     end
-
-                    local chestDisplayName = CHEST_DISPLAY_NAMES[chestType]
-                        or "Other Chest"
-
-                    local chestColor = CHEST_COLORS[chestType]
-                        or CHEST_COLORS.OTHER
-
-                    data.label.TextColor3 = chestColor
-                    data.label.Text = chestDisplayName
-                        .. " | "
-                        .. distanceText
                 end
             end
         end
