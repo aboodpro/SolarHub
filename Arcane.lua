@@ -3156,8 +3156,7 @@ function Arcane.Init(Shared, UI)
         label.TextWrapped = true
         label.Text = "TREASURE CHART | "
             .. tostring(info.island or "?")
-            .. "
-GO TO DIG AREA"
+            .. "\\nGO TO DIG AREA"
         label.Parent = billboard
 
         treasureChartESP = {
@@ -3363,8 +3362,7 @@ GO TO DIG AREA"
             treasureChartESP.label.Text =
                 "TREASURE CHART | "
                 .. tostring(info.island)
-                .. "
-"
+                .. "\n"
                 .. tostring(math.floor(nearestDistance))
                 .. " STUDS | "
                 .. (arrived and "GREEN DIG AREA" or "GO TO AREA")
@@ -3378,8 +3376,7 @@ GO TO DIG AREA"
                 .. tostring(info.direction)
                 .. " | "
                 .. tostring(info.distance)
-                .. "
-Candidates: "
+                .. "\\nCandidates: "
                 .. tostring(#treasureChartCandidateParts)
                 .. (info.surface and (" | " .. info.surface) or "")
         end
