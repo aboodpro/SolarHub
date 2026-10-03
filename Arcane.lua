@@ -1147,10 +1147,9 @@ local function runDebugScan(setText)
                 return name .. " = <MISSING>"
             end
 
-            return ("%s | Children=%d | Descendants=%d | %s"):format(
+            return ("%s | Children=%d | Descendants=<not-counted> | %s"):format(
                 name,
                 #folder:GetChildren(),
-                #folder:GetDescendants(),
                 folder:GetFullName()
             )
         end
@@ -2746,100 +2745,111 @@ function Arcane.Init(Shared, UI)
         }
     end
 
-    local function scanSideQuestTemplateSources()
-        if not Config.ArcaneSideQuestESP
-            or sideQuestTemplatesScanned then
+    local function scanSideQuestLocationRegistry()
+        if not Config.ArcaneSideQuestESP then
             return
         end
 
-        sideQuestTemplatesScanned = true
+        local map = workspace:FindFirstChild("Map")
+        local seaContent = map and map:FindFirstChild("SeaContent")
+        local npcLocations = seaContent and seaContent:FindFirstChild("NPCLocations")
+
+        if not npcLocations then
+            return
+        end
+
+        for index, object in ipairs(npcLocations:GetDescendants()) do
+            if index % 150 == 0 then
+                task.wait()
+            end
+
+            if object:IsA("BasePart") then
+                local position = object.Position
+
+                for _, child in ipairs(object:GetChildren()) do
+                    if child:IsA("ObjectValue") then
+                        local value = child.Value
+
+                        if value and value:IsA("Model") then
+                            local info = getSideQuestNPCInfo(value)
+                            local knownName = info
+                                and info.name
+                                or NORMALIZED_SIDE_QUEST_NPCS[
+                                    normalizeName(value.Name)
+                                ]
+
+                            if knownName then
+                                createSideQuestLocationVirtualESP(
+                                    knownName,
+                                    position,
+                                    "NPCLOCATION|" .. object:GetFullName() .. "|" .. child.Name,
+                                    object
+                                )
+                            end
+                        end
+                    end
+                end
+
+                local attrs = object:GetAttributes()
+
+                for key, value in pairs(attrs) do
+                    local knownName = NORMALIZED_SIDE_QUEST_NPCS[
+                        normalizeName(value)
+                    ]
+
+                    if knownName then
+                        createSideQuestLocationVirtualESP(
+                            knownName,
+                            position,
+                            "NPCLOCATION_ATTR|" .. object:GetFullName() .. "|" .. tostring(key),
+                            object
+                        )
+                    end
+                end
+            end
+        end
+    end
+
+    local function scanSideQuestTemplateSources()
+        if not Config.ArcaneSideQuestESP then
+            return
+        end
 
         local replicatedStorage = game:GetService("ReplicatedStorage")
         local rs = replicatedStorage:FindFirstChild("RS")
         local objects = rs and rs:FindFirstChild("Objects")
 
-        local function scanFolder(folder, recursive)
-            if not folder then
-                return
-            end
+        if not sideQuestTemplatesScanned then
+            sideQuestTemplatesScanned = true
 
-            local source = recursive
-                and folder:GetDescendants()
-                or folder:GetChildren()
-
-            for index, model in ipairs(source) do
-                if index % 150 == 0 then
-                    task.wait()
+            local function scanFolder(folder, recursive)
+                if not folder then
+                    return
                 end
 
-                if model:IsA("Model")
-                    and model:FindFirstChildOfClass("Humanoid") then
-                    createSideQuestVirtualESP(model)
-                end
-            end
-        end
+                local source = recursive
+                    and folder:GetDescendants()
+                    or folder:GetChildren()
 
-        scanFolder(objects, true)
-        scanFolder(rs and rs:FindFirstChild("UnloadEnemies"), false)
-
-        -- Static NPC location registry. This is checked before live NPC Models
-        -- stream in, allowing known quest NPCs to have a marker immediately.
-        local map = workspace:FindFirstChild("Map")
-        local seaContent = map and map:FindFirstChild("SeaContent")
-        local npcLocations = seaContent and seaContent:FindFirstChild("NPCLocations")
-
-        if npcLocations then
-            for index, object in ipairs(npcLocations:GetDescendants()) do
-                if index % 150 == 0 then
-                    task.wait()
-                end
-
-                if object:IsA("BasePart") then
-                    local position = object.Position
-
-                    for _, child in ipairs(object:GetChildren()) do
-                        if child:IsA("ObjectValue") then
-                            local value = child.Value
-
-                            if value and value:IsA("Model") then
-                                local info = getSideQuestNPCInfo(value)
-                                local knownName = info
-                                    and info.name
-                                    or NORMALIZED_SIDE_QUEST_NPCS[
-                                        normalizeName(value.Name)
-                                    ]
-
-                                if knownName then
-                                    createSideQuestLocationVirtualESP(
-                                        knownName,
-                                        position,
-                                        "NPCLOCATION|" .. object:GetFullName() .. "|" .. child.Name,
-                                        object
-                                    )
-                                end
-                            end
-                        end
+                for index, model in ipairs(source) do
+                    if index % 150 == 0 then
+                        task.wait()
                     end
 
-                    local attrs = object:GetAttributes()
-
-                    for key, value in pairs(attrs) do
-                        local knownName = NORMALIZED_SIDE_QUEST_NPCS[
-                            normalizeName(value)
-                        ]
-
-                        if knownName then
-                            createSideQuestLocationVirtualESP(
-                                knownName,
-                                position,
-                                "NPCLOCATION_ATTR|" .. object:GetFullName() .. "|" .. tostring(key),
-                                object
-                            )
-                        end
+                    if model:IsA("Model")
+                        and model:FindFirstChildOfClass("Humanoid") then
+                        createSideQuestVirtualESP(model)
                     end
                 end
             end
+
+            scanFolder(objects, true)
+            scanFolder(rs and rs:FindFirstChild("UnloadEnemies"), false)
         end
+
+        -- Location registry is cheap compared with template discovery, so
+        -- re-check it periodically for late-created ObjectValue links.
+        scanSideQuestLocationRegistry()
     end
 
     local function markBossDead(model, bossName)
