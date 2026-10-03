@@ -1399,6 +1399,26 @@ function Arcane.Init(Shared, UI)
         Config.ArcaneChestFilter[chestType] = false
     end
 
+    -- Each chest type has an independent scan distance.
+    -- 1,000,000 keeps the previous effectively-unlimited behavior.
+    if type(Config.ArcaneChestScanDistance) ~= "table" then
+        Config.ArcaneChestScanDistance = {}
+    end
+
+    for _, chestType in ipairs(CHEST_TYPE_ORDER) do
+        local distance = tonumber(Config.ArcaneChestScanDistance[chestType])
+
+        if distance == nil then
+            distance = 1000000
+        end
+
+        Config.ArcaneChestScanDistance[chestType] = math.clamp(
+            math.floor(distance + 0.5),
+            0,
+            1000000
+        )
+    end
+
     local miscTab = tabs["Misc"]
     if not miscTab then
         error("[Arcane] Misc tab is missing.")
@@ -1657,13 +1677,13 @@ function Arcane.Init(Shared, UI)
     local chestSection = UI.createSection(
         miscTab,
         "Chest ESP",
-        370
+        1060
     )
 
     UI.createToggle(
         chestSection,
         "Chest ESP",
-        "Shows chests with their type and distance.",
+        "Shows selected chests within each type's scan distance.",
         "ArcaneChestESP",
         32
     )
@@ -1672,7 +1692,7 @@ function Arcane.Init(Shared, UI)
     chestFilterTitle.Size = UDim2.new(1, -16, 0, 22)
     chestFilterTitle.Position = UDim2.fromOffset(8, 78)
     chestFilterTitle.BackgroundTransparency = 1
-    chestFilterTitle.Text = "Chest Filter — select multiple types"
+    chestFilterTitle.Text = "Chest Filter + Scan Distance"
     chestFilterTitle.TextColor3 = Color3.fromRGB(205, 205, 215)
     chestFilterTitle.Font = Enum.Font.GothamBold
     chestFilterTitle.TextSize = 9
@@ -1680,6 +1700,7 @@ function Arcane.Init(Shared, UI)
     chestFilterTitle.Parent = chestSection
 
     local chestFilterButtons = {}
+    local chestDistanceSliders = {}
 
     local function updateChestFilterButton(chestType)
         local buttonData = chestFilterButtons[chestType]
@@ -1700,31 +1721,30 @@ function Arcane.Init(Shared, UI)
         buttonData.check.Text = enabled and "✓" or ""
     end
 
-    local filterStartY = 104
-    local filterRowHeight = 34
+    local rowStartY = 104
+    local rowHeight = 74
 
     for index, chestType in ipairs(CHEST_TYPE_ORDER) do
-        local zeroIndex = index - 1
-        local column = zeroIndex % 2
-        local row = math.floor(zeroIndex / 2)
+        local rowY = rowStartY + ((index - 1) * rowHeight)
+
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, -16, 0, 70)
+        row.Position = UDim2.fromOffset(8, rowY)
+        row.BackgroundTransparency = 1
+        row.Parent = chestSection
 
         local button = Instance.new("TextButton")
-        button.Size = UDim2.new(0.5, -12, 0, 30)
-        button.Position = UDim2.new(
-            0.5 * column,
-            column == 0 and 4 or 8,
-            0,
-            filterStartY + (row * filterRowHeight)
-        )
+        button.Size = UDim2.new(1, 0, 0, 28)
+        button.Position = UDim2.fromOffset(0, 0)
         button.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
         button.BorderSizePixel = 0
         button.Text = ""
-        button.Parent = chestSection
+        button.Parent = row
         Instance.new("UICorner", button).CornerRadius = UDim.new(0, 7)
 
         local indicator = Instance.new("Frame")
         indicator.Size = UDim2.fromOffset(16, 16)
-        indicator.Position = UDim2.fromOffset(7, 7)
+        indicator.Position = UDim2.fromOffset(7, 6)
         indicator.BorderSizePixel = 0
         indicator.Parent = button
         Instance.new("UICorner", indicator).CornerRadius = UDim.new(0, 4)
@@ -1761,13 +1781,55 @@ function Arcane.Init(Shared, UI)
             Config.ArcaneChestFilter[chestType] = not (
                 Config.ArcaneChestFilter[chestType] == true
             )
+
             updateChestFilterButton(chestType)
+        end)
+
+        local slider = UI.createSlider(
+            row,
+            "Scan Distance (0 - 1,000,000)",
+            "ArcaneChestScanDistance_" .. chestType,
+            0,
+            1000000,
+            0,
+            31,
+            220
+        )
+
+        slider.setValue(
+            Config.ArcaneChestScanDistance[chestType]
+        )
+
+        chestDistanceSliders[chestType] = slider
+
+        -- Keep a simple UI key because the generic slider writes to Config[key].
+        -- The scanner reads the grouped ArcaneChestScanDistance table.
+        task.spawn(function()
+            while slider.container
+                and slider.container.Parent do
+
+                local current = tonumber(
+                    Config["ArcaneChestScanDistance_" .. chestType]
+                )
+
+                if current ~= nil then
+                    Config.ArcaneChestScanDistance[chestType] = math.clamp(
+                        math.floor(current + 0.5),
+                        0,
+                        1000000
+                    )
+                end
+
+                task.wait(0.1)
+            end
         end)
     end
 
+    local buttonsY = rowStartY + (#CHEST_TYPE_ORDER * rowHeight) + 4
+
     local selectAllButton = Instance.new("TextButton")
     selectAllButton.Size = UDim2.new(0.5, -12, 0, 28)
-    selectAllButton.Position = UDim2.new(0, 4, 0, 322)
+    selectAllButton.Position = UDim2.new(0, 4, 0, buttonsY)
     selectAllButton.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
     selectAllButton.BorderSizePixel = 0
     selectAllButton.Text = "SELECT ALL"
@@ -1779,7 +1841,7 @@ function Arcane.Init(Shared, UI)
 
     local clearAllButton = Instance.new("TextButton")
     clearAllButton.Size = UDim2.new(0.5, -12, 0, 28)
-    clearAllButton.Position = UDim2.new(0.5, 8, 0, 322)
+    clearAllButton.Position = UDim2.new(0.5, 8, 0, buttonsY)
     clearAllButton.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
     clearAllButton.BorderSizePixel = 0
     clearAllButton.Text = "CLEAR ALL"
@@ -1912,6 +1974,43 @@ function Arcane.Init(Shared, UI)
         end
     end
 
+    local function getChestScanDistance(chestType)
+        local distance = tonumber(
+            Config.ArcaneChestScanDistance
+                and Config.ArcaneChestScanDistance[chestType]
+        )
+
+        if distance == nil then
+            distance = 1000000
+        end
+
+        return math.clamp(
+            math.floor(distance + 0.5),
+            0,
+            1000000
+        )
+    end
+
+    local function getLocalPlayerRoot()
+        local character = Shared.player.Character
+
+        return character
+            and character:FindFirstChild("HumanoidRootPart")
+    end
+
+    local function isChestWithinScanDistance(target, chestType)
+        local maxDistance = getChestScanDistance(chestType)
+        local playerRoot = getLocalPlayerRoot()
+        local chestRoot = getChestRoot(target)
+
+        if not playerRoot or not chestRoot then
+            return true
+        end
+
+        return (playerRoot.Position - chestRoot.Position).Magnitude
+            <= maxDistance
+    end
+
     local function createChestESP(target)
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
@@ -1921,6 +2020,11 @@ function Arcane.Init(Shared, UI)
         local chestType = getChestTypeFast(target) or getChestType(target)
 
         if not chestType or not isChestFilterEnabled(Config, chestType) then
+            destroyChestESP(target)
+            return
+        end
+
+        if not isChestWithinScanDistance(target, chestType) then
             destroyChestESP(target)
             return
         end
@@ -2077,8 +2181,19 @@ function Arcane.Init(Shared, UI)
             return
         end
 
-        if openedChests[chest] or hasChestOpenedMarker(chest) then
+        if openedChests[chest] then
             markChestOpened(chest)
+            return
+        end
+
+        if hasChestOpenedMarker(chest) then
+            markChestOpened(chest)
+            return
+        end
+
+        if not isChestWithinScanDistance(chest, chestType) then
+            chestCandidates[chest] = nil
+            destroyChestESP(chest)
             return
         end
 
@@ -2665,6 +2780,10 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             parts[#parts + 1] = Config.ArcaneChestFilter[chestType] == true
                 and "1"
                 or "0"
+
+            parts[#parts + 1] = ":"
+            parts[#parts + 1] = tostring(getChestScanDistance(chestType))
+            parts[#parts + 1] = ";"
         end
 
         return table.concat(parts, "")
@@ -2818,7 +2937,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                         chestCandidates[target] = nil
                         destroyChestESP(target)
                     else
-                        if openedChests[target] or hasChestOpenedMarker(target) then
+                        if openedChests[target] then
                             markChestOpened(target)
                         else
                             local chestType = getChestTypeFast(target) or getChestType(target)
@@ -2840,7 +2959,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                     destroyChestESP(target)
                 end
 
-                table.clear(openedChests)
+                -- Keep openedChests intact while ESP is OFF or filters are cleared.
+                -- This prevents already-opened chests from returning after re-enable.
 
             end
         end
@@ -3233,10 +3353,22 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         setFishingStatus("Waiting for Bite...")
 
         local biteDeadline = os.clock() + 90
+        local nextEquipCheck = 0
 
         while Config.ArcaneAutoFishing
             and not biteReceived
             and os.clock() < biteDeadline do
+
+            if os.clock() >= nextEquipCheck then
+                nextEquipCheck = os.clock() + 0.10
+
+                local currentRod = equipFishingRod()
+
+                if currentRod then
+                    rod = currentRod
+                end
+            end
+
             task.wait(0.05)
         end
 
@@ -3256,17 +3388,28 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
 
         local reelDeadline = os.clock() + 30
+        nextEquipCheck = 0
 
         while Config.ArcaneAutoFishing
             and not completeReceived
             and os.clock() < reelDeadline do
 
-            if not rod.Parent then
-                rod = equipFishingRod()
+            if os.clock() >= nextEquipCheck
+                or not rod
+                or not rod.Parent then
 
-                if not rod then
-                    break
+                nextEquipCheck = os.clock() + 0.10
+
+                local currentRod = equipFishingRod()
+
+                if currentRod then
+                    rod = currentRod
                 end
+            end
+
+            if not rod or not rod.Parent then
+                task.wait(0.05)
+                continue
             end
 
             activateRod(rod)
