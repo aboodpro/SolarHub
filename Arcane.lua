@@ -702,8 +702,17 @@ local function getChestTarget(object)
         if current:IsA("Model") then
             local base = current:FindFirstChild("Base")
 
-            if base and base:IsA("BasePart") and looksLikeChestModel(current) then
-                return current
+            if base and base:IsA("BasePart") then
+                if looksLikeChestModel(current) then
+                    return current
+                end
+
+                -- Generic chest containers can still be resolved from the
+                -- same Base-part structure even when their model name is not
+                -- chest-like.
+                if current:IsDescendantOf(workspace) then
+                    return current
+                end
             end
 
             if looksLikeChestModel(current) then
@@ -2316,51 +2325,20 @@ function Arcane.Init(Shared, UI)
             return false
         end
 
-        -- Verified Arcane Odyssey chest structure:
-        -- a live chest has a Base part and normally a Prompt child/object.
-        -- Open is the game's opened-state marker.
+        -- Chest discovery must not depend on an interaction object.
+        -- The reliable physical chest signature is the Base part, while
+        -- the game's Open marker identifies a chest that has already been
+        -- looted. A Prompt/ClickDetector can be absent or created later.
         local base = chest:IsA("Model") and chest:FindFirstChild("Base")
-        if not (base and base:IsA("BasePart") and base:IsDescendantOf(workspace)) then
+        if not (
+            base
+            and base:IsA("BasePart")
+            and base:IsDescendantOf(workspace)
+        ) then
             return false
         end
 
-        if chest:FindFirstChild("Open", true) then
-            return false
-        end
-
-        local prompt = chest:FindFirstChild("Prompt", true)
-
-        if prompt then
-            if prompt:IsA("ProximityPrompt") then
-                return prompt.Enabled
-            end
-
-            return true
-        end
-
-        -- Accept any ProximityPrompt as well. The game's regular chest
-        -- interaction is prompt-based, but the prompt's instance name is not
-        -- something the ESP should depend on.
-        local proximityPrompt = chest:FindFirstChildWhichIsA(
-            "ProximityPrompt",
-            true
-        )
-
-        if proximityPrompt then
-            return proximityPrompt.Enabled
-        end
-
-        -- Some interactable variants expose a ClickDetector instead.
-        local clickDetector = chest:FindFirstChildWhichIsA(
-            "ClickDetector",
-            true
-        )
-
-        if clickDetector then
-            return true
-        end
-
-        return false
+        return not chest:FindFirstChild("Open", true)
     end
 
     local function createChestESP(target)
@@ -2621,25 +2599,13 @@ function Arcane.Init(Shared, UI)
                     or normalized:find("treasure", 1, true) ~= nil
                     or normalized:find("sealed", 1, true) ~= nil
 
-                local chestShape = false
+                local base = object:FindFirstChild("Base")
 
-                if not namedChest then
-                    local base = object:FindFirstChild("Base")
-
-                    if base and base:IsA("BasePart") then
-                        local prompt = object:FindFirstChildWhichIsA(
-                            "ProximityPrompt",
-                            true
-                        )
-
-                        local clickDetector = object:FindFirstChildWhichIsA(
-                            "ClickDetector",
-                            true
-                        )
-
-                        chestShape = prompt ~= nil or clickDetector ~= nil
-                    end
-                end
+                -- A generic chest model may not advertise its type in the
+                -- name, but a live Arcane chest still exposes its Base part.
+                local chestShape =
+                    base ~= nil
+                    and base:IsA("BasePart")
 
                 if namedChest or chestShape then
                     inspectOnce(object)
