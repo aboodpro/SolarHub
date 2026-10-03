@@ -632,14 +632,38 @@ function UI.Init(Shared)
         end)
 
         valueBox.FocusLost:Connect(function()
-            local typed = tonumber(
-                valueBox.Text:gsub("[^%d%.%-]", "")
-            )
+            local raw = tostring(valueBox.Text or "")
+            local cleaned = raw
+                :gsub(",", "")
+                :gsub("%s+", "")
+
+            local typed = tonumber(cleaned)
 
             if typed == nil then
                 valueBox.Text = tostring(math.floor(Config[configKey] + 0.5))
-            else
-                setValue(typed)
+                return
+            end
+
+            -- Typing a value is exactly the same as dragging the slider to it.
+            setValue(typed)
+        end)
+
+        valueBox.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Keyboard
+                and input.KeyCode == Enum.KeyCode.Return then
+
+                local raw = tostring(valueBox.Text or "")
+                local cleaned = raw
+                    :gsub(",", "")
+                    :gsub("%s+", "")
+
+                local typed = tonumber(cleaned)
+
+                if typed ~= nil then
+                    setValue(typed)
+                else
+                    valueBox.Text = tostring(math.floor(Config[configKey] + 0.5))
+                end
             end
         end)
 
