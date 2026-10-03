@@ -458,7 +458,7 @@ function UI.Init(Shared)
     end
 
 
-    local function createSlider(parent, title, configKey, minValue, maxValue, posX, posY, width)
+    local function createSlider(parent, title, configKey, minValue, maxValue, posX, posY, width, onChanged)
         minValue = tonumber(minValue) or 0
         maxValue = tonumber(maxValue) or 100
 
@@ -549,6 +549,12 @@ function UI.Init(Shared)
             newValue = math.floor(newValue + 0.5)
 
             Config[configKey] = newValue
+
+            if type(onChanged) == "function" then
+                pcall(function()
+                    onChanged(newValue)
+                end)
+            end
 
             local alpha = 0
             if maxValue > minValue then
