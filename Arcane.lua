@@ -536,98 +536,8 @@ local function getChestType(target)
         return nil
     end
 
-    local model = target:IsA("Model")
-        and target
-        or target:FindFirstAncestorOfClass("Model")
-
-    local function classify(value)
-        return classifyChestText(value)
-    end
-
-    -- Prefer explicit runtime metadata over a generic asset/model name.
-    if model then
-        local okAttrs, attrs = pcall(function()
-            return model:GetAttributes()
-        end)
-
-        if okAttrs and type(attrs) == "table" then
-            for key, value in pairs(attrs) do
-                local normalizedKey = normalizeChestText(key)
-
-                if normalizedKey:find("rarity", 1, true)
-                    or normalizedKey:find("tier", 1, true)
-                    or normalizedKey:find("chesttype", 1, true)
-                    or normalizedKey == "type" then
-
-                    local chestType = classify(value)
-                    if chestType then
-                        return chestType
-                    end
-                end
-            end
-        end
-
-        -- Prompt text is often the live chest's actual displayed rarity.
-        for _, descendant in ipairs(model:GetDescendants()) do
-            if descendant:IsA("ProximityPrompt") then
-                local chestType = classify(descendant.ObjectText)
-                    or classify(descendant.ActionText)
-                    or classify(descendant.Name)
-
-                if chestType then
-                    return chestType
-                end
-            end
-        end
-
-        -- Replicated value objects can also carry the live rarity.
-        for _, descendant in ipairs(model:GetDescendants()) do
-            if descendant:IsA("StringValue")
-                or descendant:IsA("IntValue")
-                or descendant:IsA("NumberValue") then
-
-                local chestType = classify(descendant.Value)
-                    or classify(descendant.Name)
-
-                if chestType then
-                    return chestType
-                end
-            end
-        end
-
-        -- CollectionService tags may expose the exact rarity on some variants.
-        local collectionService = game:GetService("CollectionService")
-        local okTags, tags = pcall(function()
-            return collectionService:GetTags(model)
-        end)
-
-        if okTags and type(tags) == "table" then
-            for _, tag in ipairs(tags) do
-                local chestType = classify(tag)
-
-                if chestType then
-                    return chestType
-                end
-            end
-        end
-    end
-
-    -- Use explicit object/model names only as fallbacks.
-    local chestType = classify(target.Name)
-    if chestType then
-        return chestType
-    end
-
-    if model then
-        chestType = classify(model.Name)
-        if chestType then
-            return chestType
-        end
-    end
-
-    -- Keep the broad source collector as a final fallback for unusual variants.
     for _, source in ipairs(collectChestTextSources(target)) do
-        chestType = classify(source)
+        local chestType = classifyChestText(source)
 
         if chestType then
             return chestType
@@ -691,34 +601,16 @@ local function isChestFilterEnabled(Config, chestType)
     return filter[chestType] == true
 end
 
-local function hasExplicitChestIdentity(model)
+local function looksLikeChestModel(model)
     if not model or not model:IsA("Model") then
         return false
     end
 
     local normalized = normalizeName(model.Name)
 
-    -- Ignore structures that are only spawn/location containers.
-    local spawnLike =
-        normalized:find("spawn", 1, true) ~= nil
-        or normalized:find("spawnpoint", 1, true) ~= nil
-        or normalized:find("spawnlocation", 1, true) ~= nil
-        or normalized:find("chestpoint", 1, true) ~= nil
-        or normalized:find("chestlocation", 1, true) ~= nil
-        or normalized:find("chestmarker", 1, true) ~= nil
-        or normalized:find("chestzone", 1, true) ~= nil
-
-    if spawnLike then
-        return false
-    end
-
-    -- Explicit chest/rank names on this exact model.
-    if normalized == "chest"
-        or normalized == "treasurechest"
-        or normalized == "sealedchest"
-        or normalized:find("chest", 1, true) ~= nil
-        or normalized:find("treasure", 1, true) ~= nil
-        or normalized:find("sealed", 1, true) ~= nil
+    if normalized:find("chest", 1, true)
+        or normalized:find("treasure", 1, true)
+        or normalized:find("sealed", 1, true)
         or normalized == "common"
         or normalized == "uncommon"
         or normalized == "rare"
@@ -730,7 +622,33 @@ local function hasExplicitChestIdentity(model)
         return true
     end
 
-    -- Explicit chest tag on this exact model.
+    -- Some chest models are generically named but expose their type through
+    -- attributes or replicated Value objects.
+    local okAttrs, attrs = pcall(function()
+        return model:GetAttributes()
+    end)
+
+    if okAttrs and type(attrs) == "table" then
+        for key, value in pairs(attrs) do
+            local keyText = normalizeChestText(key)
+            local valueType = typeof(value)
+
+            if keyText:find("chest", 1, true)
+                or keyText:find("rarity", 1, true)
+                or keyText:find("tier", 1, true)
+                or keyText:find("type", 1, true) then
+
+                if valueType == "string"
+                    or valueType == "number"
+                    or valueType == "boolean" then
+                    if classifyChestText(value) then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+
     local collectionService = game:GetService("CollectionService")
     local okTags, tags = pcall(function()
         return collectionService:GetTags(model)
@@ -740,47 +658,29 @@ local function hasExplicitChestIdentity(model)
         for _, tag in ipairs(tags) do
             local tagName = normalizeName(tag)
 
-            if tagName == "chests"
-                or tagName == "promptchest"
-                or tagName == "buriedchests"
-                or tagName == "chest" then
+            if tagName:find("chest", 1, true)
+                or tagName:find("treasure", 1, true) then
                 return true
             end
         end
     end
 
-    -- Generic chest models can be identified by an interaction directly
-    -- attached under their own Base. This avoids accepting prompts belonging
-    -- to the surrounding underwater structure.
-    local base = model:FindFirstChild("Base")
+    for _, child in ipairs(model:GetChildren()) do
+        local childName = normalizeName(child.Name)
 
-    if base and base:IsA("BasePart") then
-        local promptUnderBase = base:FindFirstChildWhichIsA(
-            "ProximityPrompt",
-            true
-        )
-
-        if promptUnderBase then
+        if childName == "chest"
+            or childName == "chestmodel"
+            or childName == "treasurechest"
+            or childName == "sealedchest" then
             return true
         end
-    end
 
-    -- Explicit rarity metadata on this exact model.
-    local okAttrs, attrs = pcall(function()
-        return model:GetAttributes()
-    end)
+        if child:IsA("ProximityPrompt") then
+            local promptText = normalizeChestText(child.ObjectText)
 
-    if okAttrs and type(attrs) == "table" then
-        for key, value in pairs(attrs) do
-            local keyText = normalizeChestText(key)
-
-            if keyText:find("rarity", 1, true)
-                or keyText:find("tier", 1, true)
-                or keyText:find("chesttype", 1, true) then
-
-                if classifyChestText(value) then
-                    return true
-                end
+            if promptText:find("chest", 1, true)
+                or promptText:find("treasure", 1, true) then
+                return true
             end
         end
     end
@@ -788,70 +688,27 @@ local function hasExplicitChestIdentity(model)
     return false
 end
 
-local function looksLikeChestModel(model)
-    if not model or not model:IsA("Model") then
-        return false
-    end
-
-    local base = model:FindFirstChild("Base")
-
-    if not base or not base:IsA("BasePart") then
-        return false
-    end
-
-    return hasExplicitChestIdentity(model)
-end
-
 local function getChestTarget(object)
     if not object or not object.Parent then
         return nil
     end
 
-    -- Prefer the nearest actual chest model above the scanned object.
-    local current = object
+    local model = object:IsA("Model")
+        and object
+        or object:FindFirstAncestorOfClass("Model")
 
-    while current and current ~= workspace do
-        if current:IsA("Model") and looksLikeChestModel(current) then
-            return current
-        end
-
-        current = current.Parent
+    if model and looksLikeChestModel(model) then
+        return model
     end
 
-    -- A scan can hit an underwater structure/container instead of the chest
-    -- model itself. In that case find the actual chest models INSIDE it.
-    -- Pick the deepest candidate so the outer structure never becomes the ESP.
-    if object:IsA("Model") then
-        local best = nil
-        local bestDepth = -1
+    if object:IsA("BasePart") then
+        local normalized = normalizeName(object.Name)
 
-        for _, descendant in ipairs(object:GetDescendants()) do
-            if descendant:IsA("Model")
-                and looksLikeChestModel(descendant) then
-
-                local depth = 0
-                local parent = descendant
-
-                while parent and parent ~= object do
-                    depth += 1
-                    parent = parent.Parent
-                end
-
-                if depth > bestDepth then
-                    best = descendant
-                    bestDepth = depth
-                end
-            end
+        if normalized:find("chest", 1, true)
+            or normalized:find("treasure", 1, true)
+            or normalized:find("sealedchest", 1, true) then
+            return object
         end
-
-        if best then
-            return best
-        end
-    end
-
-    -- Tagged BasePart-only chest variants.
-    if object:IsA("BasePart") and hasChestTag(object) then
-        return object:IsDescendantOf(workspace) and object or nil
     end
 
     return nil
@@ -859,12 +716,6 @@ end
 
 local function getChestRoot(target)
     if target:IsA("Model") then
-        local base = target:FindFirstChild("Base")
-
-        if base and base:IsA("BasePart") then
-            return base
-        end
-
         local root = getRoot(target)
 
         if root then
