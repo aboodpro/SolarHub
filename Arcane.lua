@@ -3333,6 +3333,7 @@ function Arcane.Init(Shared, UI)
     local openedChests = {}
     local openedChestLocations = {}
     local chestLifecycleWatchers = {}
+    local isOpenedChestLocation
 
 
     local sideQuestESPObjects = {}
@@ -4429,7 +4430,7 @@ local function createChestESP(target)
         )
     end
 
-    local function isOpenedChestLocation(position)
+    isOpenedChestLocation = function(position)
         local key = getOpenedChestLocationKey(position)
         return key ~= nil and openedChestLocations[key] == true
     end
