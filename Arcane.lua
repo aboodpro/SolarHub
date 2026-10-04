@@ -3423,13 +3423,13 @@ function Arcane.Init(Shared, UI)
     )
 
     local fishingStatusLabel = Instance.new("TextLabel")
-    fishingStatusLabel.Size = UDim2.new(1, -16, 0, 20)
-    fishingStatusLabel.Position = UDim2.fromOffset(8, 78)
+    fishingStatusLabel.Size = UDim2.new(1, -20, 0, 30)
+    fishingStatusLabel.Position = UDim2.fromOffset(10, 132)
     fishingStatusLabel.BackgroundTransparency = 1
     fishingStatusLabel.Text = "Status: OFF | Put cursor over water first."
     fishingStatusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
     fishingStatusLabel.Font = Enum.Font.Gotham
-    fishingStatusLabel.TextSize = 8
+    fishingStatusLabel.TextSize = 9
     fishingStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
     fishingStatusLabel.Parent = fishingSection
 
