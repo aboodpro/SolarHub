@@ -3423,6 +3423,7 @@ function Arcane.Init(Shared, UI)
     )
 
     local openFishingDebugList
+    local connectFishingDebugHooks
 
     local debugListButton = Instance.new("TextButton")
     debugListButton.Size = UDim2.fromOffset(130, 28)
@@ -7071,6 +7072,34 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end)
     end
 
+    task.spawn(function()
+        local lastDebugState = Config.ArcaneFishingDebug == true
+
+        if lastDebugState then
+            connectFishingDebugHooks()
+        end
+
+        while isArcaneSessionActive() do
+            local enabled = Config.ArcaneFishingDebug == true
+
+            if enabled ~= lastDebugState then
+                lastDebugState = enabled
+
+                if enabled then
+                    connectFishingDebugHooks()
+                    fishingDebugLog("Fishing Debug ENABLED")
+                else
+                    fishingDebugLog("Fishing Debug DISABLED")
+                    disconnectFishingDebugHooks()
+                end
+            end
+
+            task.wait(0.25)
+        end
+
+        disconnectFishingDebugHooks()
+    end)
+
     local function extractFishingState(...)
         local args = {...}
 
@@ -7090,6 +7119,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     if fishEventRemote then
         fishingEventConnection = fishEventRemote.OnClientEvent:Connect(function(...)
             local args = {...}
+            fishingDebugLog("========== FishEvent RECEIVED ==========")
             fishingDebugDumpEvent("FishEvent", (function()
                 local character = Shared.player.Character
                 local rod = character and character:FindFirstChildWhichIsA("Tool")
@@ -7337,6 +7367,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 bossNotificationGui:Destroy()
             end)
         end
+
+        disconnectFishingDebugHooks()
 
         if fishingDebugGui then
             pcall(function()
