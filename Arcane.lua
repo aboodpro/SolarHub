@@ -3422,6 +3422,26 @@ function Arcane.Init(Shared, UI)
         80
     )
 
+    local openFishingDebugList
+
+    local debugListButton = Instance.new("TextButton")
+    debugListButton.Size = UDim2.fromOffset(130, 28)
+    debugListButton.Position = UDim2.fromOffset(10, 108)
+    debugListButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+    debugListButton.BorderSizePixel = 0
+    debugListButton.Text = "VIEW DEBUG"
+    debugListButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+    debugListButton.Font = Enum.Font.GothamBold
+    debugListButton.TextSize = 9
+    debugListButton.Parent = fishingSection
+    Instance.new("UICorner", debugListButton).CornerRadius = UDim.new(0, 7)
+
+    debugListButton.Activated:Connect(function()
+        if type(openFishingDebugList) == "function" then
+            openFishingDebugList()
+        end
+    end)
+
     local fishingStatusLabel = Instance.new("TextLabel")
     fishingStatusLabel.Size = UDim2.new(1, -20, 0, 30)
     fishingStatusLabel.Position = UDim2.fromOffset(10, 132)
@@ -6665,6 +6685,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     local fishingState = "OFF"
     local fishingDebugLines = {}
     local MAX_FISHING_DEBUG_LINES = 160
+    local fishingDebugGui = nil
 
     local function formatFishingDebugValue(value, depth, seen)
         depth = depth or 0
@@ -6785,6 +6806,168 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 )
             )
         end
+    end
+
+    openFishingDebugList = function()
+        local playerGui = Shared.playerGui
+
+        if not playerGui then
+            return
+        end
+
+        if fishingDebugGui and fishingDebugGui.Parent then
+            fishingDebugGui.Enabled = true
+
+            local panel = fishingDebugGui:FindFirstChild("Panel")
+            local box = panel and panel:FindFirstChild("Logs")
+
+            if box and box:IsA("TextBox") then
+                box.Text = #fishingDebugLines > 0
+                    and table.concat(fishingDebugLines, "\n")
+                    or "No fishing debug logs yet. Enable Fishing Debug and make a manual fishing attempt."
+            end
+
+            return
+        end
+
+        fishingDebugGui = Instance.new("ScreenGui")
+        fishingDebugGui.Name = "SolarHubFishingDebug"
+        fishingDebugGui.ResetOnSpawn = false
+        fishingDebugGui.DisplayOrder = 1000001
+        fishingDebugGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        fishingDebugGui.Parent = playerGui
+
+        local overlay = Instance.new("TextButton")
+        overlay.Name = "Overlay"
+        overlay.Size = UDim2.fromScale(1, 1)
+        overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        overlay.BackgroundTransparency = 0.45
+        overlay.BorderSizePixel = 0
+        overlay.Text = ""
+        overlay.AutoButtonColor = false
+        overlay.Parent = fishingDebugGui
+
+        local panel = Instance.new("Frame")
+        panel.Name = "Panel"
+        panel.AnchorPoint = Vector2.new(0.5, 0.5)
+        panel.Position = UDim2.fromScale(0.5, 0.5)
+        panel.Size = UDim2.fromOffset(760, 500)
+        panel.BackgroundColor3 = Color3.fromRGB(17, 17, 22)
+        panel.BorderSizePixel = 0
+        panel.Parent = overlay
+        Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(1, -150, 0, 36)
+        title.Position = UDim2.fromOffset(14, 8)
+        title.BackgroundTransparency = 1
+        title.Text = "Fishing Debug Log"
+        title.TextColor3 = Color3.fromRGB(245, 245, 250)
+        title.Font = Enum.Font.GothamBold
+        title.TextSize = 16
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Parent = panel
+
+        local close = Instance.new("TextButton")
+        close.Size = UDim2.fromOffset(58, 28)
+        close.Position = UDim2.new(1, -70, 0, 11)
+        close.BackgroundColor3 = Color3.fromRGB(70, 35, 35)
+        close.BorderSizePixel = 0
+        close.Text = "CLOSE"
+        close.TextColor3 = Color3.fromRGB(255, 255, 255)
+        close.Font = Enum.Font.GothamBold
+        close.TextSize = 8
+        close.Parent = panel
+        Instance.new("UICorner", close).CornerRadius = UDim.new(0, 7)
+
+        local copy = Instance.new("TextButton")
+        copy.Size = UDim2.fromOffset(74, 28)
+        copy.Position = UDim2.new(1, -150, 0, 11)
+        copy.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+        copy.BorderSizePixel = 0
+        copy.Text = "COPY ALL"
+        copy.TextColor3 = Color3.fromRGB(235, 235, 240)
+        copy.Font = Enum.Font.GothamBold
+        copy.TextSize = 8
+        copy.Parent = panel
+        Instance.new("UICorner", copy).CornerRadius = UDim.new(0, 7)
+
+        local refresh = Instance.new("TextButton")
+        refresh.Size = UDim2.fromOffset(70, 28)
+        refresh.Position = UDim2.new(1, -228, 0, 11)
+        refresh.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+        refresh.BorderSizePixel = 0
+        refresh.Text = "REFRESH"
+        refresh.TextColor3 = Color3.fromRGB(235, 235, 240)
+        refresh.Font = Enum.Font.GothamBold
+        refresh.TextSize = 8
+        refresh.Parent = panel
+        Instance.new("UICorner", refresh).CornerRadius = UDim.new(0, 7)
+
+        local logs = Instance.new("TextBox")
+        logs.Name = "Logs"
+        logs.Position = UDim2.fromOffset(12, 50)
+        logs.Size = UDim2.new(1, -24, 1, -62)
+        logs.BackgroundColor3 = Color3.fromRGB(8, 8, 11)
+        logs.BorderSizePixel = 0
+        logs.ClearTextOnFocus = false
+        logs.MultiLine = true
+        logs.TextEditable = false
+        logs.TextWrapped = false
+        logs.TextXAlignment = Enum.TextXAlignment.Left
+        logs.TextYAlignment = Enum.TextYAlignment.Top
+        logs.Font = Enum.Font.Code
+        logs.TextSize = 11
+        logs.TextColor3 = Color3.fromRGB(225, 225, 230)
+        logs.Text = #fishingDebugLines > 0
+            and table.concat(fishingDebugLines, "\n")
+            or "No fishing debug logs yet. Enable Fishing Debug and make a manual fishing attempt."
+        logs.Parent = panel
+        Instance.new("UICorner", logs).CornerRadius = UDim.new(0, 8)
+
+        local function refreshLogs()
+            logs.Text = #fishingDebugLines > 0
+                and table.concat(fishingDebugLines, "\n")
+                or "No fishing debug logs yet. Enable Fishing Debug and make a manual fishing attempt."
+            logs.CursorPosition = #logs.Text + 1
+        end
+
+        refresh.Activated:Connect(refreshLogs)
+
+        copy.Activated:Connect(function()
+            refreshLogs()
+
+            local success = false
+
+            if type(setclipboard) == "function" then
+                success = pcall(function()
+                    setclipboard(logs.Text)
+                end)
+            elseif type(toclipboard) == "function" then
+                success = pcall(function()
+                    toclipboard(logs.Text)
+                end)
+            end
+
+            copy.Text = success and "COPIED" or "COPY FAIL"
+
+            task.delay(1.2, function()
+                if copy and copy.Parent then
+                    copy.Text = "COPY ALL"
+                end
+            end)
+        end)
+
+        close.Activated:Connect(function()
+            fishingDebugGui.Enabled = false
+        end)
+
+        overlay.Activated:Connect(function()
+            -- Ignore overlay clicks that are actually inside the panel.
+            -- The panel itself is parented to the button, so clicks there
+            -- do not bubble to this TextButton.
+            fishingDebugGui.Enabled = false
+        end)
     end
     local biteReceived = false
     local completeReceived = false
@@ -7153,6 +7336,13 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             pcall(function()
                 bossNotificationGui:Destroy()
             end)
+        end
+
+        if fishingDebugGui then
+            pcall(function()
+                fishingDebugGui:Destroy()
+            end)
+            fishingDebugGui = nil
         end
 
         if type(getgenv) == "function" then
