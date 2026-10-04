@@ -4254,7 +4254,7 @@ function Arcane.Init(Shared, UI)
         end
     end
 
-    local DEFAULT_CHEST_SCAN_DISTANCE = 10000
+    local DEFAULT_CHEST_SCAN_DISTANCE = 30000
 
     local function getChestScanDistance()
         local distance = tonumber(Config.ArcaneChestScanDistance)
