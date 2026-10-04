@@ -6662,6 +6662,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     local fishEventRemote = nil
     local fishingEventConnection = nil
+    local fishingState = "OFF"
     local fishingDebugLines = {}
     local MAX_FISHING_DEBUG_LINES = 160
 
@@ -6785,7 +6786,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             )
         end
     end
-    local fishingState = "OFF"
     local biteReceived = false
     local completeReceived = false
     local fishingCycleRunning = false
