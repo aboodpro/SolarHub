@@ -6684,6 +6684,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     local fishEventRemote = nil
     local fishingEventConnection = nil
     local fishingState = "OFF"
+    local fishingState = "OFF"
     local fishingDebugLines = {}
     local MAX_FISHING_DEBUG_LINES = 160
     local fishingDebugGui = nil
@@ -6987,6 +6988,33 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
     end
 
+    local toolActionRemote = nil
+
+    do
+        local rs = game:GetService("ReplicatedStorage"):FindFirstChild("RS")
+        local remotes = rs and rs:FindFirstChild("Remotes")
+        local misc = remotes and remotes:FindFirstChild("Misc")
+        local remote = misc and misc:FindFirstChild("ToolAction")
+
+        if remote and remote:IsA("RemoteEvent") then
+            toolActionRemote = remote
+        end
+    end
+
+    if toolActionRemote then
+        local connection = toolActionRemote.OnClientEvent:Connect(function(...)
+            if Config.ArcaneFishingDebug then
+                fishingDebugDumpEvent(
+                    "ToolAction.OnClientEvent",
+                    findFishingRod(),
+                    ...
+                )
+            end
+        end)
+
+        table.insert(fishingDebugConnections, connection)
+    end
+
     local function setFishingStatus(text)
         if fishingStatusLabel then
             fishingStatusLabel.Text = "Status: " .. tostring(text)
@@ -7030,6 +7058,114 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
 
         return nil
+    end
+
+    local function disconnectFishingDebugHooks()
+        for _, connection in ipairs(fishingDebugConnections) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
+
+        table.clear(fishingDebugConnections)
+    end
+
+    connectFishingDebugHooks = function()
+        disconnectFishingDebugHooks()
+
+        if not Config.ArcaneFishingDebug then
+            return
+        end
+
+        local function isFishingRodTool(tool)
+            if not tool or not tool:IsA("Tool") then
+                return false
+            end
+
+            local name = normalizeName(tool.Name)
+
+            return name:find("fishingrod", 1, true) ~= nil
+                or name == "rod"
+                or name:find("woodenrod", 1, true) ~= nil
+                or name:find("bronzerod", 1, true) ~= nil
+                or name:find("collectorsrod", 1, true) ~= nil
+                or name:find("fishmongersrod", 1, true) ~= nil
+        end
+
+        local function hookTool(tool)
+            if not isFishingRodTool(tool) then
+                return
+            end
+
+            local ok, connection = pcall(function()
+                return tool.Activated:Connect(function()
+                    fishingDebugLog(
+                        ("ROD ACTIVATED | Tool=%s | Parent=%s | State=%s"):format(
+                            tostring(tool.Name),
+                            tostring(tool.Parent and tool.Parent:GetFullName() or "<none>"),
+                            tostring(fishingState)
+                        )
+                    )
+                end)
+            end)
+
+            if ok and connection then
+                table.insert(fishingDebugConnections, connection)
+            end
+        end
+
+        local character = Shared.player.Character
+        local backpack = Shared.player:FindFirstChildOfClass("Backpack")
+
+        if character then
+            for _, child in ipairs(character:GetChildren()) do
+                hookTool(child)
+            end
+
+            table.insert(
+                fishingDebugConnections,
+                character.ChildAdded:Connect(function(child)
+                    if Config.ArcaneFishingDebug then
+                        hookTool(child)
+                    end
+                end)
+            )
+        end
+
+        if backpack then
+            for _, child in ipairs(backpack:GetChildren()) do
+                hookTool(child)
+            end
+
+            table.insert(
+                fishingDebugConnections,
+                backpack.ChildAdded:Connect(function(child)
+                    if Config.ArcaneFishingDebug then
+                        hookTool(child)
+                    end
+                end)
+            )
+        end
+
+        fishingDebugLog(
+            ("DEBUG HOOKS READY | Rod=%s | FishEvent=%s | ToolAction=%s"):format(
+                tostring(findFishingRod() and findFishingRod().Name or "<none>"),
+                tostring(
+                    fishEventRemote
+                        and fishEventRemote:GetFullName()
+                        or "<missing>"
+                ),
+                tostring(
+                    (function()
+                        local rs = game:GetService("ReplicatedStorage"):FindFirstChild("RS")
+                        local remotes = rs and rs:FindFirstChild("Remotes")
+                        local misc = remotes and remotes:FindFirstChild("Misc")
+                        local toolAction = misc and misc:FindFirstChild("ToolAction")
+                        return toolAction and toolAction:GetFullName() or "<missing>"
+                    end)()
+                )
+            )
+        )
     end
 
     local function equipFishingRod()
@@ -7077,6 +7213,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         if lastDebugState then
             connectFishingDebugHooks()
+            fishingDebugLog("Fishing Debug INITIALIZED")
         end
 
         while isArcaneSessionActive() do
