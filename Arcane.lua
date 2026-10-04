@@ -6431,7 +6431,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
     end)
 
-d)
 
     task.spawn(function()
         while isArcaneSessionActive() do
