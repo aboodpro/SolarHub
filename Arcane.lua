@@ -2833,6 +2833,7 @@ function Arcane.Init(Shared, UI)
     Config.ArcaneTreasureChartESP = Config.ArcaneTreasureChartESP == true
     Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
     Config.ArcaneAutoFishing = Config.ArcaneAutoFishing == true
+    Config.ArcaneFishingDebug = Config.ArcaneFishingDebug == true
 
     -- Chest filters start OFF. The user selects the chest types they want.
     if type(Config.ArcaneChestFilter) ~= "table" then
@@ -3402,7 +3403,7 @@ function Arcane.Init(Shared, UI)
     local fishingSection = UI.createSection(
         miscTab,
         "Auto Fishing",
-        120
+        170
     )
 
     UI.createToggle(
@@ -3411,6 +3412,14 @@ function Arcane.Init(Shared, UI)
         "Auto equips the rod, casts, reels, and recasts.",
         "ArcaneAutoFishing",
         32
+    )
+
+    UI.createToggle(
+        fishingSection,
+        "Fishing Debug",
+        "Logs FishEvent payloads, rod activations, and state changes for troubleshooting.",
+        "ArcaneFishingDebug",
+        80
     )
 
     local fishingStatusLabel = Instance.new("TextLabel")
@@ -6653,6 +6662,129 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     local fishEventRemote = nil
     local fishingEventConnection = nil
+    local fishingDebugLines = {}
+    local MAX_FISHING_DEBUG_LINES = 160
+
+    local function formatFishingDebugValue(value, depth, seen)
+        depth = depth or 0
+        seen = seen or {}
+
+        local valueType = typeof(value)
+
+        if valueType == "Instance" then
+            local ok, fullName = pcall(function()
+                return value:GetFullName()
+            end)
+
+            return "Instance<"
+                .. (ok and tostring(fullName) or tostring(value))
+                .. ">"
+        end
+
+        if valueType == "Vector3" then
+            return ("Vector3(%.3f, %.3f, %.3f)"):format(
+                value.X,
+                value.Y,
+                value.Z
+            )
+        end
+
+        if valueType == "CFrame" then
+            local p = value.Position
+            return ("CFrame(%.3f, %.3f, %.3f)"):format(
+                p.X,
+                p.Y,
+                p.Z
+            )
+        end
+
+        if valueType ~= "table" then
+            return tostring(value)
+        end
+
+        if depth >= 2 then
+            return "<table>"
+        end
+
+        if seen[value] then
+            return "<table:cycle>"
+        end
+
+        seen[value] = true
+
+        local parts = {}
+        local count = 0
+
+        for key, item in pairs(value) do
+            count += 1
+
+            if count > 24 then
+                table.insert(parts, "...")
+                break
+            end
+
+            table.insert(
+                parts,
+                "["
+                    .. formatFishingDebugValue(key, depth + 1, seen)
+                    .. "]="
+                    .. formatFishingDebugValue(item, depth + 1, seen)
+            )
+        end
+
+        seen[value] = nil
+
+        table.sort(parts)
+        return "{"
+            .. table.concat(parts, ", ")
+            .. "}"
+    end
+
+    local function fishingDebugLog(message)
+        if not Config.ArcaneFishingDebug then
+            return
+        end
+
+        local line = "[FishingDebug] "
+            .. ("%.3f"):format(os.clock())
+            .. " | "
+            .. tostring(message)
+
+        table.insert(fishingDebugLines, line)
+
+        if #fishingDebugLines > MAX_FISHING_DEBUG_LINES then
+            table.remove(fishingDebugLines, 1)
+        end
+
+        print(line)
+    end
+
+    local function fishingDebugDumpEvent(eventName, rod, ...)
+        if not Config.ArcaneFishingDebug then
+            return
+        end
+
+        local args = {...}
+
+        fishingDebugLog(
+            ("%s | ArgCount=%d | Rod=%s | State=%s"):format(
+                tostring(eventName),
+                #args,
+                tostring(rod and rod.Name or "<none>"),
+                tostring(fishingState)
+            )
+        )
+
+        for index, value in ipairs(args) do
+            fishingDebugLog(
+                ("Arg[%d] Type=%s Value=%s"):format(
+                    index,
+                    typeof(value),
+                    formatFishingDebugValue(value)
+                )
+            )
+        end
+    end
     local fishingState = "OFF"
     local biteReceived = false
     local completeReceived = false
@@ -6743,6 +6875,14 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             return false
         end
 
+        fishingDebugLog(
+            ("Tool:Activate() | Rod=%s | Parent=%s | State=%s"):format(
+                tostring(rod.Name),
+                tostring(rod.Parent and rod.Parent:GetFullName() or "<none>"),
+                tostring(fishingState)
+            )
+        )
+
         return pcall(function()
             rod:Activate()
         end)
@@ -6766,7 +6906,21 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     if fishEventRemote then
         fishingEventConnection = fishEventRemote.OnClientEvent:Connect(function(...)
-            local eventState = extractFishingState(...)
+            local args = {...}
+            fishingDebugDumpEvent("FishEvent", (function()
+                local character = Shared.player.Character
+                local rod = character and character:FindFirstChildWhichIsA("Tool")
+                return rod
+            end)(), table.unpack(args))
+
+            local eventState = extractFishingState(table.unpack(args))
+
+            fishingDebugLog(
+                ("DetectedState=%s | RawArgCount=%d"):format(
+                    tostring(eventState or "<none>"),
+                    #args
+                )
+            )
 
             if eventState == "Bump" then
                 if fishingCycleRunning then
@@ -6779,6 +6933,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 biteReceived = true
                 completeReceived = false
                 fishingState = "REELING"
+                fishingDebugLog("STATE -> REELING | Bite received")
 
                 local fishName = nil
 
@@ -6806,6 +6961,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             if eventState == "Complete" then
                 completeReceived = true
                 fishingState = "COMPLETE"
+                fishingDebugLog("STATE -> COMPLETE")
                 setFishingStatus("Catch complete.")
             end
         end)
@@ -6837,12 +6993,14 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         fishingCycleRunning = true
 
         fishingState = "CASTING"
+        fishingDebugLog("STATE -> CASTING | Rod=" .. tostring(rod.Name))
         setFishingStatus("Casting...")
 
         -- First activation = normal cast.
         activateRod(rod)
 
         fishingState = "WAITING_BITE"
+        fishingDebugLog("STATE -> WAITING_BITE | Waiting up to 90s for FishEvent Bite")
         setFishingStatus("Waiting for Bite...")
 
         local biteDeadline = os.clock() + 90
@@ -6875,6 +7033,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         if not biteReceived then
             fishingCycleRunning = false
             fishingState = "TIMEOUT"
+            fishingDebugLog("STATE -> TIMEOUT | No Bite event before deadline")
             setFishingStatus("No Bite received. Recasting...")
             task.wait(0.5)
             return false
@@ -6919,6 +7078,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         if not completeReceived then
             fishingState = "REEL_TIMEOUT"
+            fishingDebugLog("STATE -> REEL_TIMEOUT | No Complete event before deadline")
             setFishingStatus("Reel timeout. Recasting...")
             task.wait(0.5)
             return false
