@@ -810,27 +810,35 @@ local function getChestTarget(object)
 end
 
 local function getChestRoot(target)
-    if target:IsA("Model") then
-        local root = getRoot(target)
-
-        if root then
-            return root
-        end
-
-        for _, descendant in ipairs(target:GetDescendants()) do
-            if descendant:IsA("BasePart") then
-                return descendant
-            end
-        end
-
+    if not target then
         return nil
     end
 
-    if target:IsA("BasePart") then
-        return target
+    local cachedRoot = chestRootCache[target]
+
+    if cachedRoot and cachedRoot.Parent then
+        return cachedRoot
     end
 
-    return nil
+    local root = nil
+
+    if target:IsA("Model") then
+        root = getRoot(target)
+
+        if not root then
+            for _, descendant in ipairs(target:GetDescendants()) do
+                if descendant:IsA("BasePart") then
+                    root = descendant
+                    break
+                end
+            end
+        end
+    elseif target:IsA("BasePart") then
+        root = target
+    end
+
+    chestRootCache[target] = root
+    return root
 end
 
 
@@ -2779,6 +2787,35 @@ end
 -------------------------------------------------
 
 function Arcane.Init(Shared, UI)
+    -- Keep only one active Arcane session. Re-running the loader previously
+    -- allowed the old module's loops/callbacks to remain alive.
+    local arcaneSessionId =
+        tostring(os.clock()) .. "_" .. tostring(math.random(100000000, 999999999))
+    local arcaneSessionActive = true
+
+    if type(getgenv) == "function" then
+        local env = getgenv()
+        local previousCleanup = env.SolarHubArcaneCleanup
+
+        if type(previousCleanup) == "function" then
+            pcall(previousCleanup)
+        end
+
+        env.SolarHubArcaneSession = arcaneSessionId
+    end
+
+    local function isArcaneSessionActive()
+        if not arcaneSessionActive then
+            return false
+        end
+
+        if type(getgenv) ~= "function" then
+            return true
+        end
+
+        return getgenv().SolarHubArcaneSession == arcaneSessionId
+    end
+
     local Config = Shared.Config
     local tabs = UI.tabs or {}
     local tabButtons = UI.tabButtons or {}
@@ -3333,6 +3370,9 @@ function Arcane.Init(Shared, UI)
     local openedChests = {}
     local openedChestLocations = {}
     local chestLifecycleWatchers = {}
+    local chestTypeCache = setmetatable({}, {__mode = "k"})
+    local chestRootCache = setmetatable({}, {__mode = "k"})
+    local staticChestAnchor = nil
     local isOpenedChestLocation
 
 
@@ -4090,7 +4130,7 @@ function Arcane.Init(Shared, UI)
     task.spawn(function()
         task.wait(1)
 
-        while true do
+        while isArcaneSessionActive() do
             task.wait(0.5)
 
             if Config.ArcaneTreasureChartESP then
@@ -4146,6 +4186,11 @@ function Arcane.Init(Shared, UI)
 
             chestESPObjects[target] = nil
         end
+
+        chestTypeCache[target] = nil
+        if not target.Parent then
+            chestRootCache[target] = nil
+        end
     end
 
     local function getChestScanDistance(chestType)
@@ -4200,7 +4245,12 @@ local function createChestESP(target)
             return
         end
 
-        local chestType = getChestTypeFast(target) or getChestType(target)
+        local chestType = chestTypeCache[target]
+
+        if not chestType then
+            chestType = getChestTypeFast(target) or getChestType(target)
+            chestTypeCache[target] = chestType
+        end
 
         if not chestType or not isChestFilterEnabled(Config, chestType) then
             destroyChestESP(target)
@@ -4294,6 +4344,26 @@ local function createChestESP(target)
         return nil
     end
 
+    local function getStaticChestAnchor()
+        if staticChestAnchor and staticChestAnchor.Parent then
+            return staticChestAnchor
+        end
+
+        local anchor = Instance.new("Part")
+        anchor.Name = "SolarChestStaticAnchor"
+        anchor.Anchored = true
+        anchor.CanCollide = false
+        anchor.CanTouch = false
+        anchor.CanQuery = false
+        anchor.Transparency = 1
+        anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+        anchor.CFrame = CFrame.new()
+        anchor.Parent = workspace
+
+        staticChestAnchor = anchor
+        return anchor
+    end
+
     local function destroyStaticChestESP(key)
         local data = staticChestESPObjects[key]
 
@@ -4314,6 +4384,13 @@ local function createChestESP(target)
         end
 
         staticChestESPObjects[key] = nil
+
+        if next(staticChestESPObjects) == nil and staticChestAnchor then
+            pcall(function()
+                staticChestAnchor:Destroy()
+            end)
+            staticChestAnchor = nil
+        end
     end
 
     local function createStaticChestESP(entry, chestType, cachedPosition, cachedKey)
@@ -4358,16 +4435,10 @@ local function createChestESP(target)
             return
         end
 
-        local anchor = Instance.new("Part")
-        anchor.Name = "SolarChestStaticAnchor"
-        anchor.Anchored = true
-        anchor.CanCollide = false
-        anchor.CanTouch = false
-        anchor.CanQuery = false
-        anchor.Transparency = 1
-        anchor.Size = Vector3.new(1, 1, 1)
-        anchor.CFrame = CFrame.new(position)
-        anchor.Parent = workspace
+        local anchor = Instance.new("Attachment")
+        anchor.Name = "SolarChestStaticAttachment"
+        anchor.Position = position
+        anchor.Parent = getStaticChestAnchor()
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "SolarChestStaticESPInfo"
@@ -4574,7 +4645,9 @@ local function createChestESP(target)
 
             destroyStaticChestESPNearPosition(
                 root.Position,
-                getChestTypeFast(chest) or getChestType(chest)
+                chestTypeCache[chest]
+                    or getChestTypeFast(chest)
+                    or getChestType(chest)
             )
         end
 
@@ -4583,17 +4656,50 @@ local function createChestESP(target)
 
 
 
+    local function cleanupChestLifecycleWatcher(chest)
+        local watcher = chestLifecycleWatchers[chest]
+
+        if not watcher then
+            return
+        end
+
+        for _, connection in ipairs(watcher.connections) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
+
+        chestLifecycleWatchers[chest] = nil
+    end
+
     local function watchChestLifecycle(chest)
         if not chest
             or chestLifecycleWatchers[chest] then
             return
         end
 
-        chestLifecycleWatchers[chest] = true
+        local watcher = {
+            connections = {},
+            baseConnected = false,
+            lidConnected = false,
+        }
+
+        chestLifecycleWatchers[chest] = watcher
+
+        local function connect(signal, callback)
+            local ok, connection = pcall(function()
+                return signal:Connect(callback)
+            end)
+
+            if ok and connection then
+                table.insert(watcher.connections, connection)
+            end
+
+            return connection
+        end
 
         local base = chest:FindFirstChild("Base", true)
         local lid = chest:FindFirstChild("Lid", true)
-
         local consumed = false
 
         local function isFullyVisible()
@@ -4615,7 +4721,7 @@ local function createChestESP(target)
         end
 
         local function onConsumed()
-            if consumed then
+            if consumed or not isArcaneSessionActive() then
                 return
             end
 
@@ -4624,7 +4730,7 @@ local function createChestESP(target)
         end
 
         local function onRespawned()
-            if not consumed then
+            if not consumed or not isArcaneSessionActive() then
                 return
             end
 
@@ -4643,7 +4749,11 @@ local function createChestESP(target)
                 and chest.Parent then
 
                 local chestType =
-                    getChestTypeFast(chest) or getChestType(chest)
+                    chestTypeCache[chest]
+                    or getChestTypeFast(chest)
+                    or getChestType(chest)
+
+                chestTypeCache[chest] = chestType
 
                 if chestType
                     and isChestFilterEnabled(Config, chestType) then
@@ -4662,7 +4772,12 @@ local function createChestESP(target)
         end
 
         local function checkVisualState()
+            if not isArcaneSessionActive() then
+                return
+            end
+
             if not chest.Parent then
+                cleanupChestLifecycleWatcher(chest)
                 return
             end
 
@@ -4673,69 +4788,89 @@ local function createChestESP(target)
             end
         end
 
-        if base and base:IsA("BasePart") then
-            base:GetPropertyChangedSignal("Transparency"):Connect(function()
-                if base.Transparency >= 0.999
-                    or base.Transparency <= 0.001 then
-                    checkVisualState()
-                end
-            end)
+        local function hookPartSignals()
+            if base and base.Parent and base:IsA("BasePart")
+                and not watcher.baseConnected then
+
+                watcher.baseConnected = true
+
+                connect(
+                    base:GetPropertyChangedSignal("Transparency"),
+                    function()
+                        if base.Transparency >= 0.999
+                            or base.Transparency <= 0.001 then
+                            checkVisualState()
+                        end
+                    end
+                )
+            end
+
+            if lid and lid.Parent and lid:IsA("BasePart")
+                and not watcher.lidConnected then
+
+                watcher.lidConnected = true
+
+                connect(
+                    lid:GetPropertyChangedSignal("Transparency"),
+                    function()
+                        if lid.Transparency >= 0.999
+                            or lid.Transparency <= 0.001 then
+                            checkVisualState()
+                        end
+                    end
+                )
+            end
         end
 
-        if lid and lid:IsA("BasePart") then
-            lid:GetPropertyChangedSignal("Transparency"):Connect(function()
-                if lid.Transparency >= 0.999
-                    or lid.Transparency <= 0.001 then
-                    checkVisualState()
-                end
-            end)
-        end
-
-        -- "Open" is the game's explicit local visual state during opening.
-        chest.DescendantAdded:Connect(function(descendant)
-            if descendant:IsA("BoolValue") then
-                local normalized = normalizeChestText(descendant.Name)
-
-                if normalized == "open"
-                    or normalized == "opened"
-                    or normalized == "chestopened"
-                    or normalized == "openedchest" then
-                    onConsumed()
+        connect(
+            chest.AncestryChanged,
+            function(_, parent)
+                if not parent then
+                    cleanupChestLifecycleWatcher(chest)
+                    chestTypeCache[chest] = nil
+                    chestRootCache[chest] = nil
                 end
             end
-        end)
+        )
 
-        -- Find Base/Lid once later if they were not present at watcher creation.
-        if not base or not lid then
-            chest.DescendantAdded:Connect(function(descendant)
-                if descendant:IsA("BasePart") then
-                    if not base and descendant.Name == "Base" then
-                        base = descendant
-                    elseif not lid and descendant.Name == "Lid" then
-                        lid = descendant
-                    end
+        connect(
+            chest.DescendantAdded,
+            function(descendant)
+                if not isArcaneSessionActive() then
+                    return
+                end
 
-                    if base and lid then
-                        base:GetPropertyChangedSignal("Transparency"):Connect(function()
-                            if base.Transparency >= 0.999
-                                or base.Transparency <= 0.001 then
-                                checkVisualState()
-                            end
-                        end)
+                if descendant:IsA("BoolValue") then
+                    local normalized = normalizeChestText(descendant.Name)
 
-                        lid:GetPropertyChangedSignal("Transparency"):Connect(function()
-                            if lid.Transparency >= 0.999
-                                or lid.Transparency <= 0.001 then
-                                checkVisualState()
-                            end
-                        end)
-
-                        checkVisualState()
+                    if normalized == "open"
+                        or normalized == "opened"
+                        or normalized == "chestopened"
+                        or normalized == "openedchest" then
+                        onConsumed()
                     end
                 end
-            end)
-        end
 
+                if descendant:IsA("BasePart") then
+                    if (not base or not base.Parent)
+                        and descendant.Name == "Base" then
+                        base = descendant
+                        watcher.baseConnected = false
+                    end
+
+                    if (not lid or not lid.Parent)
+                        and descendant.Name == "Lid" then
+                        lid = descendant
+                        watcher.lidConnected = false
+                    end
+
+                    hookPartSignals()
+                    checkVisualState()
+                end
+            end
+        )
+
+        hookPartSignals()
         checkVisualState()
     end
 
@@ -4783,6 +4918,10 @@ end
 local proximityPromptService = game:GetService("ProximityPromptService")
 
     proximityPromptService.PromptTriggered:Connect(function(prompt, player)
+        if not isArcaneSessionActive() then
+            return
+        end
+
         if player and player ~= Shared.player then
             return
         end
@@ -4971,6 +5110,10 @@ local function scanAllWorkspaceChests()
         "BuriedChests",
     }) do
         collectionService:GetInstanceAddedSignal(tag):Connect(function(instance)
+            if not isArcaneSessionActive() then
+                return
+            end
+
             if Config.ArcaneChestESP and hasAnyChestFilterEnabled(Config) then
                 inspectChest(instance)
             end
@@ -4981,6 +5124,10 @@ local function scanAllWorkspaceChests()
     -- depend on model names or tags in that case: an interaction appearing
     -- inside a generic hidden chest is enough to discover its real parent.
     workspace.DescendantAdded:Connect(function(instance)
+        if not isArcaneSessionActive() then
+            return
+        end
+
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
@@ -5932,7 +6079,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end
 
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             task.wait(0.25)
 
             local currentChestFilterSignature = getChestFilterSignature()
@@ -5986,7 +6133,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end)
 
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             task.wait(2)
 
             refreshBossTemplateRegistry()
@@ -6056,7 +6203,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
 
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             task.wait(0.5)
 
             if Config.ArcaneSideQuestESP then
@@ -6083,7 +6230,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end)
 
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             task.wait(0.5)
 
             if Config.ArcaneChestESP
@@ -6101,7 +6248,12 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                             chestCandidates[target] = nil
                             destroyChestESP(target)
                         else
-                            local chestType = getChestTypeFast(target) or getChestType(target)
+                            local chestType = chestTypeCache[target]
+
+        if not chestType then
+            chestType = getChestTypeFast(target) or getChestType(target)
+            chestTypeCache[target] = chestType
+        end
 
                             if isChestFilterEnabled(Config, chestType) then
                                 createChestESP(target)
@@ -6132,7 +6284,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end)
 
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             task.wait(0.25)
 
             if Config.ArcaneSideQuestESP then
@@ -6194,7 +6346,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end)
 
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             task.wait(0.25)
 
             if Config.ArcaneBossESP then
@@ -6245,35 +6397,44 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
 
     task.spawn(function()
-        while true do
-            task.wait(0.5)
+        while isArcaneSessionActive() do
+            task.wait(1)
+
+            if not Config.ArcaneChestESP
+                or not hasAnyChestFilterEnabled(Config)
+                or next(staticChestESPObjects) == nil then
+                continue
+            end
 
             local playerRoot = getLocalPlayerRoot()
 
-            for key, data in pairs(staticChestESPObjects) do
-                local source = data.source
+            if playerRoot then
+                for key, data in pairs(staticChestESPObjects) do
+                    if not isChestFilterEnabled(Config, data.chestType) then
+                        destroyStaticChestESP(key)
+                    else
+                        local distance =
+                            math.floor(
+                                (playerRoot.Position - data.position).Magnitude
+                            )
 
-                if not Config.ArcaneChestESP
-                    or not hasAnyChestFilterEnabled(Config)
-                    or not isChestFilterEnabled(Config, data.chestType) then
-                    destroyStaticChestESP(key)
-                else
-                    if playerRoot then
-                        local distance = (playerRoot.Position - data.position).Magnitude
-
-                        -- Static markers are global. Do not destroy them when
-                        -- the player moves away from the chest.
-                        data.label.Text = (CHEST_DISPLAY_NAMES[data.chestType] or "Chest Location")
-                            .. " | STUDS: "
-                            .. tostring(math.floor(distance))
+                        if data.lastDistance ~= distance then
+                            data.lastDistance = distance
+                            data.label.Text =
+                                (CHEST_DISPLAY_NAMES[data.chestType] or "Chest Location")
+                                .. " | STUDS: "
+                                .. tostring(distance)
+                        end
                     end
                 end
             end
         end
     end)
 
+d)
+
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             task.wait(0.25)
 
             local character = Shared.player.Character
@@ -6326,7 +6487,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
 
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             task.wait(0.25)
 
             if Config.ArcaneSideQuestESP then
@@ -6648,7 +6809,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end
 
     task.spawn(function()
-        while true do
+        while isArcaneSessionActive() do
             if not Config.ArcaneAutoFishing then
                 fishingCycleRunning = false
                 fishingState = "OFF"
@@ -6669,6 +6830,64 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             end
         end
     end)
+
+    local function cleanupArcaneSession()
+        if not arcaneSessionActive then
+            return
+        end
+
+        arcaneSessionActive = false
+
+        for chest in pairs(chestLifecycleWatchers) do
+            cleanupChestLifecycleWatcher(chest)
+        end
+
+        for target in pairs(chestESPObjects) do
+            destroyChestESP(target)
+        end
+
+        for key in pairs(staticChestESPObjects) do
+            destroyStaticChestESP(key)
+        end
+
+        for model in pairs(espObjects) do
+            destroyESP(model)
+        end
+
+        for model in pairs(sideQuestESPObjects) do
+            destroySideQuestESP(model)
+        end
+
+        for key in pairs(sideQuestVirtualESPObjects) do
+            destroySideQuestVirtualESP(key)
+        end
+
+        if staticChestAnchor then
+            pcall(function()
+                staticChestAnchor:Destroy()
+            end)
+            staticChestAnchor = nil
+        end
+
+        if bossNotificationGui then
+            pcall(function()
+                bossNotificationGui:Destroy()
+            end)
+        end
+
+        if type(getgenv) == "function" then
+            local env = getgenv()
+
+            if env.SolarHubArcaneSession == arcaneSessionId then
+                env.SolarHubArcaneSession = nil
+                env.SolarHubArcaneCleanup = nil
+            end
+        end
+    end
+
+    if type(getgenv) == "function" then
+        getgenv().SolarHubArcaneCleanup = cleanupArcaneSession
+    end
 
     return true
 end
