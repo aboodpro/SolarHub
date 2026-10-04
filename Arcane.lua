@@ -1220,10 +1220,9 @@ local function runDebugScan(setText)
         for _, chestType in ipairs(CHEST_TYPE_ORDER) do
             table.insert(
                 results.config,
-                ("%s | Filter=%s | ScanDistance=%d"):format(
+                ("%s | Filter=%s"):format(
                     chestType,
-                    tostring(Config.ArcaneChestFilter[chestType] == true),
-                    getChestScanDistance(chestType)
+                    tostring(Config.ArcaneChestFilter[chestType] == true)
                 )
             )
         end
@@ -1232,6 +1231,9 @@ local function runDebugScan(setText)
             results.config,
             "BossESP=" .. tostring(Config.ArcaneBossESP)
                 .. " | ChestESP=" .. tostring(Config.ArcaneChestESP)
+                .. " | InfiniteScan=" .. tostring(Config.ArcaneInfiniteDistanceScan)
+                .. " | ScanLimit=" .. tostring(Config.ArcaneChestScanDistanceLimitEnabled)
+                .. " | ScanDistance=" .. tostring(Config.ArcaneChestScanDistance)
                 .. " | SideQuestESP=" .. tostring(Config.ArcaneSideQuestESP)
                 .. " | AutoFishing=" .. tostring(Config.ArcaneAutoFishing)
         )
@@ -2836,16 +2838,19 @@ function Arcane.Init(Shared, UI)
         Config.ArcaneChestFilter[chestType] = false
     end
 
-    -- Start every SolarHub session with an effectively unlimited chest
-    -- discovery radius. The user can then type/drag a smaller value (e.g. 4000)
-    -- for any specific chest type.
-    if type(Config.ArcaneChestScanDistance) ~= "table" then
-        Config.ArcaneChestScanDistance = {}
-    end
+    -- Chest scanning:
+    -- Infinite Distance Scan is deliberately OFF by default so a weaker PC
+    -- does not immediately have to process every cached chest location.
+    Config.ArcaneInfiniteDistanceScan = Config.ArcaneInfiniteDistanceScan == true
+    Config.ArcaneChestScanDistanceLimitEnabled =
+        Config.ArcaneChestScanDistanceLimitEnabled == true
 
-    for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-        Config.ArcaneChestScanDistance[chestType] = 100000
-    end
+    local configuredChestScanDistance = tonumber(Config.ArcaneChestScanDistance)
+    Config.ArcaneChestScanDistance = math.clamp(
+        math.floor(configuredChestScanDistance or 30000),
+        1,
+        100000
+    )
 
     local miscTab = tabs["Misc"]
     if not miscTab then
@@ -3099,36 +3104,42 @@ function Arcane.Init(Shared, UI)
 
     
     -------------------------------------------------
-    -- CHEST ESP / MULTI-FILTER UI
+    -- CHEST ESP / SCAN CONTROL UI
     -------------------------------------------------
 
     local chestSection = UI.createSection(
         miscTab,
         "Chest ESP",
-        1060
+        620
     )
 
     UI.createToggle(
         chestSection,
         "Chest ESP",
-        "Shows selected chests globally across the map. Select the chest types you want to display.",
+        "Shows selected chest types with name, rarity and distance.",
         "ArcaneChestESP",
-        32
+        34
     )
 
-    local chestFilterTitle = Instance.new("TextLabel")
-    chestFilterTitle.Size = UDim2.new(1, -16, 0, 22)
-    chestFilterTitle.Position = UDim2.fromOffset(8, 78)
-    chestFilterTitle.BackgroundTransparency = 1
-    chestFilterTitle.Text = "Chest Filter + Scan Distance"
-    chestFilterTitle.TextColor3 = Color3.fromRGB(205, 205, 215)
-    chestFilterTitle.Font = Enum.Font.GothamBold
-    chestFilterTitle.TextSize = 9
-    chestFilterTitle.TextXAlignment = Enum.TextXAlignment.Left
-    chestFilterTitle.Parent = chestSection
+    local chestHeader = Instance.new("TextLabel")
+    chestHeader.Size = UDim2.new(1, -20, 0, 28)
+    chestHeader.Position = UDim2.fromOffset(10, 80)
+    chestHeader.BackgroundTransparency = 1
+    chestHeader.Text = "CHEST TYPES"
+    chestHeader.TextColor3 = Color3.fromRGB(220, 220, 230)
+    chestHeader.Font = Enum.Font.GothamBold
+    chestHeader.TextSize = 10
+    chestHeader.TextXAlignment = Enum.TextXAlignment.Left
+    chestHeader.Parent = chestSection
+
+    local chestHeaderLine = Instance.new("Frame")
+    chestHeaderLine.Size = UDim2.new(1, -20, 0, 1)
+    chestHeaderLine.Position = UDim2.fromOffset(10, 106)
+    chestHeaderLine.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    chestHeaderLine.BorderSizePixel = 0
+    chestHeaderLine.Parent = chestSection
 
     local chestFilterButtons = {}
-    local chestDistanceSliders = {}
 
     local function updateChestFilterButton(chestType)
         local buttonData = chestFilterButtons[chestType]
@@ -3140,42 +3151,51 @@ function Arcane.Init(Shared, UI)
 
         buttonData.indicator.BackgroundColor3 = enabled
             and CHEST_COLORS[chestType]
-            or Color3.fromRGB(50, 50, 60)
+            or Color3.fromRGB(48, 48, 58)
 
         buttonData.text.TextColor3 = enabled
-            and Color3.fromRGB(240, 240, 240)
-            or Color3.fromRGB(120, 120, 130)
+            and Color3.fromRGB(245, 245, 248)
+            or Color3.fromRGB(135, 135, 145)
 
         buttonData.check.Text = enabled and "✓" or ""
     end
 
-    local rowStartY = 104
-    local rowHeight = 74
+    -- Compact 2-column filter grid: much easier to scan visually than a
+    -- separate slider for every chest rarity.
+    local gridStartY = 114
+    local cardWidth = 0.5
+    local cardHeight = 40
+    local cardGap = 6
 
     for index, chestType in ipairs(CHEST_TYPE_ORDER) do
-        local rowY = rowStartY + ((index - 1) * rowHeight)
+        local column = (index - 1) % 2
+        local row = math.floor((index - 1) / 2)
 
-        local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, -16, 0, 70)
-        row.Position = UDim2.fromOffset(8, rowY)
-        row.BackgroundTransparency = 1
-        row.Parent = chestSection
-
-        local button = Instance.new("TextButton")
-        button.Size = UDim2.new(1, 0, 0, 28)
-        button.Position = UDim2.fromOffset(0, 0)
-        button.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
-        button.BorderSizePixel = 0
-        button.Text = ""
-        button.Parent = row
-        Instance.new("UICorner", button).CornerRadius = UDim.new(0, 7)
+        local card = Instance.new("TextButton")
+        card.Size = UDim2.new(
+            cardWidth,
+            -13,
+            0,
+            cardHeight
+        )
+        card.Position = UDim2.new(
+            column * 0.5,
+            column == 0 and 8 or 5,
+            0,
+            gridStartY + row * (cardHeight + cardGap)
+        )
+        card.BackgroundColor3 = Color3.fromRGB(31, 31, 40)
+        card.BorderSizePixel = 0
+        card.Text = ""
+        card.Parent = chestSection
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
 
         local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.fromOffset(16, 16)
-        indicator.Position = UDim2.fromOffset(7, 6)
+        indicator.Size = UDim2.fromOffset(18, 18)
+        indicator.Position = UDim2.fromOffset(9, 11)
         indicator.BorderSizePixel = 0
-        indicator.Parent = button
-        Instance.new("UICorner", indicator).CornerRadius = UDim.new(0, 4)
+        indicator.Parent = card
+        Instance.new("UICorner", indicator).CornerRadius = UDim.new(0, 5)
 
         local check = Instance.new("TextLabel")
         check.Size = UDim2.fromScale(1, 1)
@@ -3186,18 +3206,18 @@ function Arcane.Init(Shared, UI)
         check.Parent = indicator
 
         local textLabel = Instance.new("TextLabel")
-        textLabel.Size = UDim2.new(1, -31, 1, 0)
-        textLabel.Position = UDim2.fromOffset(29, 0)
+        textLabel.Size = UDim2.new(1, -38, 1, 0)
+        textLabel.Position = UDim2.fromOffset(34, 0)
         textLabel.BackgroundTransparency = 1
         textLabel.Text = CHEST_DISPLAY_NAMES[chestType]
         textLabel.TextSize = 9
         textLabel.Font = Enum.Font.GothamBold
         textLabel.TextXAlignment = Enum.TextXAlignment.Left
         textLabel.TextColor3 = Color3.fromRGB(220, 220, 225)
-        textLabel.Parent = button
+        textLabel.Parent = card
 
         chestFilterButtons[chestType] = {
-            button = button,
+            button = card,
             indicator = indicator,
             check = check,
             text = textLabel,
@@ -3205,45 +3225,23 @@ function Arcane.Init(Shared, UI)
 
         updateChestFilterButton(chestType)
 
-        button.Activated:Connect(function()
+        card.Activated:Connect(function()
             Config.ArcaneChestFilter[chestType] = not (
                 Config.ArcaneChestFilter[chestType] == true
             )
 
             updateChestFilterButton(chestType)
+            scanSelectedChests()
         end)
-
-        local slider = UI.createSlider(
-            row,
-            "Scan Distance (1 - 100,000)",
-            "ArcaneChestScanDistance_" .. chestType,
-            1,
-            100000,
-            1,
-            31,
-            220,
-            function(value)
-                Config.ArcaneChestScanDistance[chestType] = math.clamp(
-                    math.floor(tonumber(value) or 100000),
-                    1,
-                    100000
-                )
-            end
-        )
-
-        slider.setValue(
-            Config.ArcaneChestScanDistance[chestType]
-        )
-
-        chestDistanceSliders[chestType] = slider
     end
 
-    local buttonsY = rowStartY + (#CHEST_TYPE_ORDER * rowHeight) + 4
+    local filterRows = math.ceil(#CHEST_TYPE_ORDER / 2)
+    local controlsY = gridStartY + filterRows * (cardHeight + cardGap) + 12
 
     local selectAllButton = Instance.new("TextButton")
-    selectAllButton.Size = UDim2.new(0.5, -12, 0, 28)
-    selectAllButton.Position = UDim2.new(0, 4, 0, buttonsY)
-    selectAllButton.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
+    selectAllButton.Size = UDim2.new(0.5, -13, 0, 28)
+    selectAllButton.Position = UDim2.fromOffset(8, controlsY)
+    selectAllButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     selectAllButton.BorderSizePixel = 0
     selectAllButton.Text = "SELECT ALL"
     selectAllButton.TextColor3 = Color3.fromRGB(235, 235, 240)
@@ -3253,9 +3251,9 @@ function Arcane.Init(Shared, UI)
     Instance.new("UICorner", selectAllButton).CornerRadius = UDim.new(0, 7)
 
     local clearAllButton = Instance.new("TextButton")
-    clearAllButton.Size = UDim2.new(0.5, -12, 0, 28)
-    clearAllButton.Position = UDim2.new(0.5, 8, 0, buttonsY)
-    clearAllButton.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
+    clearAllButton.Size = UDim2.new(0.5, -13, 0, 28)
+    clearAllButton.Position = UDim2.new(0.5, 5, 0, controlsY)
+    clearAllButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     clearAllButton.BorderSizePixel = 0
     clearAllButton.Text = "CLEAR ALL"
     clearAllButton.TextColor3 = Color3.fromRGB(235, 235, 240)
@@ -3269,6 +3267,7 @@ function Arcane.Init(Shared, UI)
             Config.ArcaneChestFilter[chestType] = true
             updateChestFilterButton(chestType)
         end
+        scanSelectedChests()
     end)
 
     clearAllButton.Activated:Connect(function()
@@ -3276,8 +3275,68 @@ function Arcane.Init(Shared, UI)
             Config.ArcaneChestFilter[chestType] = false
             updateChestFilterButton(chestType)
         end
+        scanSelectedChests()
     end)
 
+    local scanControlsTitle = Instance.new("TextLabel")
+    scanControlsTitle.Size = UDim2.new(1, -20, 0, 24)
+    scanControlsTitle.Position = UDim2.fromOffset(10, controlsY + 40)
+    scanControlsTitle.BackgroundTransparency = 1
+    scanControlsTitle.Text = "SCAN RANGE"
+    scanControlsTitle.TextColor3 = Color3.fromRGB(220, 220, 230)
+    scanControlsTitle.Font = Enum.Font.GothamBold
+    scanControlsTitle.TextSize = 10
+    scanControlsTitle.TextXAlignment = Enum.TextXAlignment.Left
+    scanControlsTitle.Parent = chestSection
+
+    UI.createToggle(
+        chestSection,
+        "Infinite Distance Scan",
+        "OFF = use a bounded scan. ON = scan every cached chest location regardless of distance.",
+        "ArcaneInfiniteDistanceScan",
+        controlsY + 66
+    )
+
+    UI.createToggle(
+        chestSection,
+        "Scan Distance Limit",
+        "When enabled, only chest locations inside the selected radius are processed/displayed.",
+        "ArcaneChestScanDistanceLimitEnabled",
+        controlsY + 108
+    )
+
+    local scanSlider = UI.createSlider(
+        chestSection,
+        "Scan Distance (1 - 100,000)",
+        "ArcaneChestScanDistance",
+        1,
+        100000,
+        10,
+        controlsY + 151,
+        330,
+        function(value)
+            Config.ArcaneChestScanDistance = math.clamp(
+                math.floor(tonumber(value) or 30000),
+                1,
+                100000
+            )
+            scanSelectedChests()
+        end
+    )
+
+    scanSlider.setValue(Config.ArcaneChestScanDistance)
+
+    local scanHint = Instance.new("TextLabel")
+    scanHint.Size = UDim2.new(1, -20, 0, 32)
+    scanHint.Position = UDim2.fromOffset(10, controlsY + 200)
+    scanHint.BackgroundTransparency = 1
+    scanHint.Text = "Tip: type a number in the slider box (example: 30000) instead of dragging."
+    scanHint.TextColor3 = Color3.fromRGB(130, 130, 140)
+    scanHint.Font = Enum.Font.Gotham
+    scanHint.TextSize = 8
+    scanHint.TextWrapped = true
+    scanHint.TextXAlignment = Enum.TextXAlignment.Left
+    scanHint.Parent = chestSection
 
     -------------------------------------------------
     -- TREASURE CHART FINDER
@@ -4193,14 +4252,13 @@ function Arcane.Init(Shared, UI)
         end
     end
 
-    local function getChestScanDistance(chestType)
-        local distance = tonumber(
-            Config.ArcaneChestScanDistance
-                and Config.ArcaneChestScanDistance[chestType]
-        )
+    local DEFAULT_CHEST_SCAN_DISTANCE = 10000
+
+    local function getChestScanDistance()
+        local distance = tonumber(Config.ArcaneChestScanDistance)
 
         if distance == nil then
-            distance = 1000000
+            distance = 30000
         end
 
         return math.clamp(
@@ -4217,10 +4275,35 @@ function Arcane.Init(Shared, UI)
             and character:FindFirstChild("HumanoidRootPart")
     end
 
-    local function isChestWithinScanDistance(target, chestType)
-        -- Chest ESP is intentionally global. Player distance must never remove
-        -- or block a chest marker.
-        return true
+    local function isChestWithinScanDistance(targetOrPosition)
+        if Config.ArcaneInfiniteDistanceScan == true then
+            return true
+        end
+
+        local playerRoot = getLocalPlayerRoot()
+
+        if not playerRoot then
+            return true
+        end
+
+        local position = targetOrPosition
+
+        if typeof(targetOrPosition) == "Instance" then
+            local root = getChestRoot(targetOrPosition)
+            position = root and root.Position
+        elseif typeof(targetOrPosition) == "Vector3" then
+            position = targetOrPosition
+        end
+
+        if typeof(position) ~= "Vector3" then
+            return false
+        end
+
+        local limit = Config.ArcaneChestScanDistanceLimitEnabled == true
+            and getChestScanDistance()
+            or DEFAULT_CHEST_SCAN_DISTANCE
+
+        return (playerRoot.Position - position).Magnitude <= limit
     end
 
     local function hasLiveChestInteraction(chest)
@@ -4269,6 +4352,11 @@ local function createChestESP(target)
         local root = getChestRoot(target)
 
         if not root then
+            return
+        end
+
+        if not isChestWithinScanDistance(root.Position) then
+            destroyChestESP(target)
             return
         end
 
@@ -4420,13 +4508,18 @@ local function createChestESP(target)
             return
         end
 
-        -- Only hide locations confirmed as consumed. Never use player distance.
-        if isOpenedChestLocation(position) then
+        -- Keep the location in the global cache, but only create the actual
+        -- BillboardGui when it is inside the active scan radius. This keeps
+        -- the expensive global location database while protecting weaker PCs
+        -- from thousands of simultaneous marker instances.
+        if not isChestWithinScanDistance(position) then
             return
         end
 
-        -- Static chest markers are intentionally global. Their visibility must
-        -- not depend on player distance.
+        -- Only hide locations confirmed as consumed.
+        if isOpenedChestLocation(position) then
+            return
+        end
         local key = cachedKey
             or (entry and entry:GetFullName())
             or ("STATIC|" .. tostring(position.X) .. "|" .. tostring(position.Y) .. "|" .. tostring(position.Z))
@@ -4546,14 +4639,16 @@ local function createChestESP(target)
         end
 
         for key, data in pairs(staticChestLocationCache) do
-            -- Keep the cached position alive even when Roblox streams the
-            -- original chest instance out of the client's Workspace.
-            createStaticChestESP(
-                data.source,
-                data.chestType,
-                data.position,
-                key
-            )
+            if isChestWithinScanDistance(data.position) then
+                createStaticChestESP(
+                    data.source,
+                    data.chestType,
+                    data.position,
+                    key
+                )
+            else
+                destroyStaticChestESP(key)
+            end
         end
     end
 
@@ -5017,6 +5112,15 @@ local function scanAllWorkspaceChests()
                 or not object:IsDescendantOf(workspace)
                 or seen[object] then
                 return
+            end
+
+            -- Skip live chest work outside the active radius. Static location
+            -- caching remains global so moving later can reveal cached markers.
+            if object:IsA("Model") or object:IsA("BasePart") then
+                local root = getChestRoot(object)
+                if root and not isChestWithinScanDistance(root.Position) then
+                    return
+                end
             end
 
             seen[object] = true
@@ -6409,22 +6513,33 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             local playerRoot = getLocalPlayerRoot()
 
             if playerRoot then
-                for key, data in pairs(staticChestESPObjects) do
-                    if not isChestFilterEnabled(Config, data.chestType) then
+                for key, location in pairs(staticChestLocationCache) do
+                    if not isChestFilterEnabled(Config, location.chestType) then
                         destroyStaticChestESP(key)
-                    else
-                        local distance =
-                            math.floor(
-                                (playerRoot.Position - data.position).Magnitude
+                    elseif isChestWithinScanDistance(location.position) then
+                        createStaticChestESP(
+                            location.source,
+                            location.chestType,
+                            location.position,
+                            key
+                        )
+
+                        local data = staticChestESPObjects[key]
+                        if data then
+                            local distance = math.floor(
+                                (playerRoot.Position - location.position).Magnitude
                             )
 
-                        if data.lastDistance ~= distance then
-                            data.lastDistance = distance
-                            data.label.Text =
-                                (CHEST_DISPLAY_NAMES[data.chestType] or "Chest Location")
-                                .. " | STUDS: "
-                                .. tostring(distance)
+                            if data.lastDistance ~= distance then
+                                data.lastDistance = distance
+                                data.label.Text =
+                                    (CHEST_DISPLAY_NAMES[data.chestType] or "Chest Location")
+                                    .. " | STUDS: "
+                                    .. tostring(distance)
+                            end
                         end
+                    else
+                        destroyStaticChestESP(key)
                     end
                 end
             end
