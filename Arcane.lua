@@ -3417,7 +3417,7 @@ function Arcane.Init(Shared, UI)
     UI.createToggle(
         fishingSection,
         "Fishing Debug",
-        "Logs FishEvent payloads, rod activations, and state changes for troubleshooting.",
+        "Records manual rod activations plus FishEvent payloads and fishing state changes.",
         "ArcaneFishingDebug",
         80
     )
@@ -6684,7 +6684,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     local fishEventRemote = nil
     local fishingEventConnection = nil
     local fishingState = "OFF"
-    local fishingState = "OFF"
     local fishingDebugLines = {}
     local MAX_FISHING_DEBUG_LINES = 160
     local fishingDebugGui = nil
@@ -6986,33 +6985,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         if remote and remote:IsA("RemoteEvent") then
             fishEventRemote = remote
         end
-    end
-
-    local toolActionRemote = nil
-
-    do
-        local rs = game:GetService("ReplicatedStorage"):FindFirstChild("RS")
-        local remotes = rs and rs:FindFirstChild("Remotes")
-        local misc = remotes and remotes:FindFirstChild("Misc")
-        local remote = misc and misc:FindFirstChild("ToolAction")
-
-        if remote and remote:IsA("RemoteEvent") then
-            toolActionRemote = remote
-        end
-    end
-
-    if toolActionRemote then
-        local connection = toolActionRemote.OnClientEvent:Connect(function(...)
-            if Config.ArcaneFishingDebug then
-                fishingDebugDumpEvent(
-                    "ToolAction.OnClientEvent",
-                    findFishingRod(),
-                    ...
-                )
-            end
-        end)
-
-        table.insert(fishingDebugConnections, connection)
     end
 
     local function setFishingStatus(text)
