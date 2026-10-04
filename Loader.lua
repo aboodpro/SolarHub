@@ -5,9 +5,9 @@
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local ARCANE_SOURCE_REF = "189c41870a2b129d0d3eb3c88aec5d8f02a1b8ac"
+local ARCANE_SOURCE_REF = "143d19daa1a541bbf7794a31f9419cec0043afce"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-04-ARCANE-23-FISHING-DEBUG-PANEL"
+local LOADER_VERSION = "2026-10-04-ARCANE-24-FISHING-DEBUG-CAPTURE"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 pcall(function()
