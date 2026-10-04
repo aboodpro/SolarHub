@@ -24,15 +24,21 @@ function UI.Init(Shared)
     Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 8)
 
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.fromOffset(586, 304)
-    mainFrame.Position = UDim2.new(0.5, -293, 0.5, -152)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    mainFrame.Size = UDim2.fromOffset(720, 430)
+    mainFrame.Position = UDim2.new(0.5, -360, 0.5, -215)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(17, 17, 22)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
 
     local mainCorner = Instance.new("UICorner")
-    mainCorner.CornerRadius = UDim.new(0, 10)
+    mainCorner.CornerRadius = UDim.new(0, 14)
     mainCorner.Parent = mainFrame
+
+    local mainStroke = Instance.new("UIStroke")
+    mainStroke.Color = Color3.fromRGB(52, 52, 64)
+    mainStroke.Transparency = 0.35
+    mainStroke.Thickness = 1
+    mainStroke.Parent = mainFrame
 
     local function makeDraggable(frame, handle)
         handle = handle or frame
@@ -107,30 +113,31 @@ function UI.Init(Shared)
     local topBar = Instance.new("Frame")
     topBar.Active = true
     topBar.ZIndex = 10
-    topBar.Size = UDim2.new(1, 0, 0, 34)
-    topBar.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+    topBar.Size = UDim2.new(1, 0, 0, 44)
+    topBar.BackgroundColor3 = Color3.fromRGB(23, 23, 30)
     topBar.BorderSizePixel = 0
     topBar.Parent = mainFrame
     local topCorner = Instance.new("UICorner")
-    topCorner.CornerRadius = UDim.new(0, 10)
+    topCorner.CornerRadius = UDim.new(0, 14)
     topCorner.Parent = topBar
     makeDraggable(mainFrame, topBar)
 
     local brandLabel = Instance.new("TextLabel")
-    brandLabel.Size = UDim2.fromOffset(400, 34)
-    brandLabel.Position = UDim2.fromOffset(10, 0)
+    brandLabel.Size = UDim2.new(1, -140, 0, 44)
+    brandLabel.Position = UDim2.fromOffset(14, 0)
     brandLabel.BackgroundTransparency = 1
     brandLabel.Font = Enum.Font.GothamBold
     brandLabel.Text = "☀️ Solar Hub [Advanced Master Edition]"
     brandLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    brandLabel.TextSize = 11
+    brandLabel.TextSize = 13
     brandLabel.TextXAlignment = Enum.TextXAlignment.Left
     brandLabel.Parent = topBar
 
     local sidebar = Instance.new("ScrollingFrame")
-    sidebar.Size = UDim2.new(0, 120, 1, -38)
-    sidebar.Position = UDim2.new(0, 0, 0, 36)
-    sidebar.BackgroundTransparency = 1
+    sidebar.Size = UDim2.new(0, 148, 1, -48)
+    sidebar.Position = UDim2.new(0, 0, 0, 46)
+    sidebar.BackgroundColor3 = Color3.fromRGB(20, 20, 27)
+    sidebar.BackgroundTransparency = 0.12
     sidebar.CanvasSize = UDim2.new(0, 0, 0, 300)
     sidebar.ScrollBarThickness = 2
     sidebar.ZIndex = 1
@@ -138,8 +145,8 @@ function UI.Init(Shared)
     Instance.new("UIListLayout", sidebar).Padding = UDim.new(0, 4)
 
     local contentArea = Instance.new("Frame")
-    contentArea.Size = UDim2.new(1, -124, 1, -38)
-    contentArea.Position = UDim2.new(0, 122, 0, 36)
+    contentArea.Size = UDim2.new(1, -154, 1, -48)
+    contentArea.Position = UDim2.new(0, 152, 0, 46)
     contentArea.BackgroundTransparency = 1
     contentArea.ZIndex = 1
     contentArea.Parent = mainFrame
@@ -160,7 +167,7 @@ function UI.Init(Shared)
         tabContainer.Size = UDim2.new(1, 0, 1, 0)
         tabContainer.BackgroundTransparency = 1
         tabContainer.Visible = (name == "Macro")
-        tabContainer.CanvasSize = UDim2.new(0, 0, 0, 850)
+        tabContainer.CanvasSize = UDim2.new(0, 0, 0, 900)
         tabContainer.ScrollBarThickness = 3
         tabContainer.Parent = contentArea
 
@@ -170,10 +177,10 @@ function UI.Init(Shared)
         layout.Parent = tabContainer
 
         local pad = Instance.new("UIPadding")
-        pad.PaddingTop = UDim.new(0, 8)
-        pad.PaddingLeft = UDim.new(0, 8)
-        pad.PaddingRight = UDim.new(0, 8)
-        pad.PaddingBottom = UDim.new(0, 8)
+        pad.PaddingTop = UDim.new(0, 10)
+        pad.PaddingLeft = UDim.new(0, 10)
+        pad.PaddingRight = UDim.new(0, 10)
+        pad.PaddingBottom = UDim.new(0, 10)
         pad.Parent = tabContainer
 
         layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
@@ -203,15 +210,15 @@ function UI.Init(Shared)
         end
 
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -6, 0, 26)
-        btn.BackgroundColor3 = (name == "Macro") and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(24, 24, 30)
-        btn.Text = "  " .. name
+        btn.Size = UDim2.new(1, -12, 0, 34)
+        btn.BackgroundColor3 = (name == "Macro") and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(28, 28, 36)
+        btn.Text = "   " .. name
         btn.Font = Enum.Font.GothamMedium
-        btn.TextColor3 = Color3.fromRGB(220, 220, 220)
-        btn.TextSize = 10
+        btn.TextColor3 = Color3.fromRGB(225, 225, 232)
+        btn.TextSize = 11
         btn.TextXAlignment = Enum.TextXAlignment.Left
         btn.Parent = sidebar
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
         tabButtons[name] = btn
 
         btn.Activated:Connect(function()
@@ -228,22 +235,22 @@ function UI.Init(Shared)
 
     local function createSection(tab, titleText, height: number?)
         local section = Instance.new("Frame")
-        section.Size = UDim2.new(1, 0, 0, height or 90)
-        section.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+        section.Size = UDim2.new(1, 0, 0, height or 100)
+        section.BackgroundColor3 = Color3.fromRGB(24, 24, 31)
         section.BorderSizePixel = 0
         section.Parent = tab
         local sectionCorner = Instance.new("UICorner")
-        sectionCorner.CornerRadius = UDim.new(0, 9)
+        sectionCorner.CornerRadius = UDim.new(0, 11)
         sectionCorner.Parent = section
 
         local header = Instance.new("TextLabel")
-        header.Size = UDim2.new(1, -16, 0, 26)
-        header.Position = UDim2.fromOffset(8, 4)
+        header.Size = UDim2.new(1, -20, 0, 30)
+        header.Position = UDim2.fromOffset(10, 6)
         header.BackgroundTransparency = 1
         header.Font = Enum.Font.GothamBold
-        header.Text = "- " .. titleText
+        header.Text = "▸  " .. titleText
         header.TextColor3 = Color3.fromRGB(200, 200, 210)
-        header.TextSize = 11
+        header.TextSize = 12
         header.TextXAlignment = Enum.TextXAlignment.Left
         header.Parent = section
         return section
@@ -251,29 +258,29 @@ function UI.Init(Shared)
 
     local function createToggle(parent, title, desc, configKey, yPos)
         local toggleBtnItem = Instance.new("TextButton")
-        toggleBtnItem.Size = UDim2.new(1, -16, 0, 36)
-        toggleBtnItem.Position = UDim2.fromOffset(8, yPos)
+        toggleBtnItem.Size = UDim2.new(1, -20, 0, 44)
+        toggleBtnItem.Position = UDim2.fromOffset(10, yPos)
         toggleBtnItem.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
         toggleBtnItem.Text = ""
         toggleBtnItem.Parent = parent
         local toggleCorner = Instance.new("UICorner")
-        toggleCorner.CornerRadius = UDim.new(0, 8)
+        toggleCorner.CornerRadius = UDim.new(0, 9)
         toggleCorner.Parent = toggleBtnItem
 
         local titleLbl = Instance.new("TextLabel")
-        titleLbl.Size = UDim2.new(1, -45, 0, 16)
-        titleLbl.Position = UDim2.fromOffset(8, 2)
+        titleLbl.Size = UDim2.new(1, -58, 0, 19)
+        titleLbl.Position = UDim2.fromOffset(10, 3)
         titleLbl.BackgroundTransparency = 1
         titleLbl.Font = Enum.Font.GothamBold
         titleLbl.Text = title
         titleLbl.TextColor3 = Color3.fromRGB(240, 240, 240)
-        titleLbl.TextSize = 10
+        titleLbl.TextSize = 11
         titleLbl.TextXAlignment = Enum.TextXAlignment.Left
         titleLbl.Parent = toggleBtnItem
 
         local descLbl = Instance.new("TextLabel")
-        descLbl.Size = UDim2.new(1, -45, 0, 14)
-        descLbl.Position = UDim2.fromOffset(8, 18)
+        descLbl.Size = UDim2.new(1, -58, 0, 16)
+        descLbl.Position = UDim2.fromOffset(10, 22)
         descLbl.BackgroundTransparency = 1
         descLbl.Font = Enum.Font.Gotham
         descLbl.Text = desc
@@ -283,8 +290,8 @@ function UI.Init(Shared)
         descLbl.Parent = toggleBtnItem
 
         local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.fromOffset(16, 16)
-        indicator.Position = UDim2.new(1, -24, 0.5, -8)
+        indicator.Size = UDim2.fromOffset(18, 18)
+        indicator.Position = UDim2.new(1, -29, 0.5, -9)
         indicator.BackgroundColor3 = Config[configKey] and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(50, 50, 60)
         indicator.Parent = toggleBtnItem
         Instance.new("UICorner", indicator).CornerRadius = UDim.new(0, 4)
