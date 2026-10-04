@@ -3103,6 +3103,8 @@ function Arcane.Init(Shared, UI)
     statusLabel.Parent = section
 
     
+    local scanSelectedChests
+
     -------------------------------------------------
     -- CHEST ESP / SCAN CONTROL UI
     -------------------------------------------------
@@ -5199,7 +5201,7 @@ local function scanAllWorkspaceChests()
     end
 
     -- Filter changes use the location cache instead of rescanning the map.
-    local function scanSelectedChests()
+    scanSelectedChests = function()
         if not staticChestLocationsScanned then
             scanStaticChestLocations()
         else
