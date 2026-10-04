@@ -760,6 +760,11 @@ local function looksLikeChestModel(model)
     return false
 end
 
+-- getChestRoot() is defined outside Arcane.Init(), so its weak cache
+-- must also live at module scope. Keeping it inside Init() would make the
+-- helper resolve a nil/global cache and spam "attempt to index nil".
+local chestRootCache = setmetatable({}, {__mode = "k"})
+
 local function getChestTarget(object)
     if not object or not object.Parent then
         return nil
@@ -3432,7 +3437,6 @@ function Arcane.Init(Shared, UI)
     local openedChestLocations = {}
     local chestLifecycleWatchers = {}
     local chestTypeCache = setmetatable({}, {__mode = "k"})
-    local chestRootCache = setmetatable({}, {__mode = "k"})
     local staticChestAnchor = nil
     local isOpenedChestLocation
 
