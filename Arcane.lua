@@ -7212,14 +7212,32 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     local function extractFishingState(...)
         local args = {...}
 
-        -- Works whether RemoteSpy displays Player as argument #1
-        -- or only shows the actual event payload.
-        for _, value in ipairs(args) do
-            if value == "Bump"
-                or value == "Bite"
-                or value == "Complete" then
-                return value
-            end
+        -- Arcane's FishEvent is a global client event. Bump/Bite/Complete
+        -- include the player who owns that fishing event as argument #1.
+        -- Auto Fishing must NEVER react to another player's Bite.
+        local eventPlayer = args[1]
+
+        if typeof(eventPlayer) ~= "Instance"
+            or not eventPlayer:IsA("Player") then
+            return nil
+        end
+
+        if eventPlayer ~= Shared.player then
+            fishingDebugLog(
+                "IGNORED FOREIGN FISHEVENT | Player="
+                    .. tostring(eventPlayer.Name)
+                    .. " | State="
+                    .. tostring(args[2])
+            )
+            return nil
+        end
+
+        local state = args[2]
+
+        if state == "Bump"
+            or state == "Bite"
+            or state == "Complete" then
+            return state
         end
 
         return nil
