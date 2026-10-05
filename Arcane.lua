@@ -369,6 +369,95 @@ end
 -- ARCANE CHEST TYPES / FILTER REGISTRY
 -------------------------------------------------
 
+local FISHING_ROD_BASE_NAMES = {
+    "Wooden Rod",
+    "Bronze Rod",
+    "Collector's Rod",
+    "Fishmonger's Rod",
+}
+
+local FISHING_ROD_ENCHANTMENTS = {
+    "Luring",
+    "Sturdy",
+    "Lucky",
+    "Magnetic",
+    "Ensnaring",
+    "Toughened",
+    "Graced",
+    "Treasurer",
+}
+
+local FISHING_ROD_OPTIONS = {}
+
+-- Expose every known base rod and enchantment combination in the selector.
+for _, baseRod in ipairs(FISHING_ROD_BASE_NAMES) do
+    table.insert(FISHING_ROD_OPTIONS, baseRod)
+
+    for _, enchantment in ipairs(FISHING_ROD_ENCHANTMENTS) do
+        table.insert(
+            FISHING_ROD_OPTIONS,
+            enchantment .. " " .. baseRod
+        )
+    end
+end
+
+local function getFishingRodDisplayOptions(player)
+    local options = {}
+    local seen = {}
+
+    local function add(name)
+        if type(name) ~= "string" or name == "" then
+            return
+        end
+
+        local key = normalizeName(name)
+        if key == "" or seen[key] then
+            return
+        end
+
+        seen[key] = true
+        table.insert(options, name)
+    end
+
+    for _, name in ipairs(FISHING_ROD_OPTIONS) do
+        add(name)
+    end
+
+    -- Also expose any actual fishing-tool names present in the player's
+    -- inventory, so newly-added rod variants remain selectable.
+    local function scan(container)
+        if not container then
+            return
+        end
+
+        for _, child in ipairs(container:GetChildren()) do
+            if child:IsA("Tool") then
+                local normalized = normalizeName(child.Name)
+
+                if normalized:find("fishingrod", 1, true) ~= nil
+                    or normalized == "rod"
+                    or normalized:find("woodenrod", 1, true) ~= nil
+                    or normalized:find("bronzerod", 1, true) ~= nil
+                    or normalized:find("collectorsrod", 1, true) ~= nil
+                    or normalized:find("fishmongersrod", 1, true) ~= nil then
+                    add(child.Name)
+                end
+            end
+        end
+    end
+
+    if player then
+        scan(player.Character)
+        scan(player:FindFirstChildOfClass("Backpack"))
+    end
+
+    return options
+end
+
+-------------------------------------------------
+-- ARCANE CHEST TYPES / FILTER REGISTRY
+-------------------------------------------------
+
 local CHEST_TYPE_ORDER = {
     "COMMON",
     "UNCOMMON",
@@ -2835,6 +2924,11 @@ function Arcane.Init(Shared, UI)
     Config.ArcaneAutoFishing = Config.ArcaneAutoFishing == true
     Config.ArcaneFishingDebug = Config.ArcaneFishingDebug == true
 
+    if type(Config.ArcaneFishingRod) ~= "string"
+        or Config.ArcaneFishingRod == "" then
+        Config.ArcaneFishingRod = FISHING_ROD_OPTIONS[1] or "Wooden Rod"
+    end
+
     -- Chest filters start OFF. The user selects the chest types they want.
     if type(Config.ArcaneChestFilter) ~= "table" then
         Config.ArcaneChestFilter = {}
@@ -3403,23 +3497,26 @@ function Arcane.Init(Shared, UI)
     local fishingSection = UI.createSection(
         miscTab,
         "Auto Fishing",
-        170
+        230
     )
 
     UI.createToggle(
         fishingSection,
         "Auto Fishing",
-        "Auto equips the rod, casts, reels, and recasts.",
+        "Auto equips the selected rod, casts, reels, and recasts.",
         "ArcaneAutoFishing",
         32
     )
 
-    UI.createToggle(
+    UI.createDropdown(
         fishingSection,
-        "Fishing Debug",
-        "Records manual rod activations plus FishEvent payloads and fishing state changes.",
-        "ArcaneFishingDebug",
-        80
+        "Fishing Rod",
+        "Select the exact rod Auto Fishing should use.",
+        getFishingRodDisplayOptions(Shared.player),
+        "ArcaneFishingRod",
+        10,
+        80,
+        330
     )
 
     local openFishingDebugList
@@ -3427,7 +3524,7 @@ function Arcane.Init(Shared, UI)
 
     local debugListButton = Instance.new("TextButton")
     debugListButton.Size = UDim2.fromOffset(130, 28)
-    debugListButton.Position = UDim2.fromOffset(10, 108)
+    debugListButton.Position = UDim2.fromOffset(10, 146)
     debugListButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     debugListButton.BorderSizePixel = 0
     debugListButton.Text = "VIEW DEBUG"
@@ -3445,7 +3542,7 @@ function Arcane.Init(Shared, UI)
 
     local fishingStatusLabel = Instance.new("TextLabel")
     fishingStatusLabel.Size = UDim2.new(1, -20, 0, 30)
-    fishingStatusLabel.Position = UDim2.fromOffset(10, 132)
+    fishingStatusLabel.Position = UDim2.fromOffset(10, 182)
     fishingStatusLabel.BackgroundTransparency = 1
     fishingStatusLabel.Text = "Status: OFF | Put cursor over water first."
     fishingStatusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
@@ -6994,42 +7091,32 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end
 
     local function findFishingRod()
+        local selectedName = normalizeName(Config.ArcaneFishingRod)
         local character = Shared.player.Character
-
-        local function isFishingRod(tool)
-            if not tool:IsA("Tool") then
-                return false
-            end
-
-            local name = normalizeName(tool.Name)
-
-            return name:find("fishingrod", 1, true) ~= nil
-                or name == "rod"
-                or name:find("woodenrod", 1, true) ~= nil
-                or name:find("bronzerod", 1, true) ~= nil
-                or name:find("collectorsrod", 1, true) ~= nil
-                or name:find("fishmongersrod", 1, true) ~= nil
-        end
-
-        if character then
-            for _, child in ipairs(character:GetChildren()) do
-                if isFishingRod(child) then
-                    return child
-                end
-            end
-        end
-
         local backpack = Shared.player:FindFirstChildOfClass("Backpack")
 
-        if backpack then
-            for _, child in ipairs(backpack:GetChildren()) do
-                if isFishingRod(child) then
+        if selectedName == "" then
+            return nil
+        end
+
+        local function findExact(container)
+            if not container then
+                return nil
+            end
+
+            for _, child in ipairs(container:GetChildren()) do
+                if child:IsA("Tool")
+                    and normalizeName(child.Name) == selectedName then
                     return child
                 end
             end
+
+            return nil
         end
 
-        return nil
+        -- Exact-name matching prevents Auto Fishing from silently switching
+        -- to a different rod when multiple rods are in the inventory.
+        return findExact(character) or findExact(backpack)
     end
 
     local function disconnectFishingDebugHooks()
@@ -7316,7 +7403,9 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         if not rod then
             fishingState = "WAITING_ROD"
-            setFishingStatus("Waiting for fishing rod...")
+            setFishingStatus(
+                "Waiting for selected rod: " .. tostring(Config.ArcaneFishingRod)
+            )
             task.wait(0.5)
             return false
         end
