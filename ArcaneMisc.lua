@@ -4437,114 +4437,185 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local function findTreasureIslandModel(islandName)
         local map = workspace:FindFirstChild("Map")
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local rs = replicatedStorage:FindFirstChild("RS")
+        local unloadIslands = rs and rs:FindFirstChild("UnloadIslands")
 
-        if not map or not islandName then
+        if (not map and not unloadIslands) or not islandName then
             treasureDebugLog(
-                ("ISLAND LOOKUP FAIL | Map=%s | Island=%s")
-                    :format(tostring(map ~= nil), tostring(islandName))
+                ("ISLAND LOOKUP FAIL | Map=%s | UnloadIslands=%s | Island=%s")
+                    :format(
+                        tostring(map ~= nil),
+                        tostring(unloadIslands ~= nil),
+                        tostring(islandName)
+                    )
             )
             return nil
         end
 
         local wanted = treasureNormalize(islandName)
 
-        -- Fast path: Roblox's recursive FindFirstChild is much cheaper than
-        -- walking every Map descendant on every chart refresh.
-        local exact = map:FindFirstChild(islandName, true)
-
-        if exact then
-            if exact:IsA("Model") then
-                treasureDebugLog(
-                    ("ISLAND FOUND | Method=RecursiveExactModel | Wanted=%s | Model=%s")
-                        :format(tostring(islandName), treasureDebugValue(exact))
-                )
-                return exact
+        local function tryRoot(root, sourceName)
+            if not root then
+                return nil
             end
 
-            local nested = exact:FindFirstChildWhichIsA("Model", true)
+            local exact = root:FindFirstChild(islandName, true)
 
-            if nested then
-                treasureDebugLog(
-                    ("ISLAND FOUND | Method=RecursiveExactNested | Wanted=%s | Model=%s")
-                        :format(tostring(islandName), treasureDebugValue(nested))
-                )
-                return nested
-            end
-        end
-
-        -- Normalized direct-child lookup handles harmless naming differences
-        -- such as punctuation/casing without scanning the entire map.
-        for _, child in ipairs(map:GetChildren()) do
-            if treasureNormalize(child.Name) == wanted then
-                if child:IsA("Model") then
+            if exact then
+                if exact:IsA("Model") then
                     treasureDebugLog(
-                        ("ISLAND FOUND | Method=NormalizedDirectChild | Wanted=%s | Model=%s")
-                            :format(tostring(islandName), treasureDebugValue(child))
+                        ("ISLAND FOUND | Method=RecursiveExactModel | Source=%s | Wanted=%s | Model=%s")
+                            :format(
+                                sourceName,
+                                tostring(islandName),
+                                treasureDebugValue(exact)
+                            )
                     )
-                    return child
+                    return exact
                 end
 
-                local model = child:FindFirstChildWhichIsA("Model", true)
-
-                if model then
-                    treasureDebugLog(
-                        ("ISLAND FOUND | Method=NormalizedNestedModel | Wanted=%s | Model=%s")
-                            :format(tostring(islandName), treasureDebugValue(model))
-                    )
-                    return model
-                end
-            end
-        end
-
-        -- Final bounded fallback. The old implementation could spend a very
-        -- long time walking a huge streamed Map:GetDescendants() list, which
-        -- blocked the whole Finder and prevented SCAN/MARKER/DISTANCE logs.
-        local started = os.clock()
-        local maxLookupSeconds = 2.5
-
-        for index, child in ipairs(map:GetDescendants()) do
-            if index % 500 == 0 then
-                task.wait()
-            end
-
-            if os.clock() - started >= maxLookupSeconds then
-                treasureDebugLog(
-                    ("ISLAND LOOKUP TIMEOUT | Wanted=%s | Checked=%d | Seconds=%.2f")
-                        :format(
-                            tostring(islandName),
-                            index,
-                            os.clock() - started
-                        )
-                )
-                break
-            end
-
-            if (child:IsA("Model") or child:IsA("Folder"))
-                and treasureNormalize(child.Name) == wanted then
-
-                if child:IsA("Model") then
-                    treasureDebugLog(
-                        ("ISLAND FOUND | Method=BoundedNormalizedDescendant | Wanted=%s | Model=%s")
-                            :format(tostring(islandName), treasureDebugValue(child))
-                    )
-                    return child
-                end
-
-                local nested = child:FindFirstChildWhichIsA("Model", true)
+                local nested = exact:FindFirstChildWhichIsA("Model", true)
 
                 if nested then
                     treasureDebugLog(
-                        ("ISLAND FOUND | Method=BoundedNormalizedNested | Wanted=%s | Model=%s")
-                            :format(tostring(islandName), treasureDebugValue(nested))
+                        ("ISLAND FOUND | Method=RecursiveExactNested | Source=%s | Wanted=%s | Model=%s")
+                            :format(
+                                sourceName,
+                                tostring(islandName),
+                                treasureDebugValue(nested)
+                            )
                     )
                     return nested
+                end
+            end
+
+            for _, child in ipairs(root:GetChildren()) do
+                if treasureNormalize(child.Name) == wanted then
+                    if child:IsA("Model") then
+                        treasureDebugLog(
+                            ("ISLAND FOUND | Method=NormalizedDirectChild | Source=%s | Wanted=%s | Model=%s")
+                                :format(
+                                    sourceName,
+                                    tostring(islandName),
+                                    treasureDebugValue(child)
+                                )
+                        )
+                        return child
+                    end
+
+                    local nested = child:FindFirstChildWhichIsA("Model", true)
+
+                    if nested then
+                        treasureDebugLog(
+                            ("ISLAND FOUND | Method=NormalizedNestedModel | Source=%s | Wanted=%s | Model=%s")
+                                :format(
+                                    sourceName,
+                                    tostring(islandName),
+                                    treasureDebugValue(nested)
+                                )
+                        )
+                        return nested
+                    end
+                end
+            end
+
+            return nil
+        end
+
+        -- First use the live streamed map, then the game's replicated
+        -- UnloadIslands source. The latter is essential for a truly global
+        -- Treasure Chart Finder because the destination island may be far
+        -- outside the client's current streaming radius.
+        local live = tryRoot(map, "Workspace.Map")
+
+        if live then
+            return live
+        end
+
+        local unloaded = tryRoot(unloadIslands, "RS.UnloadIslands")
+
+        if unloaded then
+            return unloaded
+        end
+
+        -- Final bounded fallback over both roots.
+        local roots = {
+            {
+                root = map,
+                source = "Workspace.Map",
+            },
+            {
+                root = unloadIslands,
+                source = "RS.UnloadIslands",
+            },
+        }
+
+        local started = os.clock()
+        local maxLookupSeconds = 2.5
+
+        for _, entry in ipairs(roots) do
+            if entry.root then
+                local descendants = entry.root:GetDescendants()
+
+                for index, child in ipairs(descendants) do
+                    if index % 500 == 0 then
+                        task.wait()
+                    end
+
+                    if os.clock() - started >= maxLookupSeconds then
+                        treasureDebugLog(
+                            ("ISLAND LOOKUP TIMEOUT | Wanted=%s | Source=%s | Checked=%d | Seconds=%.2f")
+                                :format(
+                                    tostring(islandName),
+                                    entry.source,
+                                    index,
+                                    os.clock() - started
+                                )
+                        )
+                        return nil
+                    end
+
+                    if (child:IsA("Model") or child:IsA("Folder"))
+                        and treasureNormalize(child.Name) == wanted then
+
+                        if child:IsA("Model") then
+                            treasureDebugLog(
+                                ("ISLAND FOUND | Method=BoundedNormalizedDescendant | Source=%s | Wanted=%s | Model=%s")
+                                    :format(
+                                        entry.source,
+                                        tostring(islandName),
+                                        treasureDebugValue(child)
+                                    )
+                            )
+                            return child
+                        end
+
+                        local nested = child:FindFirstChildWhichIsA("Model", true)
+
+                        if nested then
+                            treasureDebugLog(
+                                ("ISLAND FOUND | Method=BoundedNormalizedNested | Source=%s | Wanted=%s | Model=%s")
+                                    :format(
+                                        entry.source,
+                                        tostring(islandName),
+                                        treasureDebugValue(nested)
+                                    )
+                            )
+                            return nested
+                        end
+                    end
                 end
             end
         end
 
         treasureDebugLog(
-            ("ISLAND NOT FOUND | Wanted=%s | Map=%s")
-                :format(tostring(islandName), treasureDebugValue(map))
+            ("ISLAND NOT FOUND | Wanted=%s | Map=%s | UnloadIslands=%s")
+                :format(
+                    tostring(islandName),
+                    treasureDebugValue(map),
+                    treasureDebugValue(unloadIslands)
+                )
         )
 
         return nil
@@ -4694,15 +4765,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return {}
         end
 
-        local explicitPart = getTreasureChartExplicitSpot(islandModel)
-        if explicitPart then
-            treasureDebugLog(
-                ("CANDIDATES | ExplicitSpot=%s | Method=Explicit")
-                    :format(treasureDebugValue(explicitPart))
-            )
-            return {explicitPart}
-        end
-
+        -- A generic treasure tag is not guaranteed to belong to the
+        -- active TextN clue, so candidate selection must use the clue itself.
         local islandRadius = math.max(size.X, size.Z) * 0.5
 
         if islandRadius <= 10 then
@@ -5033,7 +5097,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         if treasureChartNeedsScan
-            and (os.clock() - treasureChartLastScanAttempt) >= 1 then
+            and (os.clock() - treasureChartLastScanAttempt) >= 0.35 then
 
             -- The island may not exist yet because Arcane streams Map content
             -- after the chart GUI/tool becomes available. The old code marked
@@ -5100,6 +5164,18 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     end
                 end
 
+                if markerPosition then
+                    pcall(function()
+                        if type(workspace.RequestStreamAroundAsync) == "function" then
+                            workspace:RequestStreamAroundAsync(markerPosition, 2)
+                            treasureDebugLog(
+                                ("STREAM REQUEST | Position=%s")
+                                    :format(treasureDebugValue(markerPosition))
+                            )
+                        end
+                    end)
+                end
+
                 createTreasureChartMarker(markerPosition, info)
 
                 treasureDebugLog("STEP | AfterMarkerCreate")
@@ -5114,7 +5190,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 treasureChartNeedsScan = true
 
                 treasureDebugLog(
-                    ("SCAN RETRY QUEUED | Island=%s | NextRetry=1s")
+                    ("SCAN RETRY QUEUED | Island=%s | NextRetry=0.35s")
                         :format(tostring(info.island))
                 )
             end
