@@ -7077,6 +7077,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     -- interrupts the cast.
     local fishingLineInWater = false
     local fishingRecoveryRequested = false
+    local fishingForceRemoteCast = false
     local fishingRodRecoveryConnections = setmetatable({}, {__mode = "k"})
     local fishingExpectedActivations = setmetatable({}, {__mode = "k"})
     local hookFishingRodRecovery
@@ -7089,6 +7090,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
 
         fishingRecoveryRequested = true
+        fishingForceRemoteCast = true
         fishingLineInWater = false
 
         fishingDebugLog(
@@ -7409,6 +7411,40 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
     end)
 
+    local function fireFishingToolAction(rod)
+        if not rod or not rod.Parent then
+            return false
+        end
+
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local rs = replicatedStorage:FindFirstChild("RS")
+        local remotes = rs and rs:FindFirstChild("Remotes")
+        local misc = remotes and remotes:FindFirstChild("Misc")
+        local toolAction = misc and misc:FindFirstChild("ToolAction")
+
+        if not toolAction or not toolAction:IsA("RemoteEvent") then
+            fishingDebugLog("REMOTE CAST FAILED | ToolAction missing")
+            return false
+        end
+
+        pcall(function()
+            rod.Enabled = true
+        end)
+
+        local ok = pcall(function()
+            toolAction:FireServer(rod)
+        end)
+
+        fishingDebugLog(
+            ("ToolAction CAST | Rod=%s | Success=%s"):format(
+                tostring(rod.Name),
+                tostring(ok)
+            )
+        )
+
+        return ok
+    end
+
     local function activateRod(rod)
         if not rod or not rod.Parent then
             return false
@@ -7638,8 +7674,27 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         task.wait(0.10)
 
-        -- This is the same single activation used by the normal fishing cycle.
-        local castOk = activateRod(rod)
+        pcall(function()
+            rod.Enabled = true
+        end)
+
+        local forceRemoteCast = fishingForceRemoteCast
+        fishingForceRemoteCast = false
+
+        local castOk
+
+        if forceRemoteCast then
+            -- Recovery casts use the game's direct ToolAction path because a
+            -- previous manual activation can leave Tool:Activate() unusable.
+            castOk = fireFishingToolAction(rod)
+
+            if not castOk then
+                castOk = activateRod(rod)
+            end
+        else
+            -- First/normal cast keeps the original behavior.
+            castOk = activateRod(rod)
+        end
 
         if not castOk then
             fishingCycleRunning = false
@@ -7815,6 +7870,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             if not Config.ArcaneAutoFishing then
                 fishingCycleRunning = false
                 fishingRecoveryRequested = false
+                fishingForceRemoteCast = false
                 fishingLineInWater = false
                 fishingState = "OFF"
                 biteReceived = false
@@ -7890,6 +7946,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         table.clear(fishingExpectedActivations)
         fishingRecoveryRequested = false
+        fishingForceRemoteCast = false
         fishingLineInWater = false
 
         if fishingDebugGui then
