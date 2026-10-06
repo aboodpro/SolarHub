@@ -1245,16 +1245,16 @@ function ArcaneFarming.Init(Shared, UI, Context)
             rod
         )
 
-        if forceRemoteCast then
-            -- Recovery casts use the game's direct ToolAction path because a
-            -- previous manual activation can leave Tool:Activate() unusable.
-            castOk = fireFishingToolAction(rod)
+        -- Arcane's rod cast is reliably triggered through the same
+        -- ToolAction remote used by the normal game interaction. Use that
+        -- path for every cast, not only recovery casts. Tool:Activate() is
+        -- retained as a fallback for places/states where the remote is absent.
+        castOk = fireFishingToolAction(rod)
 
-            if not castOk then
-                castOk = activateRod(rod)
-            end
-        else
-            -- First/normal cast keeps the original behavior.
+        if not castOk then
+            fishingDebugLog(
+                "DIRECT CAST FAILED | Falling back to Tool:Activate()"
+            )
             castOk = activateRod(rod)
         end
 
