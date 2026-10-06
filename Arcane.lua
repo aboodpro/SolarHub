@@ -7122,6 +7122,85 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
     end
 
+    local function fishingRodDebugSnapshot(reason, rod)
+        if not Config.ArcaneFishingDebug then
+            return
+        end
+
+        local character = Shared.player.Character
+        local backpack = Shared.player:FindFirstChildOfClass("Backpack")
+        local equippedTool = character
+            and character:FindFirstChildWhichIsA("Tool")
+
+        local selectedName = tostring(Config.ArcaneFishingRod)
+        local selectedNormalized = normalizeName(Config.ArcaneFishingRod)
+
+        local selectedInCharacter = nil
+        local selectedInBackpack = nil
+        local selectedTool = rod
+
+        local function scan(container)
+            if not container then
+                return
+            end
+
+            for _, child in ipairs(container:GetChildren()) do
+                if child:IsA("Tool")
+                    and normalizeName(child.Name) == selectedNormalized then
+
+                    if container == character then
+                        selectedInCharacter = child
+                    elseif container == backpack then
+                        selectedInBackpack = child
+                    end
+
+                    if not selectedTool then
+                        selectedTool = child
+                    end
+                end
+            end
+        end
+
+        scan(character)
+        scan(backpack)
+
+        local selectedParent = selectedTool
+            and selectedTool.Parent
+            and selectedTool.Parent:GetFullName()
+            or "<none>"
+
+        local enabled = "<n/a>"
+        local requiresHandle = "<n/a>"
+
+        if selectedTool then
+            pcall(function()
+                enabled = tostring(selectedTool.Enabled)
+            end)
+            pcall(function()
+                requiresHandle = tostring(selectedTool.RequiresHandle)
+            end)
+        end
+
+        fishingDebugLog(
+            ("ROD SNAPSHOT | Reason=%s | Selected=%s | Tool=%s | Parent=%s | "
+                .. "EquippedTool=%s | InCharacter=%s | InBackpack=%s | Enabled=%s | "
+                .. "RequiresHandle=%s | LineInWater=%s | CycleRunning=%s | State=%s"):format(
+                tostring(reason),
+                selectedName,
+                tostring(selectedTool and selectedTool.Name or "<none>"),
+                selectedParent,
+                tostring(equippedTool and equippedTool.Name or "<none>"),
+                tostring(selectedInCharacter ~= nil),
+                tostring(selectedInBackpack ~= nil),
+                tostring(enabled),
+                tostring(requiresHandle),
+                tostring(fishingLineInWater),
+                tostring(fishingCycleRunning),
+                tostring(fishingState)
+            )
+        )
+    end
+
     hookFishingRodRecovery = function(tool)
         if not tool or not tool:IsA("Tool") then
             return
@@ -7140,6 +7219,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         local ok, connection = pcall(function()
             return tool.Activated:Connect(function()
+                fishingRodDebugSnapshot("Tool.Activated", tool)
+
                 local expected = fishingExpectedActivations[tool] or 0
 
                 if expected > 0 then
@@ -7330,29 +7411,57 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         local needsEquip = rod.Parent ~= character or currentTool ~= rod
 
         if forceClean and needsEquip then
+            fishingRodDebugSnapshot("Before UnequipTools", rod)
+
             pcall(function()
                 humanoid:UnequipTools()
             end)
+
+            fishingRodDebugSnapshot("After UnequipTools", rod)
             task.wait(0.08)
         end
 
         if needsEquip or rod.Parent ~= character then
+            fishingDebugLog(
+                ("EQUIP ATTEMPT | Rod=%s | PreviousParent=%s | ForceClean=%s"):format(
+                    tostring(rod.Name),
+                    tostring(rod.Parent and rod.Parent:GetFullName() or "<none>"),
+                    tostring(forceClean == true)
+                )
+            )
+
             pcall(function()
                 humanoid:EquipTool(rod)
             end)
+
             task.wait(0.22)
+            fishingRodDebugSnapshot("After EquipTool", rod)
         end
 
         -- Verify the selected rod is actually the equipped tool.
-        for _ = 1, 4 do
+        for verifyAttempt = 1, 4 do
             if rod.Parent == character
                 and character:FindFirstChildWhichIsA("Tool") == rod then
+
+                fishingRodDebugSnapshot(
+                    "Equip verified attempt " .. tostring(verifyAttempt),
+                    rod
+                )
                 break
             end
+
+            fishingDebugLog(
+                ("EQUIP VERIFY FAILED | Attempt=%d | RodParent=%s | CurrentTool=%s"):format(
+                    verifyAttempt,
+                    tostring(rod.Parent and rod.Parent:GetFullName() or "<none>"),
+                    tostring(character:FindFirstChildWhichIsA("Tool") and character:FindFirstChildWhichIsA("Tool").Name or "<none>")
+                )
+            )
 
             pcall(function()
                 humanoid:EquipTool(rod)
             end)
+
             task.wait(0.08)
         end
 
@@ -7375,6 +7484,11 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
                 if selectedRod then
                     hookFishingRodRecovery(selectedRod)
+
+                    if fishingRecoveryRequested
+                        or fishingState == "RECOVERY" then
+                        fishingRodDebugSnapshot("Watchdog recovery", selectedRod)
+                    end
 
                     local character = Shared.player.Character
 
@@ -7427,6 +7541,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             return false
         end
 
+        fishingRodDebugSnapshot("Before ToolAction CAST", rod)
+
         pcall(function()
             rod.Enabled = true
         end)
@@ -7435,10 +7551,13 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             toolAction:FireServer(rod)
         end)
 
+        fishingRodDebugSnapshot("After ToolAction CAST", rod)
+
         fishingDebugLog(
-            ("ToolAction CAST | Rod=%s | Success=%s"):format(
+            ("ToolAction CAST | Rod=%s | Success=%s | State=%s"):format(
                 tostring(rod.Name),
-                tostring(ok)
+                tostring(ok),
+                tostring(fishingState)
             )
         )
 
@@ -7682,6 +7801,11 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         fishingForceRemoteCast = false
 
         local castOk
+
+        fishingRodDebugSnapshot(
+            forceRemoteCast and "Recovery cast preparation" or "Normal cast preparation",
+            rod
+        )
 
         if forceRemoteCast then
             -- Recovery casts use the game's direct ToolAction path because a
