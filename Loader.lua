@@ -7,7 +7,7 @@
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "1e4ee5a16bf00138783403ce9e4e6d3658ee1936"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-06-ARCANE-38-MODULE-SPLIT-INIT-FIX"
+local LOADER_VERSION = "2026-10-06-ARCANE-39-INIT-TRACEBACK"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 pcall(function()
@@ -691,17 +691,38 @@ task.spawn(function()
 
     
     local function runModule(label, fn)
+        local capturedError = nil
+
         local ok, result = xpcall(fn, function(err)
-            local msg = "[Loader] " .. label .. " ERROR: " .. tostring(err)
+            capturedError = debug.traceback(tostring(err), 2)
+
+            local msg = "[Loader] " .. label .. " ERROR:\n" .. capturedError
+
             warn(msg)
-            return debug.traceback(tostring(err), 2)
+            debugLog(msg)
+
+            return capturedError
         end)
-    
+
         if not ok then
             warn("[Loader] " .. label .. " failed; continuing where possible.")
+
+            if allowedGame.Name == "Arcane Odyssey" then
+                -- Arcane initialization errors used to collapse into the generic
+                -- "Arcane failed to initialize" message. Keep the exact traceback
+                -- visible so module-split regressions can be fixed from evidence.
+                setLoadingStatus(label .. " failed - open DEBUG")
+                showDebugUI()
+
+                if capturedError then
+                    print("========== SOLARHUB ARCANE INIT ERROR ==========")
+                    print(capturedError)
+                end
+            end
+
             return nil
         end
-    
+
         return result
     end
     
