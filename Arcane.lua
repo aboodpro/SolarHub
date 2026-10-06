@@ -3497,7 +3497,7 @@ function Arcane.Init(Shared, UI)
     local fishingSection = UI.createSection(
         miscTab,
         "Auto Fishing",
-        310
+        370
     )
 
     UI.createToggle(
@@ -3505,7 +3505,7 @@ function Arcane.Init(Shared, UI)
         "Auto Fishing",
         "Auto equips the selected rod, casts, reels, and recasts.",
         "ArcaneAutoFishing",
-        32
+        38
     )
 
     UI.createDropdown(
@@ -3515,17 +3515,19 @@ function Arcane.Init(Shared, UI)
         getFishingRodDisplayOptions(Shared.player),
         "ArcaneFishingRod",
         10,
-        80,
+        94,
         330
     )
 
+    -- Keep the debug controls completely below the Rod dropdown popup.
+    -- The dropdown popup occupies roughly y=136..216 when expanded.
     UI.createToggle(
         fishingSection,
         "Fishing Debug",
         "Records rod equip/unequip, ToolAction recovery casts, Tool.Activated, and FishEvent details.",
         "ArcaneFishingDebug",
         10,
-        146
+        226
     )
 
     local openFishingDebugList
@@ -3533,7 +3535,7 @@ function Arcane.Init(Shared, UI)
 
     local debugListButton = Instance.new("TextButton")
     debugListButton.Size = UDim2.fromOffset(130, 28)
-    debugListButton.Position = UDim2.fromOffset(10, 198)
+    debugListButton.Position = UDim2.fromOffset(10, 278)
     debugListButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     debugListButton.BorderSizePixel = 0
     debugListButton.Text = "VIEW DEBUG"
@@ -3551,7 +3553,7 @@ function Arcane.Init(Shared, UI)
 
     local fishingStatusLabel = Instance.new("TextLabel")
     fishingStatusLabel.Size = UDim2.new(1, -20, 0, 46)
-    fishingStatusLabel.Position = UDim2.fromOffset(10, 238)
+    fishingStatusLabel.Position = UDim2.fromOffset(10, 318)
     fishingStatusLabel.BackgroundTransparency = 1
     fishingStatusLabel.Text = "Status: OFF | Select a rod, then enable Auto Fishing."
     fishingStatusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
