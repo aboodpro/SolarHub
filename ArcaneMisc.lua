@@ -2844,7 +2844,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
         error("[ArcaneMisc] Misc tab is missing.")
     end
 
-    miscTab.Visible = true
     miscTab.CanvasPosition = Vector2.zero
 
     -------------------------------------------------
