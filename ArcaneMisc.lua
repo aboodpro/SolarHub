@@ -4071,6 +4071,76 @@ function ArcaneMisc.Init(Shared, UI, Context)
         openTreasureDebugList()
     end)
 
+    local treasureTeleportButton = Instance.new("TextButton")
+    treasureTeleportButton.Size = UDim2.fromOffset(130, 28)
+    treasureTeleportButton.Position = UDim2.fromOffset(150, 194)
+    treasureTeleportButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+    treasureTeleportButton.BorderSizePixel = 0
+    treasureTeleportButton.Text = "TP TO TREASURE"
+    treasureTeleportButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+    treasureTeleportButton.Font = Enum.Font.GothamBold
+    treasureTeleportButton.TextSize = 9
+    treasureTeleportButton.Parent = treasureChartSection
+    Instance.new("UICorner", treasureTeleportButton).CornerRadius = UDim.new(0, 7)
+
+    treasureTeleportButton.Activated:Connect(function()
+        local marker = treasureChartESP
+        local position = marker and marker.position
+        local character = Shared.player and Shared.player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+
+        if typeof(position) ~= "Vector3" then
+            treasureTeleportButton.Text = "NO TARGET"
+
+            task.delay(1.2, function()
+                if treasureTeleportButton and treasureTeleportButton.Parent then
+                    treasureTeleportButton.Text = "TP TO TREASURE"
+                end
+            end)
+
+            treasureDebugLog("TP | Failed | MarkerPosition=nil")
+            return
+        end
+
+        if not root then
+            treasureTeleportButton.Text = "NO CHARACTER"
+
+            task.delay(1.2, function()
+                if treasureTeleportButton and treasureTeleportButton.Parent then
+                    treasureTeleportButton.Text = "TP TO TREASURE"
+                end
+            end)
+
+            treasureDebugLog("TP | Failed | HumanoidRootPart=nil")
+            return
+        end
+
+        local targetPosition = position + Vector3.new(0, 4, 0)
+        local ok, err = pcall(function()
+            root.CFrame = CFrame.new(targetPosition)
+        end)
+
+        if ok then
+            treasureTeleportButton.Text = "TELEPORTED"
+            treasureDebugLog(
+                ("TP | Success | Position=%s")
+                    :format(treasureDebugValue(targetPosition))
+            )
+        else
+            treasureTeleportButton.Text = "TP FAILED"
+            treasureDebugLog(
+                ("TP | Failed | Error=%s")
+                    :format(tostring(err))
+            )
+        end
+
+        task.delay(1.2, function()
+            if treasureTeleportButton and treasureTeleportButton.Parent then
+                treasureTeleportButton.Text = "TP TO TREASURE"
+            end
+        end)
+    end)
+
     -------------------------------------------------
     -- TREASURE CHART TRACKER
     -------------------------------------------------
