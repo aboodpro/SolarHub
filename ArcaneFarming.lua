@@ -1245,17 +1245,17 @@ function ArcaneFarming.Init(Shared, UI, Context)
             rod
         )
 
-        -- Arcane's rod cast is reliably triggered through the same
-        -- ToolAction remote used by the normal game interaction. Use that
-        -- path for every cast, not only recovery casts. Tool:Activate() is
-        -- retained as a fallback for places/states where the remote is absent.
-        castOk = fireFishingToolAction(rod)
+        -- Use the Tool's normal activation path first. A successful
+        -- RemoteEvent:FireServer() call only means the Lua call itself did not
+        -- error; it does NOT prove that Arcane accepted the cast. The real rod
+        -- activation is therefore the primary path.
+        castOk = activateRod(rod)
 
         if not castOk then
             fishingDebugLog(
-                "DIRECT CAST FAILED | Falling back to Tool:Activate()"
+                "TOOL ACTIVATE FAILED | Falling back to ToolAction"
             )
-            castOk = activateRod(rod)
+            castOk = fireFishingToolAction(rod)
         end
 
         if not castOk then
