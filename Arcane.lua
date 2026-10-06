@@ -7071,6 +7071,34 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     local completeReceived = false
     local fishingCycleRunning = false
 
+    -- Auto Fishing watchdog state.
+    -- It tracks whether the selected rod should currently have its line in the
+    -- water and recovers the cycle if a manual click, equip change, or unequip
+    -- interrupts the cast.
+    local fishingLineInWater = false
+    local fishingRecoveryRequested = false
+    local fishingRodRecoveryConnections = setmetatable({}, {__mode = "k"})
+    local fishingExpectedActivations = setmetatable({}, {__mode = "k"})
+    local hookFishingRodRecovery
+
+    local function requestFishingRecovery(reason)
+        if not Config.ArcaneAutoFishing or not fishingCycleRunning then
+            return
+        end
+
+        fishingRecoveryRequested = true
+        fishingLineInWater = false
+
+        fishingDebugLog(
+            "FISHING RECOVERY REQUESTED | "
+                .. tostring(reason)
+                .. " | State="
+                .. tostring(fishingState)
+        )
+
+        setFishingStatus("Recovering fishing cycle...")
+    end
+
     do
         local replicatedStorageFishing = game:GetService("ReplicatedStorage")
         local rsFishing = replicatedStorageFishing:FindFirstChild("RS")
@@ -7087,6 +7115,52 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     local function setFishingStatus(text)
         if fishingStatusLabel then
             fishingStatusLabel.Text = "Status: " .. tostring(text)
+        end
+    end
+
+    hookFishingRodRecovery = function(tool)
+        if not tool or not tool:IsA("Tool") then
+            return
+        end
+
+        local selectedName = normalizeName(Config.ArcaneFishingRod)
+
+        if selectedName == ""
+            or normalizeName(tool.Name) ~= selectedName then
+            return
+        end
+
+        if fishingRodRecoveryConnections[tool] then
+            return
+        end
+
+        local ok, connection = pcall(function()
+            return tool.Activated:Connect(function()
+                local expected = fishingExpectedActivations[tool] or 0
+
+                if expected > 0 then
+                    fishingExpectedActivations[tool] = expected - 1
+                    return
+                end
+
+                -- A Tool:Activated that was not caused by Auto Fishing itself
+                -- means the player manually clicked/activated the selected rod.
+                -- During WAITING_BITE this pulls/cancels the cast, so force a
+                -- clean recast instead of leaving Auto Fishing stuck.
+                if Config.ArcaneAutoFishing
+                    and fishingCycleRunning
+                    and normalizeName(Config.ArcaneFishingRod) == normalizeName(tool.Name)
+                    and fishingState == "WAITING_BITE" then
+
+                    requestFishingRecovery(
+                        "Manual rod activation detected; line was pulled"
+                    )
+                end
+            end)
+        end)
+
+        if ok and connection then
+            fishingRodRecoveryConnections[tool] = connection
         end
     end
 
@@ -7107,6 +7181,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             for _, child in ipairs(container:GetChildren()) do
                 if child:IsA("Tool")
                     and normalizeName(child.Name) == selectedName then
+
+                    hookFishingRodRecovery(child)
                     return child
                 end
             end
@@ -7262,9 +7338,32 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             )
         )
 
-        return pcall(function()
+        hookFishingRodRecovery(rod)
+
+        fishingExpectedActivations[rod] =
+            (fishingExpectedActivations[rod] or 0) + 1
+
+        local ok = pcall(function()
             rod:Activate()
         end)
+
+        if not ok then
+            fishingExpectedActivations[rod] =
+                math.max(0, (fishingExpectedActivations[rod] or 1) - 1)
+            return false
+        end
+
+        -- Failsafe in case Roblox does not emit Tool.Activated for a specific
+        -- activation. Normally the Activated callback consumes this count
+        -- immediately.
+        task.delay(0.5, function()
+            local count = fishingExpectedActivations[rod] or 0
+            if count > 0 then
+                fishingExpectedActivations[rod] = count - 1
+            end
+        end)
+
+        return true
     end
 
     task.spawn(function()
@@ -7387,6 +7486,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
             if eventState == "Complete" then
                 completeReceived = true
+                fishingLineInWater = false
                 fishingState = "COMPLETE"
                 fishingDebugLog("STATE -> COMPLETE")
                 setFishingStatus("Catch complete.")
@@ -7420,14 +7520,25 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         biteReceived = false
         completeReceived = false
         fishingCycleRunning = true
+        fishingRecoveryRequested = false
+        fishingLineInWater = false
 
         fishingState = "CASTING"
         fishingDebugLog("STATE -> CASTING | Rod=" .. tostring(rod.Name))
         setFishingStatus("Casting...")
 
         -- First activation = normal cast.
-        activateRod(rod)
+        local castOk = activateRod(rod)
 
+        if not castOk then
+            fishingCycleRunning = false
+            fishingState = "RECOVERY"
+            setFishingStatus("Cast failed. Recovering...")
+            task.wait(0.25)
+            return false
+        end
+
+        fishingLineInWater = true
         fishingState = "WAITING_BITE"
         fishingDebugLog("STATE -> WAITING_BITE | Waiting up to 90s for FishEvent Bite")
         setFishingStatus("Waiting for Bite...")
@@ -7437,6 +7548,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         while Config.ArcaneAutoFishing
             and not biteReceived
+            and not fishingRecoveryRequested
             and os.clock() < biteDeadline do
 
             if os.clock() >= nextEquipCheck then
@@ -7446,6 +7558,17 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
                 if currentRod then
                     rod = currentRod
+
+                    local character = Shared.player.Character
+                    if character and rod.Parent ~= character then
+                        requestFishingRecovery(
+                            "Selected rod could not stay equipped"
+                        )
+                    end
+                else
+                    requestFishingRecovery(
+                        "Selected rod is missing from character/backpack"
+                    )
                 end
             end
 
@@ -7454,12 +7577,25 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         if not Config.ArcaneAutoFishing then
             fishingCycleRunning = false
+            fishingLineInWater = false
             fishingState = "OFF"
             setFishingStatus("OFF")
             return false
         end
 
+        if fishingRecoveryRequested then
+            fishingRecoveryRequested = false
+            fishingLineInWater = false
+            fishingCycleRunning = false
+            fishingState = "RECOVERY"
+            fishingDebugLog("STATE -> RECOVERY | Recasting selected rod")
+            setFishingStatus("Recovered. Recasting...")
+            task.wait(0.25)
+            return false
+        end
+
         if not biteReceived then
+            fishingLineInWater = false
             fishingCycleRunning = false
             fishingState = "TIMEOUT"
             fishingDebugLog("STATE -> TIMEOUT | No Bite event before deadline")
@@ -7473,6 +7609,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         while Config.ArcaneAutoFishing
             and not completeReceived
+            and not fishingRecoveryRequested
             and os.clock() < reelDeadline do
 
             if os.clock() >= nextEquipCheck
@@ -7485,23 +7622,62 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
                 if currentRod then
                     rod = currentRod
+                else
+                    requestFishingRecovery(
+                        "Selected rod was unequipped or removed during reeling"
+                    )
+                    task.wait(0.05)
+                    continue
                 end
             end
 
-            if not rod or not rod.Parent then
+            local character = Shared.player.Character
+
+            if character and rod.Parent ~= character then
+                local currentRod = equipFishingRod()
+
+                if currentRod and currentRod.Parent == character then
+                    rod = currentRod
+                else
+                    requestFishingRecovery(
+                        "Another item replaced the selected rod during reeling"
+                    )
+                    task.wait(0.05)
+                    continue
+                end
+            end
+
+            if fishingRecoveryRequested then
+                break
+            end
+
+            local activated = activateRod(rod)
+
+            if not activated then
+                requestFishingRecovery("Selected rod activation failed")
                 task.wait(0.05)
                 continue
             end
 
-            activateRod(rod)
             task.wait(0.08)
         end
 
         fishingCycleRunning = false
 
         if not Config.ArcaneAutoFishing then
+            fishingLineInWater = false
             fishingState = "OFF"
             setFishingStatus("OFF")
+            return false
+        end
+
+        if fishingRecoveryRequested then
+            fishingRecoveryRequested = false
+            fishingLineInWater = false
+            fishingState = "RECOVERY"
+            fishingDebugLog("STATE -> RECOVERY | Recasting selected rod after interruption")
+            setFishingStatus("Recovered. Recasting...")
+            task.wait(0.25)
             return false
         end
 
@@ -7521,6 +7697,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         while isArcaneSessionActive() do
             if not Config.ArcaneAutoFishing then
                 fishingCycleRunning = false
+                fishingRecoveryRequested = false
+                fishingLineInWater = false
                 fishingState = "OFF"
                 biteReceived = false
                 completeReceived = false
@@ -7585,6 +7763,17 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
 
         disconnectFishingDebugHooks()
+
+        for tool, connection in pairs(fishingRodRecoveryConnections) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+            fishingRodRecoveryConnections[tool] = nil
+        end
+
+        table.clear(fishingExpectedActivations)
+        fishingRecoveryRequested = false
+        fishingLineInWater = false
 
         if fishingDebugGui then
             pcall(function()
