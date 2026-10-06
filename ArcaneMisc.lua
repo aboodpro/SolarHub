@@ -3577,6 +3577,50 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 or normalized:find("chest", 1, true) ~= nil
         end
 
+        -- Deep Scan used to call GetDescendants() on huge containers.
+        -- GetDescendants() allocates the complete descendant array before the
+        -- first yield, which can temporarily stall Roblox rendering/UI.
+        -- Walk the hierarchy incrementally instead and yield frequently.
+        local function walkDescendantsYielding(root, callback)
+            if not root then
+                return
+            end
+
+            local stack = {}
+            local initialChildren = root:GetChildren()
+
+            for index = #initialChildren, 1, -1 do
+                stack[#stack + 1] = initialChildren[index]
+            end
+
+            local scanned = 0
+
+            while #stack > 0 do
+                local object = stack[#stack]
+                stack[#stack] = nil
+
+                scanned += 1
+
+                if scanned % 12 == 0 then
+                    task.wait()
+                end
+
+                local shouldContinue = callback(object, scanned)
+
+                if shouldContinue == false then
+                    break
+                end
+
+                local children = object:GetChildren()
+
+                for index = #children, 1, -1 do
+                    stack[#stack + 1] = children[index]
+                end
+            end
+
+            return scanned
+        end
+
         local function scanContainer(root, rootName, maxMatches)
             if not root then
                 treasureDebugLog(
@@ -3592,15 +3636,15 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 ("Scanning %s..."):format(rootName)
             )
 
-            for _, object in ipairs(root:GetDescendants()) do
-                scanned += 1
+            walkDescendantsYielding(root, function(object, count)
+                scanned = count
 
-                if scanned % 40 == 0 then
-                    task.wait()
+                if scanned % 60 == 0 then
                     refreshTreasureDebugGuiText(
                         ("Scanning %s... checked %d"):format(rootName, scanned)
                     )
                 end
+
                 if isInterestingName(object.Name)
                     or (
                         object:IsA("RemoteEvent")
@@ -3628,10 +3672,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
                             ("DEEP LIMIT | %s | MaxMatches=%d")
                                 :format(rootName, maxMatches)
                         )
-                        break
+                        return false
                     end
                 end
-            end
+
+                return true
+            end)
 
             treasureDebugLog(
                 ("DEEP CONTAINER DONE | %s | Matches=%d")
@@ -3652,14 +3698,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
             logAttributes(chart, "Chart")
             logTags(chart, "Chart")
 
-            local descendants = chart:GetDescendants()
             local chartScanned = 0
 
-            for index, object in ipairs(descendants) do
-                chartScanned += 1
+            walkDescendantsYielding(chart, function(object, index)
+                chartScanned = index
 
-                if chartScanned % 40 == 0 then
-                    task.wait()
+                if chartScanned % 60 == 0 then
                     refreshTreasureDebugGuiText(
                         ("Scanning chart contents... checked %d"):format(chartScanned)
                     )
@@ -3694,7 +3738,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     logAttributes(object, "ChartChild")
                     logTags(object, "ChartChild")
                 end
-            end
+
+                return true
+            end)
         else
             treasureDebugLog("DEEP CHART | <none equipped>")
         end
@@ -3710,14 +3756,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
             logTags(treasureChartIslandModel, "Island")
 
             local matchCount = 0
-
             local islandScanned = 0
 
-            for _, object in ipairs(treasureChartIslandModel:GetDescendants()) do
-                islandScanned += 1
+            walkDescendantsYielding(treasureChartIslandModel, function(object, count)
+                islandScanned = count
 
-                if islandScanned % 40 == 0 then
-                    task.wait()
+                if islandScanned % 60 == 0 then
                     refreshTreasureDebugGuiText(
                         ("Scanning island... checked %d"):format(islandScanned)
                     )
@@ -3740,10 +3784,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                     if matchCount >= 120 then
                         treasureDebugLog("DEEP ISLAND LIMIT | MaxMatches=120")
-                        break
+                        return false
                     end
                 end
-            end
+
+                return true
+            end)
 
             treasureDebugLog(
                 ("DEEP ISLAND DONE | Matches=%d"):format(matchCount)
@@ -3759,14 +3805,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         if playerGui then
             local guiMatches = 0
-
             local guiScanned = 0
 
-            for _, object in ipairs(playerGui:GetDescendants()) do
-                guiScanned += 1
+            walkDescendantsYielding(playerGui, function(object, count)
+                guiScanned = count
 
-                if guiScanned % 40 == 0 then
-                    task.wait()
+                if guiScanned % 60 == 0 then
                     refreshTreasureDebugGuiText(
                         ("Scanning PlayerGui... checked %d"):format(guiScanned)
                     )
@@ -3793,11 +3837,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                         if guiMatches >= 60 then
                             treasureDebugLog("DEEP GUI LIMIT | MaxMatches=60")
-                            break
+                            return false
                         end
                     end
                 end
-            end
+
+                return true
+            end)
 
             treasureDebugLog(
                 ("DEEP GUI DONE | Matches=%d"):format(guiMatches)
