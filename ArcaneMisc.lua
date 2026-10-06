@@ -6619,14 +6619,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             end)
         end
 
-        if type(getgenv) == "function" then
-            local env = getgenv()
-
-            if env.SolarHubArcaneSession == arcaneSessionId then
-                env.SolarHubArcaneSession = nil
-                env.SolarHubArcaneCleanup = nil
-            end
-        end
     end
 
     Context.registerCleanup(cleanupArcaneSession)
