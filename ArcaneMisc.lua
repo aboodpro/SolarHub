@@ -3320,7 +3320,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartSection = UI.createSection(
         miscTab,
         "Treasure Chart Finder",
-        220
+        240
     )
 
     UI.createToggle(
@@ -3354,7 +3354,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local treasureDebugButton = Instance.new("TextButton")
     treasureDebugButton.Size = UDim2.fromOffset(130, 28)
-    treasureDebugButton.Position = UDim2.fromOffset(10, 176)
+    treasureDebugButton.Position = UDim2.fromOffset(10, 194)
     treasureDebugButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     treasureDebugButton.BorderSizePixel = 0
     treasureDebugButton.Text = "VIEW DEBUG"
