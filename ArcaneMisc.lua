@@ -4375,9 +4375,112 @@ function ArcaneMisc.Init(Shared, UI, Context)
         }
     end
 
+    local function readTreasureClueStructuredData(clueSource)
+        if not clueSource then
+            return {}
+        end
+
+        local data = {}
+
+        -- Arcane exposes useful normalized clue fields on TextN objects in
+        -- runtime (for example ISN and DIR). Prefer those over parsing English
+        -- text because island names can change/add over time.
+        local okAttrs, attrs = pcall(function()
+            return clueSource:GetAttributes()
+        end)
+
+        if okAttrs and type(attrs) == "table" then
+            for key, value in pairs(attrs) do
+                local normalizedKey = treasureNormalize(key)
+
+                if typeof(value) == "string" then
+                    if normalizedKey == "isn"
+                        or normalizedKey == "island"
+                        or normalizedKey == "islandname" then
+                        data.island = value
+                    elseif normalizedKey == "dir"
+                        or normalizedKey == "direction" then
+                        data.direction = value
+                    elseif normalizedKey == "dist"
+                        or normalizedKey == "distance"
+                        or normalizedKey == "distanceband" then
+                        data.distance = value
+                    elseif normalizedKey == "surf"
+                        or normalizedKey == "surface"
+                        or normalizedKey == "material" then
+                        data.surface = value
+                    end
+                end
+            end
+        end
+
+        -- Also support StringValues/NumberValues nested under TextN in case a
+        -- server version exposes the same data as child values rather than
+        -- attributes.
+        for _, child in ipairs(clueSource:GetDescendants()) do
+            local key = treasureNormalize(child.Name)
+
+            local value
+            if child:IsA("StringValue")
+                or child:IsA("IntValue")
+                or child:IsA("NumberValue") then
+                value = tostring(child.Value)
+            end
+
+            if value then
+                if key == "isn"
+                    or key == "island"
+                    or key == "islandname" then
+                    data.island = value
+                elseif key == "dir"
+                    or key == "direction" then
+                    data.direction = value
+                elseif key == "dist"
+                    or key == "distance"
+                    or key == "distanceband" then
+                    data.distance = value
+                elseif key == "surf"
+                    or key == "surface"
+                    or key == "material" then
+                    data.surface = value
+                end
+            end
+        end
+
+        if type(data.distance) == "string" then
+            local normalizedDistance = treasureNormalize(data.distance)
+
+            if normalizedDistance == "fewpaces" then
+                data.distance = "Few paces"
+            elseif normalizedDistance == "halfway"
+                or normalizedDistance == "midway" then
+                data.distance = "Halfway"
+            elseif normalizedDistance == "ontheedge"
+                or normalizedDistance == "edge"
+                or normalizedDistance == "boundary" then
+                data.distance = "On the edge"
+            end
+        end
+
+        if type(data.surface) == "string" then
+            local normalizedSurface = treasureNormalize(data.surface)
+
+            if normalizedSurface:find("snow", 1, true) then
+                data.surface = "SNOW"
+            elseif normalizedSurface:find("sand", 1, true) then
+                data.surface = "SAND"
+            elseif normalizedSurface:find("ground", 1, true)
+                or normalizedSurface:find("grass", 1, true) then
+                data.surface = "GROUND"
+            end
+        end
+
+        return data
+    end
+
     local function findTreasureChartActiveText(chart)
         if not chart then
-            return nil, nil
+            return nil, nil, nil
         end
 
         local clueValues = {}
@@ -4402,13 +4505,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end)
 
         if #clueValues == 0 then
-            return nil, nil
+            return nil, nil, nil
         end
 
-        -- The game stores all chart spots on the Tool (Text1, Text2, ...),
-        -- but the player-facing chart UI shows the currently active spot.
-        -- Match the visible UI text back to the exact stored clue instead of
-        -- mixing fields from different spots.
         local playerGui = Shared.playerGui
 
         if playerGui then
@@ -4440,8 +4539,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end
             end
 
-            -- Prefer the last matching visible clue if the UI contains a
-            -- duplicated/animated copy of the same text.
             if #visibleMatches > 0 then
                 local match = visibleMatches[#visibleMatches]
 
@@ -4453,12 +4550,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
                         )
                 )
 
-                return match.clue.text, "Text" .. tostring(match.clue.index)
+                return match.clue.text, "Text" .. tostring(match.clue.index), match.clue.source
             end
         end
 
-        -- Before the first spot is solved, Text1 is the active clue. When the
-        -- game does not expose its active UI text, this is the safest fallback.
         local first = clueValues[1]
 
         treasureDebugLog(
@@ -4466,30 +4561,135 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 :format(first.index)
         )
 
-        return first.text, "Text" .. tostring(first.index)
+        return first.text, "Text" .. tostring(first.index), first.source
+    end
+
+    local function parseTreasureChartText(text)
+        local normalized = treasureNormalize(text)
+
+        local island
+        local islandNameLength = 0
+
+        -- First try the known list, then try live island names from the map.
+        local islandNames = {}
+
+        for _, name in ipairs(TREASURE_CHART_ISLANDS) do
+            islandNames[name] = true
+        end
+
+        local map = workspace:FindFirstChild("Map")
+
+        if map then
+            for _, object in ipairs(map:GetChildren()) do
+                if object:IsA("Model") or object:IsA("Folder") then
+                    islandNames[object.Name] = true
+                end
+            end
+        end
+
+        for name in pairs(islandNames) do
+            local normalizedName = treasureNormalize(name)
+
+            if normalizedName ~= ""
+                and normalized:find(normalizedName, 1, true)
+                and #normalizedName > islandNameLength then
+                island = name
+                islandNameLength = #normalizedName
+            end
+        end
+
+        local direction
+        local directionLength = 0
+
+        for _, name in ipairs(TREASURE_CHART_DIRECTIONS) do
+            local normalizedName = treasureNormalize(name)
+
+            if normalized:find(normalizedName, 1, true)
+                and #normalizedName > directionLength then
+                direction = name
+                directionLength = #normalizedName
+            end
+        end
+
+        local distance
+
+        if normalized:find("fewpaces", 1, true) then
+            distance = "Few paces"
+        elseif normalized:find("halfway", 1, true)
+            or normalized:find("midway", 1, true) then
+            distance = "Halfway"
+        elseif normalized:find("ontheedge", 1, true)
+            or normalized:find("edge", 1, true)
+            or normalized:find("boundary", 1, true) then
+            distance = "On the edge"
+        end
+
+        local surface
+
+        if normalized:find("snow", 1, true) then
+            surface = "SNOW"
+        elseif normalized:find("sand", 1, true) then
+            surface = "SAND"
+        elseif normalized:find("ground", 1, true)
+            or normalized:find("grass", 1, true) then
+            surface = "GROUND"
+        end
+
+        return {
+            island = island,
+            direction = direction,
+            distance = distance,
+            surface = surface,
+            rawText = text,
+        }
     end
 
     local function getTreasureChartInfo(chart)
-        local activeText, activeSource = findTreasureChartActiveText(chart)
+        local activeText, activeSource, clueSource =
+            findTreasureChartActiveText(chart)
 
         local text = activeText or ""
         local info = parseTreasureChartText(text)
 
+        local structured = readTreasureClueStructuredData(clueSource)
+
+        if structured.island and structured.island ~= "" then
+            info.island = structured.island
+        end
+
+        if structured.direction and structured.direction ~= "" then
+            for _, name in ipairs(TREASURE_CHART_DIRECTIONS) do
+                if treasureNormalize(name) == treasureNormalize(structured.direction) then
+                    info.direction = name
+                    break
+                end
+            end
+        end
+
+        if structured.distance then
+            info.distance = structured.distance
+        end
+
+        if structured.surface then
+            info.surface = structured.surface
+        end
+
         treasureDebugLog(
-            ("CLUE PARSE | Chart=%s | Source=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s")
+            ("CLUE PARSE | Chart=%s | Source=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s | StructuredIsland=%s | StructuredDirection=%s")
                 :format(
                     treasureDebugValue(chart),
                     tostring(activeSource),
                     tostring(info.island),
                     tostring(info.direction),
                     tostring(info.distance),
-                    tostring(info.surface)
+                    tostring(info.surface),
+                    tostring(structured.island),
+                    tostring(structured.direction)
                 )
         )
 
-        -- If the active clue text did not parse fully, fall back to the old
-        -- broad GUI collector only as a last resort. Never merge multiple
-        -- Text1/Text2 clue strings together.
+        -- If the active clue text did not parse fully, keep the GUI fallback
+        -- as a secondary source, but never merge multiple TextN clue strings.
         if not info.island or not info.direction or not info.distance then
             local guiText = collectTreasureChartGuiText()
 
@@ -4986,8 +5186,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 local maxRadius = band[2]
 
                 if normalizedRadius >= minRadius
-                    and normalizedRadius <= maxRadius
-                    and angularDifference <= math.rad(11.25) then
+                    and normalizedRadius <= maxRadius + 0.055
+                    and angularDifference <= math.rad(11.25) + math.rad(2) then
 
                     local radialMid = (minRadius + maxRadius) * 0.5
                     local radialScore =
