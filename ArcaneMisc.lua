@@ -5260,6 +5260,91 @@ function ArcaneMisc.Init(Shared, UI, Context)
         return result
     end
 
+    local function findTreasureFallbackPhysicalPart(islandModel, info)
+        if not islandModel or not info or not info.direction or not info.distance then
+            return nil
+        end
+
+        local center, size = getTreasureIslandBounds(islandModel)
+        local directionVector = treasureDirectionVector(info.direction)
+        local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
+        local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
+
+        if not center or not size or not directionVector or not band or not fragmentable then
+            return nil
+        end
+
+        local halfX = math.max(math.abs(size.X) * 0.5, 1)
+        local halfZ = math.max(math.abs(size.Z) * 0.5, 1)
+        local targetAngle = math.atan2(directionVector.Z, directionVector.X)
+        local targetRadius = (band[1] + band[2]) * 0.5
+        local bestPart
+        local bestScore = math.huge
+        local scanned = 0
+
+        for _, part in ipairs(fragmentable:GetDescendants()) do
+            scanned += 1
+
+            if scanned % 800 == 0 then
+                task.wait()
+            end
+
+            if part:IsA("BasePart")
+                and part.Transparency < 0.85
+                and math.max(part.Size.X, part.Size.Z) >= 1
+                and not treasurePartHasNoTreasureSpot(part)
+                and treasurePartMatchesSurface(part, info.surface) then
+
+                local dx = part.Position.X - center.X
+                local dz = part.Position.Z - center.Z
+                local radial = math.sqrt(dx * dx + dz * dz)
+
+                if radial > 0.001 then
+                    local angle = math.atan2(dz, dx)
+                    local difference = math.abs(angle - targetAngle)
+
+                    while difference > math.pi do
+                        difference = math.abs(difference - (math.pi * 2))
+                    end
+
+                    local denominator =
+                        (math.cos(angle) * math.cos(angle)) / (halfX * halfX)
+                        + (math.sin(angle) * math.sin(angle)) / (halfZ * halfZ)
+
+                    local edgeRadius = denominator > 0
+                        and (1 / math.sqrt(denominator))
+                        or math.max(halfX, halfZ)
+
+                    local normalizedRadius =
+                        radial / math.max(edgeRadius, 1)
+
+                    local score =
+                        math.abs(normalizedRadius - targetRadius)
+                        + (difference / math.pi) * 0.65
+
+                    if normalizedRadius >= band[1] - 0.28
+                        and normalizedRadius <= band[2] + 0.28
+                        and difference <= math.rad(38)
+                        and score < bestScore then
+                        bestScore = score
+                        bestPart = part
+                    end
+                end
+            end
+        end
+
+        treasureDebugLog(
+            ("FALLBACK PHYSICAL | Part=%s | Score=%s | Scanned=%d")
+                :format(
+                    treasureDebugValue(bestPart),
+                    bestPart and ("%.4f"):format(bestScore) or "<nil>",
+                    scanned
+                )
+        )
+
+        return bestPart
+    end
+
     local function createTreasureChartMarker(position, info)
         if not position then
             treasureDebugLog("MARKER FAIL | Position=nil")
@@ -5410,9 +5495,34 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local normalized = treasureNormalize(object.Name)
 
-        return normalized:find("treasurechart", 1, true) ~= nil
+        if normalized:find("treasurechart", 1, true) ~= nil
             or normalized:find("treasuremap", 1, true) ~= nil
             or normalized == "chart"
+            or normalized:find("mystictreasure", 1, true) ~= nil then
+            return true
+        end
+
+        local okTooltip, tooltip = pcall(function()
+            return object.ToolTip
+        end)
+
+        if okTooltip
+            and treasureNormalize(tooltip):find("treasurechart", 1, true) ~= nil then
+            return true
+        end
+
+        for _, child in ipairs(object:GetDescendants()) do
+            if child:IsA("StringValue") then
+                local text = treasureNormalize(child.Value)
+
+                if text:find("treasurechart", 1, true) ~= nil
+                    or text:find("mystictreasure", 1, true) ~= nil then
+                    return true
+                end
+            end
+        end
+
+        return false
     end
 
     local function findTreasureChartObject()
@@ -5565,41 +5675,83 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     treasureDebugLog("STEP | AfterPhysicalMarkerCreate")
                     treasureChartNeedsScan = false
                 else
-                    -- No physical part matched yet. Request streaming around
-                    -- the clue's mathematical center, but never turn that
-                    -- approximation into a visible/teleportable treasure target.
-                    local center, size = getTreasureIslandBounds(islandModel)
-                    local directionVector = treasureDirectionVector(info.direction)
-                    local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
-                    local streamPosition
+                    -- The strict clue filter can be empty on a streamed/variant
+                    -- island. First search wider for a REAL Fragmentable part.
+                    local fallbackPart =
+                        findTreasureFallbackPhysicalPart(islandModel, info)
 
-                    if center and size and directionVector and band then
-                        local radius = math.max(size.X, size.Z) * 0.5
-                        local middleRadius =
-                            radius * ((band[1] + band[2]) * 0.5)
+                    if fallbackPart then
+                        markerPart = fallbackPart
+                        markerPosition =
+                            getTreasureDigSurfacePosition(fallbackPart)
 
-                        streamPosition =
-                            center + directionVector * middleRadius
+                        treasureChartCandidateParts = {fallbackPart}
 
                         treasureDebugLog(
-                            ("NO PHYSICAL CANDIDATE | StreamRequest=%s")
-                                :format(treasureDebugValue(streamPosition))
+                            ("MARKER SOURCE | FallbackPhysicalPart=%s | SurfacePosition=%s")
+                                :format(
+                                    treasureDebugValue(fallbackPart),
+                                    treasureDebugValue(markerPosition)
+                                )
                         )
-                    end
 
-                    if streamPosition then
-                        pcall(function()
-                            if type(workspace.RequestStreamAroundAsync) == "function" then
-                                workspace:RequestStreamAroundAsync(streamPosition, 2)
+                        if markerPosition then
+                            createTreasureChartMarker(markerPosition, info)
+
+                            if treasureChartESP then
+                                treasureChartESP.physicalTarget = true
                             end
-                        end)
-                    end
+                        end
 
-                    treasureChartNeedsScan = true
+                        treasureDebugLog(
+                            "TARGET TYPE | Physical=true | Source=FallbackPhysicalPart"
+                        )
 
-                    if treasureChartStatus then
-                        treasureChartStatus.Text =
-                            "Treasure Chart Finder: waiting for matching dig terrain to stream..."
+                        treasureChartNeedsScan = false
+                    else
+                        local center, size =
+                            getTreasureIslandBounds(islandModel)
+                        local directionVector =
+                            treasureDirectionVector(info.direction)
+                        local band =
+                            TREASURE_CHART_DISTANCE_BANDS[info.distance]
+                        local streamPosition
+
+                        if center and size and directionVector and band then
+                            local radius =
+                                math.max(size.X, size.Z) * 0.5
+                            local middleRadius =
+                                radius * ((band[1] + band[2]) * 0.5)
+
+                            streamPosition =
+                                center + directionVector * middleRadius
+
+                            treasureDebugLog(
+                                ("NO PHYSICAL CANDIDATE | StreamRequest=%s")
+                                    :format(
+                                        treasureDebugValue(streamPosition)
+                                    )
+                            )
+                        end
+
+                        if streamPosition then
+                            pcall(function()
+                                if type(workspace.RequestStreamAroundAsync)
+                                    == "function" then
+                                    workspace:RequestStreamAroundAsync(
+                                        streamPosition,
+                                        2
+                                    )
+                                end
+                            end)
+                        end
+
+                        treasureChartNeedsScan = true
+
+                        if treasureChartStatus then
+                            treasureChartStatus.Text =
+                                "Treasure Chart Finder: waiting for matching dig terrain to stream..."
+                        end
                     end
                 end
             else
