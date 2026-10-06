@@ -7,7 +7,7 @@
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "4b6fd01c76fc874d8af67adba1db964b574428b2"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-06-ARCANE-39-INIT-TRACEBACK"
+local LOADER_VERSION = "2026-10-06-ARCANE-40-MODULE-TABLE-FIX"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 pcall(function()
@@ -783,9 +783,11 @@ task.spawn(function()
             local ArcaneMiscModule = compiled.ArcaneMisc()
             local ArcaneFarmingModule = compiled.ArcaneFarming()
 
+            -- Feature module chunks return module tables directly.
+            -- Do not call ArcaneMiscModule/ArcaneFarmingModule as functions.
             return ArcaneModule.Init(Shared, UI, {
-                Misc = ArcaneMiscModule(),
-                Farming = ArcaneFarmingModule(),
+                Misc = ArcaneMiscModule,
+                Farming = ArcaneFarmingModule,
             })
         end)
 
