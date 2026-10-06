@@ -7082,7 +7082,9 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     local hookFishingRodRecovery
 
     local function requestFishingRecovery(reason)
-        if not Config.ArcaneAutoFishing or not fishingCycleRunning then
+        -- Recovery is persistent. It must also work during the tiny gaps between
+        -- fishing cycles, because the player can interrupt the rod at any time.
+        if not Config.ArcaneAutoFishing then
             return
         end
 
@@ -7148,12 +7150,16 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 -- During WAITING_BITE this pulls/cancels the cast, so force a
                 -- clean recast instead of leaving Auto Fishing stuck.
                 if Config.ArcaneAutoFishing
-                    and fishingCycleRunning
                     and normalizeName(Config.ArcaneFishingRod) == normalizeName(tool.Name)
-                    and fishingState == "WAITING_BITE" then
+                    and (
+                        fishingState == "CASTING"
+                        or fishingState == "WAITING_BITE"
+                        or fishingState == "REELING"
+                        or fishingState == "RECOVERY"
+                    ) then
 
                     requestFishingRecovery(
-                        "Manual rod activation detected; line was pulled"
+                        "Manual rod activation detected; restoring Auto Fishing"
                     )
                 end
             end)
@@ -7324,6 +7330,58 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         return rod
     end
+
+    -- Persistent Auto Fishing watchdog.
+    -- While Auto Fishing is ON, the selected rod always has priority: if the
+    -- player equips another item, unequips the rod, or the selected rod drops
+    -- back into the Backpack, immediately restore the selected rod and request
+    -- a clean fishing cycle when the current one was interrupted.
+    task.spawn(function()
+        local nextWatchdogCheck = 0
+
+        while isArcaneSessionActive() do
+            if Config.ArcaneAutoFishing and os.clock() >= nextWatchdogCheck then
+                nextWatchdogCheck = os.clock() + 0.10
+
+                local selectedRod = equipFishingRod()
+
+                if selectedRod then
+                    hookFishingRodRecovery(selectedRod)
+
+                    local character = Shared.player.Character
+
+                    if character and selectedRod.Parent ~= character then
+                        requestFishingRecovery(
+                            "Selected rod is not equipped; forcing it back"
+                        )
+                    end
+                else
+                    requestFishingRecovery(
+                        "Selected rod is unavailable; waiting and retrying"
+                    )
+                end
+
+                -- A lost line cannot be allowed to leave Auto Fishing in a
+                -- half-finished state. Any interruption remains recoverable.
+                if fishingRecoveryRequested
+                    and fishingCycleRunning
+                    and (
+                        fishingState == "CASTING"
+                        or fishingState == "WAITING_BITE"
+                        or fishingState == "REELING"
+                    ) then
+                    fishingDebugLog(
+                        "WATCHDOG | Recovery pending | State="
+                            .. tostring(fishingState)
+                            .. " | SelectedRod="
+                            .. tostring(Config.ArcaneFishingRod)
+                    )
+                end
+            end
+
+            task.wait(0.03)
+        end
+    end)
 
     local function activateRod(rod)
         if not rod or not rod.Parent then
