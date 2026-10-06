@@ -156,9 +156,9 @@ function UI.Init(Shared)
     local tabNames
 
     if Shared.IsArcaneOdyssey == true then
-        tabNames = { "Misc" }
+        tabNames = { "Farming", "Misc", "UI Settings" }
     else
-        tabNames = { "Lobby", "Joiner", "Game", "Auto Play", "Macro", "Webhook", "Misc" }
+        tabNames = { "Lobby", "Joiner", "Game", "Auto Play", "Macro", "Webhook", "Misc", "UI Settings" }
     end
 
     for _, name in ipairs(tabNames) do
@@ -166,7 +166,8 @@ function UI.Init(Shared)
         tabContainer.Name = name .. "Tab"
         tabContainer.Size = UDim2.new(1, 0, 1, 0)
         tabContainer.BackgroundTransparency = 1
-        tabContainer.Visible = (name == "Macro")
+        local initialTab = Shared.IsArcaneOdyssey and "Farming" or "Macro"
+        tabContainer.Visible = (name == initialTab)
         tabContainer.CanvasSize = UDim2.new(0, 0, 0, 900)
         tabContainer.ScrollBarThickness = 3
         tabContainer.Parent = contentArea
@@ -211,7 +212,8 @@ function UI.Init(Shared)
 
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -12, 0, 34)
-        btn.BackgroundColor3 = (name == "Macro") and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(28, 28, 36)
+        local initialTab = Shared.IsArcaneOdyssey and "Farming" or "Macro"
+        btn.BackgroundColor3 = (name == initialTab) and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(28, 28, 36)
         btn.Text = "   " .. name
         btn.Font = Enum.Font.GothamMedium
         btn.TextColor3 = Color3.fromRGB(225, 225, 232)
@@ -682,6 +684,85 @@ function UI.Init(Shared)
             valueBox = valueBox,
             setValue = setValue,
         }
+    end
+
+
+    -------------------------------------------------
+    -- UI SETTINGS
+    -------------------------------------------------
+
+    local uiSettingsTab = tabs["UI Settings"]
+
+    if uiSettingsTab then
+        Config.SolarHubUIScale = tonumber(Config.SolarHubUIScale) or 100
+        Config.SolarHubUIScale = math.clamp(
+            math.floor(Config.SolarHubUIScale + 0.5),
+            80,
+            120
+        )
+
+        local mainScale = Instance.new("UIScale")
+        mainScale.Scale = Config.SolarHubUIScale / 100
+        mainScale.Parent = mainFrame
+
+        local toggleScale = Instance.new("UIScale")
+        toggleScale.Scale = Config.SolarHubUIScale / 100
+        toggleScale.Parent = toggleBtn
+
+        local uiSection = createSection(
+            uiSettingsTab,
+            "Interface",
+            190
+        )
+
+        local uiScaleSlider = createSlider(
+            uiSection,
+            "UI Scale (80 - 120%)",
+            "SolarHubUIScale",
+            80,
+            120,
+            10,
+            38,
+            330,
+            function(value)
+                local scale = math.clamp(tonumber(value) or 100, 80, 120) / 100
+                mainScale.Scale = scale
+                toggleScale.Scale = scale
+            end
+        )
+
+        uiScaleSlider.setValue(Config.SolarHubUIScale)
+
+        local resetButton = Instance.new("TextButton")
+        resetButton.Size = UDim2.fromOffset(150, 30)
+        resetButton.Position = UDim2.fromOffset(10, 98)
+        resetButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+        resetButton.BorderSizePixel = 0
+        resetButton.Text = "RESET UI WINDOW"
+        resetButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+        resetButton.Font = Enum.Font.GothamBold
+        resetButton.TextSize = 9
+        resetButton.Parent = uiSection
+        Instance.new("UICorner", resetButton).CornerRadius = UDim.new(0, 7)
+
+        local uiInfo = Instance.new("TextLabel")
+        uiInfo.Size = UDim2.new(1, -20, 0, 38)
+        uiInfo.Position = UDim2.fromOffset(10, 140)
+        uiInfo.BackgroundTransparency = 1
+        uiInfo.Text = "Use the corner handle to resize the window. UI Scale changes the window and the Solar button together."
+        uiInfo.TextColor3 = Color3.fromRGB(140, 140, 150)
+        uiInfo.Font = Enum.Font.Gotham
+        uiInfo.TextSize = 9
+        uiInfo.TextWrapped = true
+        uiInfo.TextXAlignment = Enum.TextXAlignment.Left
+        uiInfo.TextYAlignment = Enum.TextYAlignment.Top
+        uiInfo.Parent = uiSection
+
+        resetButton.Activated:Connect(function()
+            mainFrame.Size = UDim2.fromOffset(720, 430)
+            mainFrame.Position = UDim2.new(0.5, -360, 0.5, -215)
+            uiScaleSlider.setValue(100)
+        end)
     end
 
     return {
