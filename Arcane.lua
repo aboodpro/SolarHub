@@ -7568,6 +7568,56 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             return false
         end
 
+        -- After an interruption, do not stop at EquipTool(). Wait until the
+        -- selected rod is actually equipped, then force the normal cast again.
+        local character = Shared.player.Character
+        local castOk = false
+
+        for attempt = 1, 5 do
+            if not Config.ArcaneAutoFishing then
+                return false
+            end
+
+            character = Shared.player.Character
+
+            if not character or rod.Parent ~= character then
+                local currentRod = equipFishingRod()
+
+                if currentRod then
+                    rod = currentRod
+                end
+            end
+
+            character = Shared.player.Character
+
+            if character
+                and rod
+                and rod.Parent == character then
+
+                task.wait(0.08)
+
+                castOk = activateRod(rod)
+
+                if castOk then
+                    break
+                end
+            end
+
+            task.wait(0.12)
+        end
+
+        if not castOk then
+            fishingCycleRunning = false
+            fishingState = "RECOVERY"
+            fishingDebugLog(
+                "CAST RETRY FAILED | SelectedRod="
+                    .. tostring(Config.ArcaneFishingRod)
+            )
+            setFishingStatus("Could not cast selected rod. Retrying...")
+            task.wait(0.15)
+            return false
+        end
+
         if not fishEventRemote then
             fishingState = "ERROR"
             setFishingStatus("ERROR: FishEvent not found.")
@@ -7582,19 +7632,12 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         fishingLineInWater = false
 
         fishingState = "CASTING"
-        fishingDebugLog("STATE -> CASTING | Rod=" .. tostring(rod.Name))
+        fishingDebugLog(
+            "STATE -> CASTING | Rod="
+                .. tostring(rod.Name)
+                .. " | CastAlreadyPerformed=true"
+        )
         setFishingStatus("Casting...")
-
-        -- First activation = normal cast.
-        local castOk = activateRod(rod)
-
-        if not castOk then
-            fishingCycleRunning = false
-            fishingState = "RECOVERY"
-            setFishingStatus("Cast failed. Recovering...")
-            task.wait(0.25)
-            return false
-        end
 
         fishingLineInWater = true
         fishingState = "WAITING_BITE"
@@ -7642,13 +7685,13 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
 
         if fishingRecoveryRequested then
-            fishingRecoveryRequested = false
             fishingLineInWater = false
-            fishingCycleRunning = false
             fishingState = "RECOVERY"
-            fishingDebugLog("STATE -> RECOVERY | Recasting selected rod")
-            setFishingStatus("Recovered. Recasting...")
-            task.wait(0.25)
+            fishingDebugLog("STATE -> RECOVERY | Selected rod was interrupted; restarting full cycle")
+            setFishingStatus("Recovering selected rod and recasting...")
+            fishingRecoveryRequested = false
+            fishingCycleRunning = false
+            task.wait(0.10)
             return false
         end
 
@@ -7730,12 +7773,13 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         end
 
         if fishingRecoveryRequested then
-            fishingRecoveryRequested = false
             fishingLineInWater = false
             fishingState = "RECOVERY"
-            fishingDebugLog("STATE -> RECOVERY | Recasting selected rod after interruption")
-            setFishingStatus("Recovered. Recasting...")
-            task.wait(0.25)
+            fishingDebugLog("STATE -> RECOVERY | Recovered gear; restarting full cycle")
+            setFishingStatus("Recovering selected rod and recasting...")
+            fishingRecoveryRequested = false
+            fishingCycleRunning = false
+            task.wait(0.10)
             return false
         end
 
