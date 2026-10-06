@@ -1,6 +1,10 @@
 --!strict
 local ArcaneFarming = {}
 
+local function normalizeName(value)
+    return tostring(value or ""):lower():gsub("[^%w]+", "")
+end
+
 local FISHING_ROD_BASE_NAMES = {
     "Wooden Rod",
     "Bronze Rod",
