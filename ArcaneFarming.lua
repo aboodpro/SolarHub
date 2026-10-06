@@ -212,8 +212,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
     -- ToolAction repeated (reel)
     -- FishEvent -> Complete (catch finished)
     --
-    -- Tool:Activate() is used for cast/reel so the game's own ToolAction
-    -- is generated exactly like the normal rod interaction.
+    -- Tool:Activate() is used for cast/reel.
     -- The visual "!" is never used for bite detection.
 
     local fishEventRemote = nil
@@ -517,7 +516,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
     local fishingRecoveryRequested = false
     local fishingForceRemoteCast = false
     local fishingRodRecoveryConnections = setmetatable({}, {__mode = "k"})
-    local fishingExpectedActivations = setmetatable({}, {__mode = "k"})
+    local fishingAutoActivationUntil = setmetatable({}, {__mode = "k"})
     local hookFishingRodRecovery
 
     local function requestFishingRecovery(reason)
@@ -659,28 +658,25 @@ function ArcaneFarming.Init(Shared, UI, Context)
             return tool.Activated:Connect(function()
                 fishingRodDebugSnapshot("Tool.Activated", tool)
 
-                local expected = fishingExpectedActivations[tool] or 0
+                -- Tool:Activate() can emit Tool.Activated just like a real
+                -- click. Ignore activations that were generated internally by
+                -- Auto Fishing for a short, per-tool window.
+                local autoUntil = fishingAutoActivationUntil[tool] or 0
 
-                if expected > 0 then
-                    fishingExpectedActivations[tool] = expected - 1
+                if os.clock() <= autoUntil then
                     return
                 end
 
-                -- A Tool:Activated that was not caused by Auto Fishing itself
-                -- means the player manually clicked/activated the selected rod.
-                -- During WAITING_BITE this pulls/cancels the cast, so force a
-                -- clean recast instead of leaving Auto Fishing stuck.
+                -- A Tool.Activated outside the Auto Fishing activation window
+                -- is treated as a manual click. This matters only while waiting
+                -- for the bite; during REELING, clicks are intentionally sent
+                -- repeatedly by Auto Fishing and must never trigger recovery.
                 if Config.ArcaneAutoFishing
                     and normalizeName(Config.ArcaneFishingRod) == normalizeName(tool.Name)
-                    and (
-                        fishingState == "CASTING"
-                        or fishingState == "WAITING_BITE"
-                        or fishingState == "REELING"
-                        or fishingState == "RECOVERY"
-                    ) then
+                    and fishingState == "WAITING_BITE" then
 
                     requestFishingRecovery(
-                        "Manual rod activation detected; restoring Auto Fishing"
+                        "Manual rod activation detected during WAITING_BITE"
                     )
                 end
             end)
@@ -1017,28 +1013,22 @@ function ArcaneFarming.Init(Shared, UI, Context)
 
         hookFishingRodRecovery(rod)
 
-        fishingExpectedActivations[rod] =
-            (fishingExpectedActivations[rod] or 0) + 1
+        -- Mark this activation as internal before firing it. Roblox may emit
+        -- Tool.Activated synchronously or asynchronously, so use a short
+        -- timestamp window instead of relying on event ordering.
+        fishingAutoActivationUntil[rod] = math.max(
+            fishingAutoActivationUntil[rod] or 0,
+            os.clock() + 0.35
+        )
 
         local ok = pcall(function()
             rod:Activate()
         end)
 
         if not ok then
-            fishingExpectedActivations[rod] =
-                math.max(0, (fishingExpectedActivations[rod] or 1) - 1)
+            fishingAutoActivationUntil[rod] = 0
             return false
         end
-
-        -- Failsafe in case Roblox does not emit Tool.Activated for a specific
-        -- activation. Normally the Activated callback consumes this count
-        -- immediately.
-        task.delay(0.5, function()
-            local count = fishingExpectedActivations[rod] or 0
-            if count > 0 then
-                fishingExpectedActivations[rod] = count - 1
-            end
-        end)
 
         return true
     end
@@ -1099,7 +1089,8 @@ function ArcaneFarming.Init(Shared, UI, Context)
 
         if state == "Bump"
             or state == "Bite"
-            or state == "Complete" then
+            or state == "Complete"
+            or state == "Fail" then
             return state
         end
 
@@ -1158,6 +1149,19 @@ function ArcaneFarming.Init(Shared, UI, Context)
                     setFishingStatus("Bite! Reeling...")
                 end
 
+                return
+            end
+
+            if eventState == "Fail" then
+                completeReceived = false
+                fishingLineInWater = false
+                fishingState = "RECOVERY"
+                fishingDebugLog(
+                    "STATE -> RECOVERY | FishEvent returned Fail"
+                )
+                setFishingStatus("Fishing cast failed. Recasting...")
+                fishingRecoveryRequested = true
+                fishingForceRemoteCast = false
                 return
             end
 
@@ -1466,7 +1470,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
             fishingRodRecoveryConnections[tool] = nil
         end
 
-        table.clear(fishingExpectedActivations)
+        table.clear(fishingAutoActivationUntil)
         fishingRecoveryRequested = false
         fishingForceRemoteCast = false
         fishingLineInWater = false
