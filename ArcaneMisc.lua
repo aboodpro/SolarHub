@@ -4503,6 +4503,16 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         if treasureChartStatus then
+            local statusStuds = "STUDS: ?"
+
+            if playerRoot and treasureChartESP and treasureChartESP.position then
+                statusStuds = ("STUDS: %d"):format(
+                    math.floor(
+                        (playerRoot.Position - treasureChartESP.position).Magnitude
+                    )
+                )
+            end
+
             treasureChartStatus.Text =
                 "Chart: "
                 .. tostring(info.island)
@@ -4510,7 +4520,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 .. tostring(info.direction)
                 .. " | "
                 .. tostring(info.distance)
-                .. "\nCandidates: "
+                .. "\n"
+                .. statusStuds
+                .. " | Candidates: "
                 .. tostring(#treasureChartCandidateParts)
                 .. (info.surface and (" | " .. info.surface) or "")
         end
