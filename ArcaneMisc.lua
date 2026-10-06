@@ -3414,6 +3414,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartIslandModel = nil
     local treasureChartLastObjectScan = 0
     local treasureChartNeedsScan = true
+    local treasureDeepScanning = false
 
     local function treasureDebugValue(value)
         if value == nil then
@@ -3469,12 +3470,37 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
     end
 
+    local function refreshTreasureDebugGuiText(statusText)
+        if not treasureDebugGui or not treasureDebugGui.Parent then
+            return
+        end
+
+        local panel = treasureDebugGui:FindFirstChild("Panel")
+        if not panel then
+            return
+        end
+
+        local box = panel:FindFirstChild("Logs")
+        if box and box:IsA("TextBox") then
+            box.Text = #treasureDebugLines > 0
+                and table.concat(treasureDebugLines, "\n")
+                or "No treasure debug logs yet."
+        end
+
+        local status = panel:FindFirstChild("DeepStatus")
+        if status and status:IsA("TextLabel") then
+            status.Text = statusText or ""
+        end
+    end
+
     local function treasureDeepScan()
         if not Config.ArcaneTreasureChartDebug then
             return
         end
 
+        treasureDeepScanning = true
         treasureDebugLog("========== DEEP SCAN BEGIN ==========")
+        refreshTreasureDebugGuiText("Scanning...")
 
         local collectionService = game:GetService("CollectionService")
         local replicatedStorage = game:GetService("ReplicatedStorage")
@@ -3555,8 +3581,21 @@ function ArcaneMisc.Init(Shared, UI, Context)
             end
 
             local matches = 0
+            local scanned = 0
+
+            refreshTreasureDebugGuiText(
+                ("Scanning %s..."):format(rootName)
+            )
 
             for _, object in ipairs(root:GetDescendants()) do
+                scanned += 1
+
+                if scanned % 40 == 0 then
+                    task.wait()
+                    refreshTreasureDebugGuiText(
+                        ("Scanning %s... checked %d"):format(rootName, scanned)
+                    )
+                end
                 if isInterestingName(object.Name)
                     or (
                         object:IsA("RemoteEvent")
@@ -3593,6 +3632,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 ("DEEP CONTAINER DONE | %s | Matches=%d")
                     :format(rootName, matches)
             )
+
+            refreshTreasureDebugGuiText(
+                ("Finished %s | Matches=%d"):format(rootName, matches)
+            )
         end
 
         if chart then
@@ -3605,8 +3648,18 @@ function ArcaneMisc.Init(Shared, UI, Context)
             logTags(chart, "Chart")
 
             local descendants = chart:GetDescendants()
+            local chartScanned = 0
 
             for index, object in ipairs(descendants) do
+                chartScanned += 1
+
+                if chartScanned % 40 == 0 then
+                    task.wait()
+                    refreshTreasureDebugGuiText(
+                        ("Scanning chart contents... checked %d"):format(chartScanned)
+                    )
+                end
+
                 if isInterestingName(object.Name)
                     or object:IsA("StringValue")
                     or object:IsA("IntValue")
@@ -3653,7 +3706,18 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             local matchCount = 0
 
+            local islandScanned = 0
+
             for _, object in ipairs(treasureChartIslandModel:GetDescendants()) do
+                islandScanned += 1
+
+                if islandScanned % 40 == 0 then
+                    task.wait()
+                    refreshTreasureDebugGuiText(
+                        ("Scanning island... checked %d"):format(islandScanned)
+                    )
+                end
+
                 if isInterestingName(object.Name) then
                     matchCount += 1
 
@@ -3691,7 +3755,18 @@ function ArcaneMisc.Init(Shared, UI, Context)
         if playerGui then
             local guiMatches = 0
 
+            local guiScanned = 0
+
             for _, object in ipairs(playerGui:GetDescendants()) do
+                guiScanned += 1
+
+                if guiScanned % 40 == 0 then
+                    task.wait()
+                    refreshTreasureDebugGuiText(
+                        ("Scanning PlayerGui... checked %d"):format(guiScanned)
+                    )
+                end
+
                 if (object:IsA("TextLabel")
                     or object:IsA("TextButton")
                     or object:IsA("TextBox"))
@@ -3725,6 +3800,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         treasureDebugLog("========== DEEP SCAN END ==========")
+        treasureDeepScanning = false
+        refreshTreasureDebugGuiText("Deep Scan complete")
     end
 
     openTreasureDebugList = function()
@@ -3823,6 +3900,18 @@ function ArcaneMisc.Init(Shared, UI, Context)
         deepButton.Parent = panel
         Instance.new("UICorner", deepButton).CornerRadius = UDim.new(0, 6)
 
+        local deepStatus = Instance.new("TextLabel")
+        deepStatus.Name = "DeepStatus"
+        deepStatus.Position = UDim2.fromOffset(10, 32)
+        deepStatus.Size = UDim2.new(1, -20, 0, 12)
+        deepStatus.BackgroundTransparency = 1
+        deepStatus.Text = ""
+        deepStatus.TextColor3 = Color3.fromRGB(145, 150, 165)
+        deepStatus.Font = Enum.Font.Gotham
+        deepStatus.TextSize = 9
+        deepStatus.TextXAlignment = Enum.TextXAlignment.Left
+        deepStatus.Parent = panel
+
         local clearButton = Instance.new("TextButton")
         clearButton.Name = "Clear"
         clearButton.Size = UDim2.fromOffset(64, 28)
@@ -3838,8 +3927,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local box = Instance.new("TextBox")
         box.Name = "Logs"
-        box.Position = UDim2.fromOffset(10, 44)
-        box.Size = UDim2.new(1, -20, 1, -54)
+        box.Position = UDim2.fromOffset(10, 56)
+        box.Size = UDim2.new(1, -20, 1, -66)
         box.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
         box.BorderSizePixel = 0
         box.ClearTextOnFocus = false
@@ -3877,26 +3966,38 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end)
 
         deepButton.MouseButton1Click:Connect(function()
+            if treasureDeepScanning then
+                return
+            end
+
+            treasureDeepScanning = true
             deepButton.Text = "SCANNING..."
+            deepButton.AutoButtonColor = false
 
             task.spawn(function()
-                treasureDeepScan()
+                local ok, err = xpcall(
+                    treasureDeepScan,
+                    function(scanError)
+                        return debug.traceback(tostring(scanError), 2)
+                    end
+                )
+
+                if not ok then
+                    treasureDeepScanning = false
+                    treasureDebugLog(
+                        ("DEEP SCAN ERROR | %s"):format(tostring(err))
+                    )
+                    refreshTreasureDebugGuiText("Deep Scan error")
+                end
 
                 if deepButton and deepButton.Parent then
                     deepButton.Text = "DEEP SCAN"
+                    deepButton.AutoButtonColor = true
                 end
 
-                local panelNow = treasureDebugGui
-                    and treasureDebugGui:FindFirstChild("Panel")
-
-                local boxNow = panelNow
-                    and panelNow:FindFirstChild("Logs")
-
-                if boxNow and boxNow:IsA("TextBox") then
-                    boxNow.Text = #treasureDebugLines > 0
-                        and table.concat(treasureDebugLines, "\n")
-                        or "No treasure debug logs yet."
-                end
+                refreshTreasureDebugGuiText(
+                    ok and "Deep Scan complete" or "Deep Scan error"
+                )
             end)
         end)
 
@@ -4966,6 +5067,57 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end
             else
                 destroyTreasureChartESP()
+            end
+        end
+    end)
+
+    -- Distance/label updates are intentionally independent from the heavier
+    -- chart discovery scan. This keeps STUDS and the visible marker alive even
+    -- while a Deep Scan is running or while the chart's candidate list is empty.
+    task.spawn(function()
+        while isArcaneSessionActive() do
+            task.wait(0.15)
+
+            if not Config.ArcaneTreasureChartESP then
+                continue
+            end
+
+            local marker = treasureChartESP
+            local playerRoot = getLocalPlayerRoot()
+
+            if marker and marker.position and playerRoot then
+                local distance = (playerRoot.Position - marker.position).Magnitude
+                local arrived = distance <= TREASURE_CHART_ARRIVAL_DISTANCE
+
+                if marker.label and marker.label.Parent then
+                    local islandText = treasureChartCurrentObject
+                        and getTreasureChartInfo(treasureChartCurrentObject).island
+                        or "?"
+
+                    marker.label.Text =
+                        "TREASURE CHART | "
+                        .. tostring(islandText)
+                        .. "\n"
+                        .. tostring(math.floor(distance))
+                        .. " STUDS | "
+                        .. (arrived and "GREEN DIG AREA" or "GO TO AREA")
+                end
+
+                if treasureChartStatus then
+                    treasureChartStatus.Text =
+                        "Chart: "
+                        .. (
+                            treasureChartCurrentObject
+                            and tostring(getTreasureChartInfo(treasureChartCurrentObject).island)
+                            or "?"
+                        )
+                        .. " | STUDS: "
+                        .. tostring(math.floor(distance))
+                end
+
+                pcall(function()
+                    setTreasureChartGreenArea(arrived)
+                end)
             end
         end
     end)
