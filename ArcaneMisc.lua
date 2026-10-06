@@ -4680,6 +4680,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
             billboard = billboard,
             label = label,
             position = position,
+            island = info.island,
+            direction = info.direction,
+            distanceClue = info.distance,
             greenShown = false,
         }
     end
@@ -5090,13 +5093,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 local arrived = distance <= TREASURE_CHART_ARRIVAL_DISTANCE
 
                 if marker.label and marker.label.Parent then
-                    local islandText = treasureChartCurrentObject
-                        and getTreasureChartInfo(treasureChartCurrentObject).island
-                        or "?"
-
                     marker.label.Text =
                         "TREASURE CHART | "
-                        .. tostring(islandText)
+                        .. tostring(marker.island or "?")
                         .. "\n"
                         .. tostring(math.floor(distance))
                         .. " STUDS | "
@@ -5106,13 +5105,15 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 if treasureChartStatus then
                     treasureChartStatus.Text =
                         "Chart: "
-                        .. (
-                            treasureChartCurrentObject
-                            and tostring(getTreasureChartInfo(treasureChartCurrentObject).island)
-                            or "?"
-                        )
-                        .. " | STUDS: "
+                        .. tostring(marker.island or "?")
+                        .. " | "
+                        .. tostring(marker.direction or "?")
+                        .. " | "
+                        .. tostring(marker.distanceClue or "?")
+                        .. "\nSTUDS: "
                         .. tostring(math.floor(distance))
+                        .. " | Candidates: "
+                        .. tostring(#treasureChartCandidateParts)
                 end
 
                 pcall(function()
