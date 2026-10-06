@@ -4902,35 +4902,65 @@ function ArcaneMisc.Init(Shared, UI, Context)
         if not directionVector or not band then
             treasureDebugLog(
                 ("CANDIDATES FAIL | Direction=%s | Band=%s")
-                    :format(tostring(info.direction), tostring(info.distance))
+                    :format(tostring(info.direction), tostring(band))
             )
             return {}
         end
 
-        local islandRadius = math.max(size.X, size.Z) * 0.5
+        local halfX = math.max(math.abs(size.X) * 0.5, 1)
+        local halfZ = math.max(math.abs(size.Z) * 0.5, 1)
 
-        if islandRadius <= 10 then
-            treasureDebugLog(
-                ("CANDIDATES FAIL | IslandRadiusTooSmall | Radius=%.2f"):format(islandRadius)
-            )
-            return {}
-        end
-
-        local minRadius = islandRadius * band[1]
-        local maxRadius = islandRadius * band[2]
-        local targetRadius = (minRadius + maxRadius) * 0.5
         local targetAngle = math.atan2(directionVector.Z, directionVector.X)
         local candidates = {}
-
-        -- Buried treasure is associated with the island's Fragmentable terrain.
-        -- Do not treat arbitrary buildings/decor/large terrain containers as a
-        -- treasure target.
-        local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
-            or islandModel
-
         local scanned = 0
         local surfaceMatched = 0
         local rejectedNoSpot = 0
+
+        -- Model the chart's search zone relative to the island footprint.
+        -- This is closer to the actual 16-direction / 3-distance-band chart
+        -- locator than using one circular radius based only on max(X, Z).
+        local function getNormalizedPolar(offsetX, offsetZ)
+            local radial = math.sqrt(offsetX * offsetX + offsetZ * offsetZ)
+
+            if radial <= 0.001 then
+                return 0, 0
+            end
+
+            local angle = math.atan2(offsetZ, offsetX)
+            local difference = math.abs(angle - targetAngle)
+
+            while difference > math.pi do
+                difference = math.abs(difference - (math.pi * 2))
+            end
+
+            -- Estimate the island edge in this exact direction using the
+            -- model's X/Z footprint, then express the part distance as a
+            -- fraction of that directional edge.
+            local dx = math.cos(angle)
+            local dz = math.sin(angle)
+
+            local denominator =
+                (dx * dx) / (halfX * halfX)
+                + (dz * dz) / (halfZ * halfZ)
+
+            local edgeRadius = denominator > 0
+                and (1 / math.sqrt(denominator))
+                or math.max(halfX, halfZ)
+
+            local normalizedRadius = radial / math.max(edgeRadius, 1)
+
+            return normalizedRadius, difference
+        end
+
+        local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
+
+        if not fragmentable then
+            treasureDebugLog(
+                ("CANDIDATES FAIL | FragmentableMissing | Island=%s")
+                    :format(tostring(info.island))
+            )
+            return {}
+        end
 
         for _, part in ipairs(fragmentable:GetDescendants()) do
             scanned += 1
@@ -4947,30 +4977,35 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                 surfaceMatched += 1
 
-                local offset = Vector3.new(
-                    part.Position.X - center.X,
-                    0,
-                    part.Position.Z - center.Z
-                )
+                local offsetX = part.Position.X - center.X
+                local offsetZ = part.Position.Z - center.Z
+                local normalizedRadius, angularDifference =
+                    getNormalizedPolar(offsetX, offsetZ)
 
-                local radial = offset.Magnitude
+                local minRadius = band[1]
+                local maxRadius = band[2]
 
-                if radial >= minRadius and radial <= maxRadius then
-                    local angle = math.atan2(offset.Z, offset.X)
-                    local difference = math.abs(angle - targetAngle)
+                if normalizedRadius >= minRadius
+                    and normalizedRadius <= maxRadius
+                    and angularDifference <= math.rad(11.25) then
 
-                    while difference > math.pi do
-                        difference = math.abs(difference - (math.pi * 2))
-                    end
+                    local radialMid = (minRadius + maxRadius) * 0.5
+                    local radialScore =
+                        math.abs(normalizedRadius - radialMid)
 
-                    if difference <= math.rad(18) then
-                        local radialScore = math.abs(radial - targetRadius) / math.max(islandRadius, 1)
-                        local angularScore = difference / math.pi
+                    local angularScore =
+                        angularDifference / math.rad(11.25)
 
+                    local surfacePosition =
+                        getTreasureDigSurfacePosition(part)
+
+                    if surfacePosition then
                         table.insert(candidates, {
                             part = part,
-                            score = radialScore + angularScore,
-                            position = getTreasureDigSurfacePosition(part),
+                            score = radialScore + angularScore * 0.45,
+                            position = surfacePosition,
+                            normalizedRadius = normalizedRadius,
+                            angularDifference = angularDifference,
                         })
                     end
                 end
@@ -4984,41 +5019,42 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return a.score < b.score
         end)
 
-        -- Keep every physically valid Fragmentable part in the clue zone.
-        -- Do not throw away the actual digging part just because another
-        -- candidate scored slightly closer to the mathematical center.
         local result = {}
 
+        -- Keep all physical candidates. The green area will cover every part
+        -- inside the chart's clue zone instead of hiding the true terrain part.
         for index = 1, #candidates do
             result[index] = candidates[index].part
         end
 
         treasureDebugLog(
-            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Count=%d | ALL_MATCHING_PARTS=true | SurfaceMatched=%d | NoTreasureRejected=%d | Radius=%.2f | Band=%.3f-%.3f")
+            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Count=%d | ALL_MATCHING_PARTS=true | Scanned=%d | SurfaceMatched=%d | NoTreasureRejected=%d | Footprint=%.1fx%.1f")
                 :format(
                     tostring(info.island),
                     tostring(info.direction),
                     tostring(info.distance),
                     tostring(info.surface),
                     #result,
+                    scanned,
                     surfaceMatched,
                     rejectedNoSpot,
-                    islandRadius,
-                    band[1],
-                    band[2]
+                    size.X,
+                    size.Z
                 )
         )
 
-        for index = 1, math.min(#candidates, 5) do
+        for index = 1, math.min(#candidates, 8) do
             local candidate = candidates[index]
             local part = candidate.part
 
             treasureDebugLog(
-                ("CANDIDATE[%d] | %s | Score=%.4f | SurfacePos=%s | Size=%s | Material=%s")
+                ("CANDIDATE[%d] | %s | Score=%.4f | R=%.3f | Angle=%.2fdeg | SurfacePos=%s | Size=%s | Material=%s")
                     :format(
                         index,
                         treasureDebugValue(part),
                         candidate.score,
+                        candidate.normalizedRadius,
+                        math.deg(candidate.angularDifference),
                         treasureDebugValue(candidate.position),
                         treasureDebugValue(part.Size),
                         tostring(part.Material)
@@ -5077,7 +5113,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             .. tostring(info.island or "?")
             .. "\n"
             .. tostring(info.direction or "?")
-            .. " | GO TO DIG AREA"
+            .. " | DIG AREA"
         label.Parent = billboard
 
         treasureChartESP = {
