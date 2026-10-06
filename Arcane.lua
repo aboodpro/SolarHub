@@ -3497,7 +3497,7 @@ function Arcane.Init(Shared, UI)
     local fishingSection = UI.createSection(
         miscTab,
         "Auto Fishing",
-        230
+        310
     )
 
     UI.createToggle(
@@ -3519,12 +3519,21 @@ function Arcane.Init(Shared, UI)
         330
     )
 
+    UI.createToggle(
+        fishingSection,
+        "Fishing Debug",
+        "Records rod equip/unequip, ToolAction recovery casts, Tool.Activated, and FishEvent details.",
+        "ArcaneFishingDebug",
+        10,
+        146
+    )
+
     local openFishingDebugList
     local connectFishingDebugHooks
 
     local debugListButton = Instance.new("TextButton")
     debugListButton.Size = UDim2.fromOffset(130, 28)
-    debugListButton.Position = UDim2.fromOffset(10, 146)
+    debugListButton.Position = UDim2.fromOffset(10, 198)
     debugListButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     debugListButton.BorderSizePixel = 0
     debugListButton.Text = "VIEW DEBUG"
@@ -3541,14 +3550,16 @@ function Arcane.Init(Shared, UI)
     end)
 
     local fishingStatusLabel = Instance.new("TextLabel")
-    fishingStatusLabel.Size = UDim2.new(1, -20, 0, 30)
-    fishingStatusLabel.Position = UDim2.fromOffset(10, 182)
+    fishingStatusLabel.Size = UDim2.new(1, -20, 0, 46)
+    fishingStatusLabel.Position = UDim2.fromOffset(10, 238)
     fishingStatusLabel.BackgroundTransparency = 1
-    fishingStatusLabel.Text = "Status: OFF | Put cursor over water first."
+    fishingStatusLabel.Text = "Status: OFF | Select a rod, then enable Auto Fishing."
     fishingStatusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
     fishingStatusLabel.Font = Enum.Font.Gotham
     fishingStatusLabel.TextSize = 9
+    fishingStatusLabel.TextWrapped = true
     fishingStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    fishingStatusLabel.TextYAlignment = Enum.TextYAlignment.Top
     fishingStatusLabel.Parent = fishingSection
 
 
