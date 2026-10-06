@@ -4244,17 +4244,111 @@ function ArcaneMisc.Init(Shared, UI, Context)
         }
     end
 
-    local function getTreasureChartInfo(chart)
-        local sources = {}
-        addTreasureChartObjectText(chart, sources)
+    local function findTreasureChartActiveText(chart)
+        if not chart then
+            return nil, nil
+        end
 
-        local text = table.concat(sources, " | ")
+        local clueValues = {}
+
+        for _, child in ipairs(chart:GetDescendants()) do
+            if child:IsA("StringValue") then
+                local name = tostring(child.Name)
+                local number = name:match("^Text(%d+)$")
+
+                if number then
+                    table.insert(clueValues, {
+                        index = tonumber(number),
+                        text = tostring(child.Value or ""),
+                        source = child,
+                    })
+                end
+            end
+        end
+
+        table.sort(clueValues, function(a, b)
+            return a.index < b.index
+        end)
+
+        if #clueValues == 0 then
+            return nil, nil
+        end
+
+        -- The game stores all chart spots on the Tool (Text1, Text2, ...),
+        -- but the player-facing chart UI shows the currently active spot.
+        -- Match the visible UI text back to the exact stored clue instead of
+        -- mixing fields from different spots.
+        local playerGui = Shared.playerGui
+
+        if playerGui then
+            local visibleMatches = {}
+
+            for _, guiObject in ipairs(playerGui:GetDescendants()) do
+                if (guiObject:IsA("TextLabel")
+                    or guiObject:IsA("TextButton")
+                    or guiObject:IsA("TextBox"))
+                    and guiObject.Visible then
+
+                    local guiText = tostring(guiObject.Text or "")
+
+                    if guiText ~= "" then
+                        for _, clue in ipairs(clueValues) do
+                            if guiText == clue.text
+                                or guiText:find(clue.text, 1, true)
+                                or clue.text:find(guiText, 1, true) then
+
+                                table.insert(visibleMatches, {
+                                    clue = clue,
+                                    object = guiObject,
+                                })
+
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- Prefer the last matching visible clue if the UI contains a
+            -- duplicated/animated copy of the same text.
+            if #visibleMatches > 0 then
+                local match = visibleMatches[#visibleMatches]
+
+                treasureDebugLog(
+                    ("ACTIVE CLUE | Source=PlayerGui | Text%d | GUI=%s")
+                        :format(
+                            match.clue.index,
+                            treasureDebugValue(match.object)
+                        )
+                )
+
+                return match.clue.text, "Text" .. tostring(match.clue.index)
+            end
+        end
+
+        -- Before the first spot is solved, Text1 is the active clue. When the
+        -- game does not expose its active UI text, this is the safest fallback.
+        local first = clueValues[1]
+
+        treasureDebugLog(
+            ("ACTIVE CLUE | Source=ToolFallback | Text%d")
+                :format(first.index)
+        )
+
+        return first.text, "Text" .. tostring(first.index)
+    end
+
+    local function getTreasureChartInfo(chart)
+        local activeText, activeSource = findTreasureChartActiveText(chart)
+
+        local text = activeText or ""
         local info = parseTreasureChartText(text)
 
         treasureDebugLog(
-            ("CLUE PARSE | Chart=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s")
+            ("CLUE PARSE | Chart=%s | Source=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s")
                 :format(
                     treasureDebugValue(chart),
+                    tostring(activeSource),
                     tostring(info.island),
                     tostring(info.direction),
                     tostring(info.distance),
@@ -4262,14 +4356,31 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 )
         )
 
-        -- Only scan PlayerGui when the equipped Tool does not contain enough
-        -- clue data by itself. This keeps the normal 0.5s update lightweight.
+        -- If the active clue text did not parse fully, fall back to the old
+        -- broad GUI collector only as a last resort. Never merge multiple
+        -- Text1/Text2 clue strings together.
         if not info.island or not info.direction or not info.distance then
             local guiText = collectTreasureChartGuiText()
 
             if guiText ~= "" then
-                text = text .. " | " .. guiText
-                info = parseTreasureChartText(text)
+                local guiInfo = parseTreasureChartText(guiText)
+
+                if guiInfo.island and guiInfo.direction and guiInfo.distance then
+                    info = guiInfo
+                    info.rawText = guiText
+
+                    treasureDebugLog(
+                        ("CLUE PARSE FALLBACK | Source=PlayerGui | Island=%s | Direction=%s | Distance=%s | Surface=%s")
+                            :format(
+                                tostring(info.island),
+                                tostring(info.direction),
+                                tostring(info.distance),
+                                tostring(info.surface)
+                            )
+                    )
+
+                    return info
+                end
             end
         end
 
