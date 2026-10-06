@@ -7568,6 +7568,23 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             return false
         end
 
+        if not fishEventRemote then
+            fishingState = "ERROR"
+            setFishingStatus("ERROR: FishEvent not found.")
+            task.wait(1)
+            return false
+        end
+
+        biteReceived = false
+        completeReceived = false
+        fishingCycleRunning = true
+        fishingRecoveryRequested = false
+        fishingLineInWater = false
+
+        fishingState = "CASTING"
+        fishingDebugLog("STATE -> CASTING | Rod=" .. tostring(rod.Name))
+        setFishingStatus("Casting...")
+
         -- After an interruption, do not stop at EquipTool(). Wait until the
         -- selected rod is actually equipped, then force the normal cast again.
         local character = Shared.player.Character
@@ -7575,6 +7592,9 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
         for attempt = 1, 5 do
             if not Config.ArcaneAutoFishing then
+                fishingCycleRunning = false
+                fishingLineInWater = false
+                fishingState = "OFF"
                 return false
             end
 
@@ -7617,27 +7637,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             task.wait(0.15)
             return false
         end
-
-        if not fishEventRemote then
-            fishingState = "ERROR"
-            setFishingStatus("ERROR: FishEvent not found.")
-            task.wait(1)
-            return false
-        end
-
-        biteReceived = false
-        completeReceived = false
-        fishingCycleRunning = true
-        fishingRecoveryRequested = false
-        fishingLineInWater = false
-
-        fishingState = "CASTING"
-        fishingDebugLog(
-            "STATE -> CASTING | Rod="
-                .. tostring(rod.Name)
-                .. " | CastAlreadyPerformed=true"
-        )
-        setFishingStatus("Casting...")
 
         fishingLineInWater = true
         fishingState = "WAITING_BITE"
