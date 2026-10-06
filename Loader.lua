@@ -5,9 +5,9 @@
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local ARCANE_SOURCE_REF = "86f693c1a272e58bc006cb1b6e70b602bc034ec9"
+local ARCANE_SOURCE_REF = "1768d6c2dbea573570d7d7de4a638474060503fc"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-06-ARCANE-36-FISHING-UI-FIX-2"
+local LOADER_VERSION = "2026-10-06-ARCANE-37-MODULE-SPLIT"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 pcall(function()
@@ -557,10 +557,15 @@ task.spawn(function()
 
         -- Arcane is fetched from an immutable commit ref so executors cannot
         -- accidentally reuse an older cached Arcane.lua from main.
-        if fileName == "Arcane.lua" then
+        if fileName == "UI.lua"
+            or fileName == "Arcane.lua"
+            or fileName == "ArcaneMisc.lua"
+            or fileName == "ArcaneFarming.lua" then
             url = "https://raw.githubusercontent.com/aboodpro/SolarHub/"
                 .. ARCANE_SOURCE_REF
-                .. "/Arcane.lua?v="
+                .. "/"
+                .. fileName
+                .. "?v="
                 .. CACHE_BUST
         end
 
@@ -588,6 +593,8 @@ task.spawn(function()
         moduleLoadOrder = {
             "UI.lua",
             "Arcane.lua",
+            "ArcaneMisc.lua",
+            "ArcaneFarming.lua",
         }
     else
         moduleLoadOrder = {
@@ -752,7 +759,13 @@ task.spawn(function()
 
         local Arcane = runModule("Arcane.Init", function()
             local ArcaneModule = compiled.Arcane()
-            return ArcaneModule.Init(Shared, UI)
+            local ArcaneMiscModule = compiled.ArcaneMisc()
+            local ArcaneFarmingModule = compiled.ArcaneFarming()
+
+            return ArcaneModule.Init(Shared, UI, {
+                Misc = ArcaneMiscModule(),
+                Farming = ArcaneFarmingModule(),
+            })
         end)
 
         if Arcane then
