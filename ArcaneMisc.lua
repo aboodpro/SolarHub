@@ -2807,6 +2807,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     Config.ArcaneBossDebug = Config.ArcaneBossDebug == true
     Config.ArcaneChestESP = Config.ArcaneChestESP == true
     Config.ArcaneTreasureChartESP = Config.ArcaneTreasureChartESP == true
+    Config.ArcaneTreasureChartDebug = Config.ArcaneTreasureChartDebug == true
     Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
     -- Chest filters start OFF. The user selects the chest types they want.
     if type(Config.ArcaneChestFilter) ~= "table" then
@@ -3319,7 +3320,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartSection = UI.createSection(
         miscTab,
         "Treasure Chart Finder",
-        150
+        220
     )
 
     UI.createToggle(
@@ -3342,6 +3343,26 @@ function ArcaneMisc.Init(Shared, UI, Context)
     treasureChartStatus.TextXAlignment = Enum.TextXAlignment.Left
     treasureChartStatus.TextYAlignment = Enum.TextYAlignment.Top
     treasureChartStatus.Parent = treasureChartSection
+
+    UI.createToggle(
+        treasureChartSection,
+        "Treasure Chart Debug",
+        "Logs chart detection, clue parsing, island detection, candidates, STUDS and green-area state.",
+        "ArcaneTreasureChartDebug",
+        140
+    )
+
+    local treasureDebugButton = Instance.new("TextButton")
+    treasureDebugButton.Size = UDim2.fromOffset(130, 28)
+    treasureDebugButton.Position = UDim2.fromOffset(10, 176)
+    treasureDebugButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+    treasureDebugButton.BorderSizePixel = 0
+    treasureDebugButton.Text = "VIEW DEBUG"
+    treasureDebugButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+    treasureDebugButton.Font = Enum.Font.GothamBold
+    treasureDebugButton.TextSize = 9
+    treasureDebugButton.Parent = treasureChartSection
+    Instance.new("UICorner", treasureDebugButton).CornerRadius = UDim.new(0, 7)
 
 
     -------------------------------------------------
@@ -3384,11 +3405,172 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartESP = nil
     local treasureChartCurrentObject = nil
     local treasureChartLastKey = nil
+    local treasureDebugLines = {}
+    local MAX_TREASURE_DEBUG_LINES = 250
+    local treasureDebugGui = nil
+    local openTreasureDebugList
     local treasureChartCandidateParts = {}
     local treasureChartHighlights = {}
     local treasureChartIslandModel = nil
     local treasureChartLastObjectScan = 0
     local treasureChartNeedsScan = true
+
+    local function treasureDebugValue(value)
+        if value == nil then
+            return "<nil>"
+        end
+
+        local valueType = typeof(value)
+
+        if valueType == "Vector3" then
+            return ("Vector3(%.2f, %.2f, %.2f)"):format(
+                value.X,
+                value.Y,
+                value.Z
+            )
+        end
+
+        if valueType == "Instance" then
+            local ok, fullName = pcall(function()
+                return value:GetFullName()
+            end)
+
+            return ok and fullName or tostring(value)
+        end
+
+        return tostring(value)
+    end
+
+    local function treasureDebugLog(message)
+        if not Config.ArcaneTreasureChartDebug then
+            return
+        end
+
+        local line = "[TreasureDebug] "
+            .. ("%.3f"):format(os.clock())
+            .. " | "
+            .. tostring(message)
+
+        table.insert(treasureDebugLines, line)
+
+        if #treasureDebugLines > MAX_TREASURE_DEBUG_LINES then
+            table.remove(treasureDebugLines, 1)
+        end
+
+        print(line)
+    end
+
+    local function destroyTreasureDebugGui()
+        if treasureDebugGui then
+            pcall(function()
+                treasureDebugGui:Destroy()
+            end)
+            treasureDebugGui = nil
+        end
+    end
+
+    openTreasureDebugList = function()
+        local playerGui = Shared.playerGui
+
+        if not playerGui then
+            return
+        end
+
+        if treasureDebugGui and treasureDebugGui.Parent then
+            local panel = treasureDebugGui:FindFirstChild("Panel")
+            local box = panel and panel:FindFirstChild("Logs")
+
+            if box and box:IsA("TextBox") then
+                box.Text = #treasureDebugLines > 0
+                    and table.concat(treasureDebugLines, "\n")
+                    or "No treasure debug logs yet. Enable Treasure Chart Debug and equip a Treasure Chart."
+            end
+
+            treasureDebugGui.Enabled = true
+            return
+        end
+
+        treasureDebugGui = Instance.new("ScreenGui")
+        treasureDebugGui.Name = "SolarHubTreasureDebug"
+        treasureDebugGui.ResetOnSpawn = false
+        treasureDebugGui.DisplayOrder = 1000002
+        treasureDebugGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        treasureDebugGui.Parent = playerGui
+
+        local overlay = Instance.new("TextButton")
+        overlay.Name = "Overlay"
+        overlay.Size = UDim2.fromScale(1, 1)
+        overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        overlay.BackgroundTransparency = 0.35
+        overlay.Text = ""
+        overlay.AutoButtonColor = false
+        overlay.Parent = treasureDebugGui
+
+        local panel = Instance.new("Frame")
+        panel.Name = "Panel"
+        panel.AnchorPoint = Vector2.new(0.5, 0.5)
+        panel.Position = UDim2.fromScale(0.5, 0.5)
+        panel.Size = UDim2.new(0.82, 0, 0.72, 0)
+        panel.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+        panel.BorderSizePixel = 0
+        panel.Parent = treasureDebugGui
+        Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+
+        local title = Instance.new("TextLabel")
+        title.BackgroundTransparency = 1
+        title.Position = UDim2.fromOffset(12, 8)
+        title.Size = UDim2.new(1, -52, 0, 28)
+        title.Font = Enum.Font.GothamBold
+        title.TextSize = 12
+        title.TextColor3 = Color3.fromRGB(235, 235, 240)
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Text = "Treasure Chart Debug"
+        title.Parent = panel
+
+        local close = Instance.new("TextButton")
+        close.Size = UDim2.fromOffset(28, 28)
+        close.Position = UDim2.new(1, -38, 0, 8)
+        close.BackgroundColor3 = Color3.fromRGB(50, 50, 62)
+        close.BorderSizePixel = 0
+        close.Text = "X"
+        close.TextColor3 = Color3.fromRGB(235, 235, 240)
+        close.Font = Enum.Font.GothamBold
+        close.TextSize = 10
+        close.Parent = panel
+        Instance.new("UICorner", close).CornerRadius = UDim.new(0, 6)
+
+        local box = Instance.new("TextBox")
+        box.Name = "Logs"
+        box.Position = UDim2.fromOffset(10, 44)
+        box.Size = UDim2.new(1, -20, 1, -54)
+        box.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+        box.BorderSizePixel = 0
+        box.ClearTextOnFocus = false
+        box.MultiLine = true
+        box.TextEditable = false
+        box.TextWrapped = false
+        box.TextXAlignment = Enum.TextXAlignment.Left
+        box.TextYAlignment = Enum.TextYAlignment.Top
+        box.Font = Enum.Font.Code
+        box.TextSize = 10
+        box.TextColor3 = Color3.fromRGB(225, 225, 230)
+        box.Text = #treasureDebugLines > 0
+            and table.concat(treasureDebugLines, "\n")
+            or "No treasure debug logs yet. Enable Treasure Chart Debug and equip a Treasure Chart."
+        box.Parent = panel
+
+        close.MouseButton1Click:Connect(function()
+            destroyTreasureDebugGui()
+        end)
+
+        overlay.MouseButton1Click:Connect(function()
+            destroyTreasureDebugGui()
+        end)
+    end
+
+    treasureDebugButton.MouseButton1Click:Connect(function()
+        openTreasureDebugList()
+    end)
 
     -------------------------------------------------
     -- TREASURE CHART TRACKER
@@ -3617,6 +3799,17 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local text = table.concat(sources, " | ")
         local info = parseTreasureChartText(text)
 
+        treasureDebugLog(
+            ("CLUE PARSE | Chart=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s")
+                :format(
+                    treasureDebugValue(chart),
+                    tostring(info.island),
+                    tostring(info.direction),
+                    tostring(info.distance),
+                    tostring(info.surface)
+                )
+        )
+
         -- Only scan PlayerGui when the equipped Tool does not contain enough
         -- clue data by itself. This keeps the normal 0.5s update lightweight.
         if not info.island or not info.direction or not info.distance then
@@ -3636,6 +3829,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local map = workspace:FindFirstChild("Map")
 
         if not map or not islandName then
+            treasureDebugLog(
+                ("ISLAND LOOKUP FAIL | Map=%s | Island=%s")
+                    :format(tostring(map ~= nil), tostring(islandName))
+            )
             return nil
         end
 
@@ -3644,12 +3841,20 @@ function ArcaneMisc.Init(Shared, UI, Context)
         for _, child in ipairs(map:GetChildren()) do
             if treasureNormalize(child.Name) == wanted then
                 if child:IsA("Model") then
+                    treasureDebugLog(
+                        ("ISLAND FOUND | Method=DirectChild | Wanted=%s | Model=%s")
+                            :format(tostring(islandName), treasureDebugValue(child))
+                    )
                     return child
                 end
 
                 local model = child:FindFirstChildWhichIsA("Model", true)
 
                 if model then
+                    treasureDebugLog(
+                        ("ISLAND FOUND | Method=NestedModel | Wanted=%s | Model=%s")
+                            :format(tostring(islandName), treasureDebugValue(model))
+                    )
                     return model
                 end
             end
@@ -3665,10 +3870,23 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 and treasureNormalize(child.Name) == wanted then
 
                 if child:IsA("Model") then
+                    treasureDebugLog(
+                        ("ISLAND FOUND | Method=DescendantModel | Wanted=%s | Model=%s")
+                            :format(tostring(islandName), treasureDebugValue(child))
+                    )
                     return child
                 end
 
-                return child:FindFirstChildWhichIsA("Model", true)
+                local nested = child:FindFirstChildWhichIsA("Model", true)
+
+                if nested then
+                    treasureDebugLog(
+                        ("ISLAND FOUND | Method=DescendantNestedModel | Wanted=%s | Model=%s")
+                            :format(tostring(islandName), treasureDebugValue(nested))
+                    )
+                end
+
+                return nested
             end
         end
 
@@ -3796,6 +4014,15 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local center, size = getTreasureIslandBounds(islandModel)
 
         if not center or not size or not info.direction or not info.distance then
+            treasureDebugLog(
+                ("CANDIDATES FAIL | MissingBoundsOrClue | Center=%s | Size=%s | Direction=%s | Distance=%s")
+                    :format(
+                        treasureDebugValue(center),
+                        treasureDebugValue(size),
+                        tostring(info.direction),
+                        tostring(info.distance)
+                    )
+            )
             return {}
         end
 
@@ -3803,17 +4030,28 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
 
         if not directionVector or not band then
+            treasureDebugLog(
+                ("CANDIDATES FAIL | Direction=%s | Band=%s")
+                    :format(tostring(info.direction), tostring(info.distance))
+            )
             return {}
         end
 
         local explicitPart = getTreasureChartExplicitSpot(islandModel)
         if explicitPart then
+            treasureDebugLog(
+                ("CANDIDATES | ExplicitSpot=%s | Method=Explicit")
+                    :format(treasureDebugValue(explicitPart))
+            )
             return {explicitPart}
         end
 
         local islandRadius = math.max(size.X, size.Z) * 0.5
 
         if islandRadius <= 10 then
+            treasureDebugLog(
+                ("CANDIDATES FAIL | IslandRadiusTooSmall | Radius=%.2f"):format(islandRadius)
+            )
             return {}
         end
 
@@ -3829,8 +4067,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             if part:IsA("BasePart")
                 and part.Transparency < 0.85
-                and part.CanCollide
-                and math.max(part.Size.X, part.Size.Z) >= 2 then
+                and math.max(part.Size.X, part.Size.Z) >= 1 then
 
                 local offset = Vector3.new(
                     part.Position.X - center.X,
@@ -3861,13 +4098,53 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return (a.Size.X * a.Size.Z) > (b.Size.X * b.Size.Z)
         end)
 
+        treasureDebugLog(
+            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Count=%d | Radius=%.2f | Band=%.3f-%.3f")
+                :format(
+                    tostring(info.island),
+                    tostring(info.direction),
+                    tostring(info.distance),
+                    tostring(info.surface),
+                    #candidates,
+                    islandRadius,
+                    band[1],
+                    band[2]
+                )
+        )
+
+        for index = 1, math.min(#candidates, 5) do
+            local candidate = candidates[index]
+
+            treasureDebugLog(
+                ("CANDIDATE[%d] | %s | Pos=%s | Size=%s | Material=%s")
+                    :format(
+                        index,
+                        treasureDebugValue(candidate),
+                        treasureDebugValue(candidate.Position),
+                        treasureDebugValue(candidate.Size),
+                        tostring(candidate.Material)
+                    )
+            )
+        end
+
         return candidates
     end
 
     local function createTreasureChartMarker(position, info)
         if not position then
+            treasureDebugLog("MARKER FAIL | Position=nil")
             return
         end
+
+        treasureDebugLog(
+            ("MARKER CREATE | Position=%s | Island=%s | Direction=%s | Distance=%s")
+                :format(
+                    treasureDebugValue(position),
+                    tostring(info.island),
+                    tostring(info.direction),
+                    tostring(info.distance)
+                )
+        )
 
         local anchor = Instance.new("Part")
         anchor.Name = "SolarTreasureChartMarker"
@@ -3921,10 +4198,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             table.clear(treasureChartHighlights)
 
+            if treasureChartESP and treasureChartESP.fallbackArea then
+                pcall(function()
+                    treasureChartESP.fallbackArea:Destroy()
+                end)
+
+                treasureChartESP.fallbackArea = nil
+            end
+
             if treasureChartESP then
                 treasureChartESP.greenShown = false
             end
 
+            treasureDebugLog("GREEN AREA | Hidden")
             return
         end
 
@@ -3932,8 +4218,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return
         end
 
-        -- Hard cap to avoid turning a large island's entire terrain into
-        -- hundreds of Highlight instances.
+        -- When we have real map parts, highlight them. Otherwise create a
+        -- visible fallback dig area around the estimated chart position so
+        -- the Finder still gives the player a physical target and STUDS.
         local limit = math.min(#treasureChartCandidateParts, 8)
 
         for index = 1, limit do
@@ -3952,6 +4239,31 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                 table.insert(treasureChartHighlights, highlight)
             end
+        end
+
+        if limit == 0 and treasureChartESP.position then
+            local fallbackArea = Instance.new("Part")
+            fallbackArea.Name = "SolarTreasureEstimatedDigArea"
+            fallbackArea.Anchored = true
+            fallbackArea.CanCollide = false
+            fallbackArea.CanTouch = false
+            fallbackArea.CanQuery = false
+            fallbackArea.Transparency = 0.76
+            fallbackArea.Material = Enum.Material.Neon
+            fallbackArea.Color = Color3.fromRGB(35, 255, 80)
+            fallbackArea.Size = Vector3.new(40, 0.35, 40)
+            fallbackArea.CFrame = CFrame.new(treasureChartESP.position + Vector3.new(0, 0.2, 0))
+            fallbackArea.Parent = workspace
+            treasureChartESP.fallbackArea = fallbackArea
+
+            treasureDebugLog(
+                ("GREEN AREA | FallbackEstimatedArea | Center=%s | Size=40x40")
+                    :format(treasureDebugValue(treasureChartESP.position))
+            )
+        else
+            treasureDebugLog(
+                ("GREEN AREA | Highlights=%d"):format(limit)
+            )
         end
 
         treasureChartESP.greenShown = true
@@ -4003,6 +4315,14 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local chart = findTreasureChartObject()
 
+        treasureDebugLog(
+            ("REFRESH | Enabled=%s | Chart=%s")
+                :format(
+                    tostring(Config.ArcaneTreasureChartESP),
+                    treasureDebugValue(chart)
+                )
+        )
+
         if not chart then
             destroyTreasureChartESP()
             treasureChartCurrentObject = nil
@@ -4018,6 +4338,16 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         local info = getTreasureChartInfo(chart)
+
+        treasureDebugLog(
+            ("REFRESH INFO | Island=%s | Direction=%s | Distance=%s | Surface=%s")
+                :format(
+                    tostring(info.island),
+                    tostring(info.direction),
+                    tostring(info.distance),
+                    tostring(info.surface)
+                )
+        )
 
         if not info.island or not info.direction or not info.distance then
             if treasureChartStatus then
@@ -4047,6 +4377,11 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             local islandModel = findTreasureIslandModel(info.island)
 
+            treasureDebugLog(
+                ("SCAN | Island=%s | Found=%s")
+                    :format(tostring(info.island), tostring(islandModel ~= nil))
+            )
+
             if islandModel then
                 treasureChartIslandModel = islandModel
                 treasureChartCandidateParts =
@@ -4057,6 +4392,14 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                 if markerPart then
                     markerPosition = markerPart.Position
+
+                    treasureDebugLog(
+                        ("MARKER SOURCE | Candidate[1]=%s | Position=%s")
+                            :format(
+                                treasureDebugValue(markerPart),
+                                treasureDebugValue(markerPosition)
+                            )
+                    )
                 else
                     local center, size = getTreasureIslandBounds(islandModel)
                     local directionVector = treasureDirectionVector(info.direction)
@@ -4069,6 +4412,17 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                         markerPosition =
                             center + directionVector * middleRadius
+
+                        treasureDebugLog(
+                            ("MARKER SOURCE | MidpointFallback | Center=%s | Position=%s | Radius=%.2f")
+                                :format(
+                                    treasureDebugValue(center),
+                                    treasureDebugValue(markerPosition),
+                                    radius
+                                )
+                        )
+                    else
+                        treasureDebugLog("MARKER FAIL | Could not calculate midpoint fallback")
                     end
                 end
 
@@ -4094,13 +4448,48 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     end
                 end
             end
+
+            if not nearest and treasureChartESP and treasureChartESP.position then
+                nearestDistance =
+                    (playerRoot.Position - treasureChartESP.position).Magnitude
+                treasureDebugLog(
+                    ("DISTANCE FALLBACK | MarkerPosition=%s | Distance=%.2f")
+                        :format(
+                            treasureDebugValue(treasureChartESP.position),
+                            nearestDistance
+                        )
+                )
+            end
         end
 
-        if treasureChartESP and nearest then
-            treasureChartESP.position = nearest.Position
-            treasureChartESP.anchor.CFrame = CFrame.new(nearest.Position)
+        treasureDebugLog(
+            ("DISTANCE | Root=%s | Nearest=%s | Distance=%.2f | Candidates=%d | GreenThreshold=%d")
+                :format(
+                    treasureDebugValue(playerRoot),
+                    treasureDebugValue(nearest),
+                    nearestDistance,
+                    #treasureChartCandidateParts,
+                    TREASURE_CHART_ARRIVAL_DISTANCE
+                )
+        )
+
+        if treasureChartESP and (nearest or playerRoot and treasureChartESP.position) then
+            local targetPosition = nearest and nearest.Position
+                or treasureChartESP.position
+
+            treasureChartESP.position = targetPosition
+            treasureChartESP.anchor.CFrame = CFrame.new(targetPosition)
 
             local arrived = nearestDistance <= TREASURE_CHART_ARRIVAL_DISTANCE
+
+            treasureDebugLog(
+                ("ARRIVAL | Arrived=%s | Distance=%.2f | Target=%s")
+                    :format(
+                        tostring(arrived),
+                        nearestDistance,
+                        treasureDebugValue(targetPosition)
+                    )
+            )
 
             setTreasureChartGreenArea(arrived)
 
@@ -4121,7 +4510,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 .. tostring(info.direction)
                 .. " | "
                 .. tostring(info.distance)
-                .. "\\nCandidates: "
+                .. "\nCandidates: "
                 .. tostring(#treasureChartCandidateParts)
                 .. (info.surface and (" | " .. info.surface) or "")
         end
@@ -6573,6 +6962,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
 
     local function cleanupArcaneSession()
+        destroyTreasureDebugGui()
+
         for chest in pairs(chestLifecycleWatchers) do
             cleanupChestLifecycleWatcher(chest)
         end
