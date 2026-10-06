@@ -3414,6 +3414,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartIslandModel = nil
     local treasureChartLastObjectScan = 0
     local treasureChartNeedsScan = true
+    local treasureChartLastScanAttempt = 0
     local treasureDeepScanning = false
 
     -- Forward declarations: these helpers are referenced by Treasure Chart
@@ -5031,7 +5032,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
             treasureChartNeedsScan = true
         end
 
-        if treasureChartNeedsScan then
+        if treasureChartNeedsScan
+            and (os.clock() - treasureChartLastScanAttempt) >= 1 then
+
+            -- The island may not exist yet because Arcane streams Map content
+            -- after the chart GUI/tool becomes available. The old code marked
+            -- the scan complete even when the island lookup failed, leaving
+            -- the Finder permanently stuck at Candidates=0 / no ESP until rejoin.
+            treasureChartLastScanAttempt = os.clock()
+            treasureDebugLog(
+                ("SCAN ATTEMPT | Island=%s")
+                    :format(tostring(info.island))
+            )
+
             destroyTreasureChartESP()
 
             local islandModel = findTreasureIslandModel(info.island)
@@ -5081,16 +5094,30 @@ function ArcaneMisc.Init(Shared, UI, Context)
                                 )
                         )
                     else
-                        treasureDebugLog("MARKER FAIL | Could not calculate midpoint fallback")
+                        treasureDebugLog(
+                            "MARKER FAIL | Could not calculate midpoint fallback"
+                        )
                     end
                 end
 
                 createTreasureChartMarker(markerPosition, info)
 
                 treasureDebugLog("STEP | AfterMarkerCreate")
-            end
 
-            treasureChartNeedsScan = false
+                -- A successful island lookup is enough to finish this scan.
+                -- The physical candidate list may still be empty; the marker
+                -- fallback handles that case without blocking STUDS.
+                treasureChartNeedsScan = false
+            else
+                -- Keep the scan pending so the next retry can catch the island
+                -- once its streamed model/parts have appeared in Workspace.Map.
+                treasureChartNeedsScan = true
+
+                treasureDebugLog(
+                    ("SCAN RETRY QUEUED | Island=%s | NextRetry=1s")
+                        :format(tostring(info.island))
+                )
+            end
         end
 
         treasureDebugLog("STEP | BeforePlayerRoot")
