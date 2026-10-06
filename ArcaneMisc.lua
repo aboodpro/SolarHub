@@ -4746,60 +4746,32 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             local exact = root:FindFirstChild(islandName, true)
 
-            if exact then
-                if exact:IsA("Model") then
-                    treasureDebugLog(
-                        ("ISLAND FOUND | Method=RecursiveExactModel | Source=%s | Wanted=%s | Model=%s")
-                            :format(
-                                sourceName,
-                                tostring(islandName),
-                                treasureDebugValue(exact)
-                            )
-                    )
-                    return exact
-                end
-
-                local nested = exact:FindFirstChildWhichIsA("Model", true)
-
-                if nested then
-                    treasureDebugLog(
-                        ("ISLAND FOUND | Method=RecursiveExactNested | Source=%s | Wanted=%s | Model=%s")
-                            :format(
-                                sourceName,
-                                tostring(islandName),
-                                treasureDebugValue(nested)
-                            )
-                    )
-                    return nested
-                end
+            if exact and (exact:IsA("Model") or exact:IsA("Folder")) then
+                treasureDebugLog(
+                    ("ISLAND FOUND | Method=RecursiveExactContainer | Source=%s | Wanted=%s | Container=%s | Class=%s")
+                        :format(
+                            sourceName,
+                            tostring(islandName),
+                            treasureDebugValue(exact),
+                            exact.ClassName
+                        )
+                )
+                return exact
             end
 
             for _, child in ipairs(root:GetChildren()) do
                 if treasureNormalize(child.Name) == wanted then
-                    if child:IsA("Model") then
+                    if child:IsA("Model") or child:IsA("Folder") then
                         treasureDebugLog(
-                            ("ISLAND FOUND | Method=NormalizedDirectChild | Source=%s | Wanted=%s | Model=%s")
+                            ("ISLAND FOUND | Method=NormalizedDirectContainer | Source=%s | Wanted=%s | Container=%s | Class=%s")
                                 :format(
                                     sourceName,
                                     tostring(islandName),
-                                    treasureDebugValue(child)
+                                    treasureDebugValue(child),
+                                    child.ClassName
                                 )
                         )
                         return child
-                    end
-
-                    local nested = child:FindFirstChildWhichIsA("Model", true)
-
-                    if nested then
-                        treasureDebugLog(
-                            ("ISLAND FOUND | Method=NormalizedNestedModel | Source=%s | Wanted=%s | Model=%s")
-                                :format(
-                                    sourceName,
-                                    tostring(islandName),
-                                    treasureDebugValue(nested)
-                                )
-                        )
-                        return nested
                     end
                 end
             end
@@ -4863,31 +4835,16 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     if (child:IsA("Model") or child:IsA("Folder"))
                         and treasureNormalize(child.Name) == wanted then
 
-                        if child:IsA("Model") then
-                            treasureDebugLog(
-                                ("ISLAND FOUND | Method=BoundedNormalizedDescendant | Source=%s | Wanted=%s | Model=%s")
-                                    :format(
-                                        entry.source,
-                                        tostring(islandName),
-                                        treasureDebugValue(child)
-                                    )
-                            )
-                            return child
-                        end
-
-                        local nested = child:FindFirstChildWhichIsA("Model", true)
-
-                        if nested then
-                            treasureDebugLog(
-                                ("ISLAND FOUND | Method=BoundedNormalizedNested | Source=%s | Wanted=%s | Model=%s")
-                                    :format(
-                                        entry.source,
-                                        tostring(islandName),
-                                        treasureDebugValue(nested)
-                                    )
-                            )
-                            return nested
-                        end
+                        treasureDebugLog(
+                            ("ISLAND FOUND | Method=BoundedNormalizedContainer | Source=%s | Wanted=%s | Container=%s | Class=%s")
+                                :format(
+                                    entry.source,
+                                    tostring(islandName),
+                                    treasureDebugValue(child),
+                                    child.ClassName
+                                )
+                        )
+                        return child
                     end
                 end
             end
@@ -4978,34 +4935,63 @@ function ArcaneMisc.Init(Shared, UI, Context)
             + part.CFrame.UpVector * (halfHeight + 0.15)
     end
 
-    local function getTreasureIslandBounds(model)
-        if not model then
+    local function getTreasureIslandBounds(root)
+        if not root then
             return nil
         end
 
-        -- Prefer the model pivot as the island's authored center. Fall back to
-        -- the bounding box only for older/oddly-authored models.
-        local okPivot, pivot = pcall(function()
-            return model:GetPivot()
-        end)
+        if root:IsA("Model") then
+            local okBounds, cf, size = pcall(function()
+                return root:GetBoundingBox()
+            end)
 
-        local okBounds, cf, size = pcall(function()
-            return model:GetBoundingBox()
-        end)
-
-        if not okBounds or not cf or not size then
-            if okPivot and pivot then
-                return pivot.Position, Vector3.new(0, 0, 0)
+            if okBounds and cf and size then
+                -- Treasure chart directions are based on the visible island
+                -- footprint. Use the bounding-box center, not Model:GetPivot(),
+                -- because streamed Fragmentable models may have authored pivots
+                -- that are nowhere near the whole island.
+                return cf.Position, size
             end
+        end
 
+        -- Some Arcane islands are folders containing the actual Fragmentable
+        -- terrain model. Calculate a world-space footprint from their BaseParts.
+        local minX, minY, minZ = math.huge, math.huge, math.huge
+        local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+        local found = 0
+
+        local ok = pcall(function()
+            for _, object in ipairs(root:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    local p = object.Position
+                    local half = object.Size * 0.5
+
+                    minX = math.min(minX, p.X - math.abs(half.X))
+                    minY = math.min(minY, p.Y - math.abs(half.Y))
+                    minZ = math.min(minZ, p.Z - math.abs(half.Z))
+                    maxX = math.max(maxX, p.X + math.abs(half.X))
+                    maxY = math.max(maxY, p.Y + math.abs(half.Y))
+                    maxZ = math.max(maxZ, p.Z + math.abs(half.Z))
+                    found += 1
+                end
+            end
+        end)
+
+        if not ok or found == 0 then
             return nil
         end
 
-        local center = okPivot and pivot.Position or cf.Position
+        local size = Vector3.new(
+            maxX - minX,
+            maxY - minY,
+            maxZ - minZ
+        )
 
-        if not center then
-            center = cf.Position
-        end
+        local center = Vector3.new(
+            (minX + maxX) * 0.5,
+            (minY + maxY) * 0.5,
+            (minZ + maxZ) * 0.5
+        )
 
         return center, size
     end
@@ -5154,6 +5140,15 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
 
+        treasureDebugLog(
+            ("CANDIDATE SOURCE | IslandContainer=%s | Class=%s | Fragmentable=%s")
+                :format(
+                    treasureDebugValue(islandModel),
+                    islandModel.ClassName,
+                    treasureDebugValue(fragmentable)
+                )
+        )
+
         if not fragmentable then
             treasureDebugLog(
                 ("CANDIDATES FAIL | FragmentableMissing | Island=%s")
@@ -5186,8 +5181,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 local maxRadius = band[2]
 
                 if normalizedRadius >= minRadius
-                    and normalizedRadius <= maxRadius + 0.055
-                    and angularDifference <= math.rad(11.25) + math.rad(2) then
+                    and normalizedRadius <= maxRadius + 0.08
+                    and angularDifference <= math.rad(15) then
 
                     local radialMid = (minRadius + maxRadius) * 0.5
                     local radialScore =
