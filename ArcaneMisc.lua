@@ -4571,33 +4571,55 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 )
         )
 
-        if treasureChartESP and (nearest or playerRoot and treasureChartESP.position) then
-            local targetPosition = nearest and nearest.Position
-                or treasureChartESP.position
+        if treasureChartESP and playerRoot and treasureChartESP.position then
+            -- Keep the displayed distance tied to the visible marker itself.
+            -- Candidate parts are optional; the chart must still show STUDS
+            -- when the island has no matching physical candidates.
+            local targetPosition = treasureChartESP.position
+
+            if nearest then
+                targetPosition = nearest.Position
+            end
 
             treasureChartESP.position = targetPosition
             treasureChartESP.anchor.CFrame = CFrame.new(targetPosition)
 
-            local arrived = nearestDistance <= TREASURE_CHART_ARRIVAL_DISTANCE
+            local displayDistance =
+                (playerRoot.Position - targetPosition).Magnitude
+
+            local arrived = displayDistance <= TREASURE_CHART_ARRIVAL_DISTANCE
 
             treasureDebugLog(
-                ("ARRIVAL | Arrived=%s | Distance=%.2f | Target=%s")
+                ("ARRIVAL | Arrived=%s | Distance=%.2f | Target=%s | Marker=%s")
                     :format(
                         tostring(arrived),
-                        nearestDistance,
-                        treasureDebugValue(targetPosition)
+                        displayDistance,
+                        treasureDebugValue(targetPosition),
+                        treasureDebugValue(treasureChartESP.anchor)
                     )
             )
 
-            setTreasureChartGreenArea(arrived)
-
+            -- Update the text BEFORE the optional green-area work so a highlight
+            -- error can never prevent the STUDS text from appearing.
             treasureChartESP.label.Text =
                 "TREASURE CHART | "
                 .. tostring(info.island)
                 .. "\n"
-                .. tostring(math.floor(nearestDistance))
+                .. tostring(math.floor(displayDistance))
                 .. " STUDS | "
                 .. (arrived and "GREEN DIG AREA" or "GO TO AREA")
+
+            pcall(function()
+                setTreasureChartGreenArea(arrived)
+            end)
+        elseif treasureChartESP then
+            treasureDebugLog(
+                ("DISTANCE WAIT | PlayerRoot=%s | MarkerPosition=%s")
+                    :format(
+                        treasureDebugValue(playerRoot),
+                        treasureDebugValue(treasureChartESP.position)
+                    )
+            )
         end
 
         if treasureChartStatus then
@@ -4633,7 +4655,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
             task.wait(0.5)
 
             if Config.ArcaneTreasureChartESP then
-                pcall(refreshTreasureChart)
+                local ok, err = pcall(refreshTreasureChart)
+
+                if not ok then
+                    treasureDebugLog(
+                        ("REFRESH ERROR | %s"):format(tostring(err))
+                    )
+                end
             else
                 destroyTreasureChartESP()
             end
