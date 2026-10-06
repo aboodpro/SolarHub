@@ -3539,6 +3539,32 @@ function ArcaneMisc.Init(Shared, UI, Context)
         close.Parent = panel
         Instance.new("UICorner", close).CornerRadius = UDim.new(0, 6)
 
+        local copyButton = Instance.new("TextButton")
+        copyButton.Name = "Copy"
+        copyButton.Size = UDim2.fromOffset(64, 28)
+        copyButton.Position = UDim2.new(1, -110, 0, 8)
+        copyButton.BackgroundColor3 = Color3.fromRGB(50, 50, 62)
+        copyButton.BorderSizePixel = 0
+        copyButton.Text = "COPY"
+        copyButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+        copyButton.Font = Enum.Font.GothamBold
+        copyButton.TextSize = 10
+        copyButton.Parent = panel
+        Instance.new("UICorner", copyButton).CornerRadius = UDim.new(0, 6)
+
+        local clearButton = Instance.new("TextButton")
+        clearButton.Name = "Clear"
+        clearButton.Size = UDim2.fromOffset(64, 28)
+        clearButton.Position = UDim2.new(1, -182, 0, 8)
+        clearButton.BackgroundColor3 = Color3.fromRGB(50, 50, 62)
+        clearButton.BorderSizePixel = 0
+        clearButton.Text = "CLEAR"
+        clearButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+        clearButton.Font = Enum.Font.GothamBold
+        clearButton.TextSize = 10
+        clearButton.Parent = panel
+        Instance.new("UICorner", clearButton).CornerRadius = UDim.new(0, 6)
+
         local box = Instance.new("TextBox")
         box.Name = "Logs"
         box.Position = UDim2.fromOffset(10, 44)
@@ -3558,6 +3584,31 @@ function ArcaneMisc.Init(Shared, UI, Context)
             and table.concat(treasureDebugLines, "\n")
             or "No treasure debug logs yet. Enable Treasure Chart Debug and equip a Treasure Chart."
         box.Parent = panel
+
+        copyButton.MouseButton1Click:Connect(function()
+            local textToCopy = box.Text or ""
+            local copied = false
+
+            if type(setclipboard) == "function" then
+                copied = pcall(setclipboard, textToCopy)
+            elseif type(toclipboard) == "function" then
+                copied = pcall(toclipboard, textToCopy)
+            elseif type(set_clipboard) == "function" then
+                copied = pcall(set_clipboard, textToCopy)
+            end
+
+            copyButton.Text = copied and "COPIED!" or "NO CLIP"
+            task.delay(1.2, function()
+                if copyButton and copyButton.Parent then
+                    copyButton.Text = "COPY"
+                end
+            end)
+        end)
+
+        clearButton.MouseButton1Click:Connect(function()
+            table.clear(treasureDebugLines)
+            box.Text = "Debug log cleared."
+        end)
 
         close.MouseButton1Click:Connect(function()
             destroyTreasureDebugGui()
