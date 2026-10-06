@@ -3469,6 +3469,264 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
     end
 
+    local function treasureDeepScan()
+        if not Config.ArcaneTreasureChartDebug then
+            return
+        end
+
+        treasureDebugLog("========== DEEP SCAN BEGIN ==========")
+
+        local collectionService = game:GetService("CollectionService")
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local player = Shared.player
+        local character = player and player.Character
+        local chart = treasureChartCurrentObject or (
+            character and character:FindFirstChildOfClass("Tool")
+        )
+
+        local function logAttributes(object, prefix)
+            if not object then
+                return
+            end
+
+            local ok, attrs = pcall(function()
+                return object:GetAttributes()
+            end)
+
+            if ok and type(attrs) == "table" then
+                local keys = {}
+                for key in pairs(attrs) do
+                    keys[#keys + 1] = tostring(key)
+                end
+                table.sort(keys)
+
+                for _, key in ipairs(keys) do
+                    local value = attrs[key]
+                    treasureDebugLog(
+                        ("DEEP ATTR | %s | %s=%s")
+                            :format(
+                                prefix,
+                                tostring(key),
+                                treasureDebugValue(value)
+                            )
+                    )
+                end
+            end
+        end
+
+        local function logTags(object, prefix)
+            if not object then
+                return
+            end
+
+            local ok, tags = pcall(function()
+                return collectionService:GetTags(object)
+            end)
+
+            if ok and type(tags) == "table" and #tags > 0 then
+                treasureDebugLog(
+                    ("DEEP TAGS | %s | %s")
+                        :format(
+                            prefix,
+                            table.concat(tags, ", ")
+                        )
+                )
+            end
+        end
+
+        local function isInterestingName(value)
+            local normalized = treasureNormalize(value)
+
+            return normalized:find("treasure", 1, true) ~= nil
+                or normalized:find("chart", 1, true) ~= nil
+                or normalized:find("buried", 1, true) ~= nil
+                or normalized:find("dig", 1, true) ~= nil
+                or normalized:find("shovel", 1, true) ~= nil
+                or normalized:find("spot", 1, true) ~= nil
+                or normalized:find("chest", 1, true) ~= nil
+        end
+
+        local function scanContainer(root, rootName, maxMatches)
+            if not root then
+                treasureDebugLog(
+                    ("DEEP CONTAINER | %s | <nil>"):format(rootName)
+                )
+                return
+            end
+
+            local matches = 0
+
+            for _, object in ipairs(root:GetDescendants()) do
+                if isInterestingName(object.Name)
+                    or (
+                        object:IsA("RemoteEvent")
+                        or object:IsA("RemoteFunction")
+                    )
+                        and isInterestingName(object.Parent and object.Parent.Name) then
+
+                    matches += 1
+
+                    treasureDebugLog(
+                        ("DEEP OBJECT | %s | Class=%s | Name=%s | FullName=%s")
+                            :format(
+                                rootName,
+                                object.ClassName,
+                                tostring(object.Name),
+                                treasureDebugValue(object)
+                            )
+                    )
+
+                    logAttributes(object, rootName)
+                    logTags(object, rootName)
+
+                    if matches >= maxMatches then
+                        treasureDebugLog(
+                            ("DEEP LIMIT | %s | MaxMatches=%d")
+                                :format(rootName, maxMatches)
+                        )
+                        break
+                    end
+                end
+            end
+
+            treasureDebugLog(
+                ("DEEP CONTAINER DONE | %s | Matches=%d")
+                    :format(rootName, matches)
+            )
+        end
+
+        if chart then
+            treasureDebugLog(
+                ("DEEP CHART | Class=%s | FullName=%s")
+                    :format(chart.ClassName, treasureDebugValue(chart))
+            )
+
+            logAttributes(chart, "Chart")
+            logTags(chart, "Chart")
+
+            local descendants = chart:GetDescendants()
+
+            for index, object in ipairs(descendants) do
+                if isInterestingName(object.Name)
+                    or object:IsA("StringValue")
+                    or object:IsA("IntValue")
+                    or object:IsA("NumberValue")
+                    or object:IsA("BoolValue") then
+
+                    local valueText = ""
+
+                    if object:IsA("StringValue")
+                        or object:IsA("IntValue")
+                        or object:IsA("NumberValue")
+                        or object:IsA("BoolValue") then
+                        valueText = " | Value=" .. treasureDebugValue(object.Value)
+                    end
+
+                    treasureDebugLog(
+                        ("DEEP CHART CHILD | #%d | Class=%s | Name=%s | FullName=%s%s")
+                            :format(
+                                index,
+                                object.ClassName,
+                                tostring(object.Name),
+                                treasureDebugValue(object),
+                                valueText
+                            )
+                    )
+
+                    logAttributes(object, "ChartChild")
+                    logTags(object, "ChartChild")
+                end
+            end
+        else
+            treasureDebugLog("DEEP CHART | <none equipped>")
+        end
+
+        if treasureChartIslandModel then
+            treasureDebugLog(
+                ("DEEP ISLAND | %s"):format(
+                    treasureDebugValue(treasureChartIslandModel)
+                )
+            )
+
+            logAttributes(treasureChartIslandModel, "Island")
+            logTags(treasureChartIslandModel, "Island")
+
+            local matchCount = 0
+
+            for _, object in ipairs(treasureChartIslandModel:GetDescendants()) do
+                if isInterestingName(object.Name) then
+                    matchCount += 1
+
+                    treasureDebugLog(
+                        ("DEEP ISLAND OBJECT | Class=%s | Name=%s | FullName=%s")
+                            :format(
+                                object.ClassName,
+                                tostring(object.Name),
+                                treasureDebugValue(object)
+                            )
+                    )
+
+                    logAttributes(object, "IslandObject")
+                    logTags(object, "IslandObject")
+
+                    if matchCount >= 120 then
+                        treasureDebugLog("DEEP ISLAND LIMIT | MaxMatches=120")
+                        break
+                    end
+                end
+            end
+
+            treasureDebugLog(
+                ("DEEP ISLAND DONE | Matches=%d"):format(matchCount)
+            )
+        end
+
+        scanContainer(replicatedStorage, "ReplicatedStorage", 120)
+
+        local map = workspace:FindFirstChild("Map")
+        scanContainer(map, "Workspace.Map", 120)
+
+        local playerGui = Shared.playerGui
+
+        if playerGui then
+            local guiMatches = 0
+
+            for _, object in ipairs(playerGui:GetDescendants()) do
+                if (object:IsA("TextLabel")
+                    or object:IsA("TextButton")
+                    or object:IsA("TextBox"))
+                    and tostring(object.Text or "") ~= "" then
+
+                    local text = tostring(object.Text)
+
+                    if isInterestingName(text) then
+                        guiMatches += 1
+
+                        treasureDebugLog(
+                            ("DEEP GUI | Class=%s | Text=%s | FullName=%s")
+                                :format(
+                                    object.ClassName,
+                                    text,
+                                    treasureDebugValue(object)
+                                )
+                        )
+
+                        if guiMatches >= 60 then
+                            treasureDebugLog("DEEP GUI LIMIT | MaxMatches=60")
+                            break
+                        end
+                    end
+                end
+            end
+
+            treasureDebugLog(
+                ("DEEP GUI DONE | Matches=%d"):format(guiMatches)
+            )
+        end
+
+        treasureDebugLog("========== DEEP SCAN END ==========")
+    end
+
     openTreasureDebugList = function()
         local playerGui = Shared.playerGui
 
@@ -3552,6 +3810,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
         copyButton.Parent = panel
         Instance.new("UICorner", copyButton).CornerRadius = UDim.new(0, 6)
 
+        local deepButton = Instance.new("TextButton")
+        deepButton.Name = "DeepScan"
+        deepButton.Size = UDim2.fromOffset(82, 28)
+        deepButton.Position = UDim2.new(1, -274, 0, 8)
+        deepButton.BackgroundColor3 = Color3.fromRGB(50, 50, 62)
+        deepButton.BorderSizePixel = 0
+        deepButton.Text = "DEEP SCAN"
+        deepButton.TextColor3 = Color3.fromRGB(235, 235, 240)
+        deepButton.Font = Enum.Font.GothamBold
+        deepButton.TextSize = 10
+        deepButton.Parent = panel
+        Instance.new("UICorner", deepButton).CornerRadius = UDim.new(0, 6)
+
         local clearButton = Instance.new("TextButton")
         clearButton.Name = "Clear"
         clearButton.Size = UDim2.fromOffset(64, 28)
@@ -3601,6 +3872,30 @@ function ArcaneMisc.Init(Shared, UI, Context)
             task.delay(1.2, function()
                 if copyButton and copyButton.Parent then
                     copyButton.Text = "COPY"
+                end
+            end)
+        end)
+
+        deepButton.MouseButton1Click:Connect(function()
+            deepButton.Text = "SCANNING..."
+
+            task.spawn(function()
+                treasureDeepScan()
+
+                if deepButton and deepButton.Parent then
+                    deepButton.Text = "DEEP SCAN"
+                end
+
+                local panelNow = treasureDebugGui
+                    and treasureDebugGui:FindFirstChild("Panel")
+
+                local boxNow = panelNow
+                    and panelNow:FindFirstChild("Logs")
+
+                if boxNow and boxNow:IsA("TextBox") then
+                    boxNow.Text = #treasureDebugLines > 0
+                        and table.concat(treasureDebugLines, "\n")
+                        or "No treasure debug logs yet."
                 end
             end)
         end)
@@ -4525,12 +4820,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end
 
                 createTreasureChartMarker(markerPosition, info)
+
+                treasureDebugLog("STEP | AfterMarkerCreate")
             end
 
             treasureChartNeedsScan = false
         end
 
+        treasureDebugLog("STEP | BeforePlayerRoot")
         local playerRoot = getLocalPlayerRoot()
+        treasureDebugLog(
+            ("STEP | AfterPlayerRoot | Root=%s")
+                :format(treasureDebugValue(playerRoot))
+        )
         local nearest
         local nearestDistance = math.huge
 
