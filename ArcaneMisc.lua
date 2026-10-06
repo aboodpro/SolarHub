@@ -6582,10 +6582,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
 
     local function cleanupArcaneSession()
-        if not arcaneSessionActive then
-            return
-        end
-
         for chest in pairs(chestLifecycleWatchers) do
             cleanupChestLifecycleWatcher(chest)
         end
@@ -6631,10 +6627,6 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 env.SolarHubArcaneCleanup = nil
             end
         end
-    end
-
-    if type(getgenv) == "function" then
-        getgenv().SolarHubArcaneCleanup = cleanupArcaneSession
     end
 
     Context.registerCleanup(cleanupArcaneSession)
