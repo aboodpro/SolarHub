@@ -3326,7 +3326,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     UI.createToggle(
         treasureChartSection,
         "Treasure Chart Finder",
-        "Only activates while a Treasure Chart is equipped; shows the destination, STUDS remaining, then marks the dig area green within 30 studs.",
+        "Only activates while a Treasure Chart is equipped; shows the destination, STUDS remaining, then highlights every matching physical dig part within 30 studs.",
         "ArcaneTreasureChartESP",
         32
     )
@@ -4984,14 +4984,17 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return a.score < b.score
         end)
 
+        -- Keep every physically valid Fragmentable part in the clue zone.
+        -- Do not throw away the actual digging part just because another
+        -- candidate scored slightly closer to the mathematical center.
         local result = {}
 
-        for index = 1, math.min(#candidates, 12) do
+        for index = 1, #candidates do
             result[index] = candidates[index].part
         end
 
         treasureDebugLog(
-            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Count=%d | SurfaceMatched=%d | NoTreasureRejected=%d | Radius=%.2f | Band=%.3f-%.3f")
+            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Count=%d | ALL_MATCHING_PARTS=true | SurfaceMatched=%d | NoTreasureRejected=%d | Radius=%.2f | Band=%.3f-%.3f")
                 :format(
                     tostring(info.island),
                     tostring(info.direction),
@@ -5118,55 +5121,55 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return
         end
 
-        -- When we have real map parts, highlight them. Otherwise create a
-        -- visible fallback dig area around the estimated chart position so
-        -- the Finder still gives the player a physical target and STUDS.
-        local limit = math.min(#treasureChartCandidateParts, 8)
-
-        for index = 1, limit do
-            local part = treasureChartCandidateParts[index]
-
-            if part and part.Parent then
-                local highlight = Instance.new("Highlight")
-                highlight.Name = "SolarTreasureDigArea"
-                highlight.Adornee = part
-                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                highlight.FillColor = Color3.fromRGB(35, 255, 80)
-                highlight.OutlineColor = Color3.fromRGB(35, 255, 80)
-                highlight.FillTransparency = 0.82
-                highlight.OutlineTransparency = 0
-                highlight.Parent = part
-
-                table.insert(treasureChartHighlights, highlight)
-            end
-        end
-
-        if limit == 0 and treasureChartESP.position then
-            local fallbackArea = Instance.new("Part")
-            fallbackArea.Name = "SolarTreasureEstimatedDigArea"
-            fallbackArea.Anchored = true
-            fallbackArea.CanCollide = false
-            fallbackArea.CanTouch = false
-            fallbackArea.CanQuery = false
-            fallbackArea.Transparency = 0.76
-            fallbackArea.Material = Enum.Material.Neon
-            fallbackArea.Color = Color3.fromRGB(35, 255, 80)
-            fallbackArea.Size = Vector3.new(40, 0.35, 40)
-            fallbackArea.CFrame = CFrame.new(treasureChartESP.position + Vector3.new(0, 0.2, 0))
-            fallbackArea.Parent = workspace
-            treasureChartESP.fallbackArea = fallbackArea
-
-            treasureDebugLog(
-                ("GREEN AREA | FallbackEstimatedArea | Center=%s | Size=40x40")
-                    :format(treasureDebugValue(treasureChartESP.position))
-            )
-        else
-            treasureDebugLog(
-                ("GREEN AREA | Highlights=%d"):format(limit)
-            )
+        -- Never create a guessed midpoint square. Green must correspond to
+        -- actual Fragmentable terrain that passed the chart filters.
+        if #treasureChartCandidateParts == 0 then
+            treasureDebugLog("GREEN AREA | NoPhysicalCandidates | NothingHighlighted")
+            return
         end
 
         treasureChartESP.greenShown = true
+
+        local parts = table.clone(treasureChartCandidateParts)
+
+        task.spawn(function()
+            local created = 0
+
+            for index, part in ipairs(parts) do
+                if part and part.Parent then
+                    local highlight = Instance.new("Highlight")
+                    highlight.Name = "SolarTreasureDigArea"
+                    highlight.Adornee = part
+                    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    highlight.FillColor = Color3.fromRGB(35, 255, 80)
+                    highlight.OutlineColor = Color3.fromRGB(35, 255, 80)
+                    highlight.FillTransparency = 0.82
+                    highlight.OutlineTransparency = 0
+                    highlight.Parent = part
+
+                    treasureChartHighlights[#treasureChartHighlights + 1] = highlight
+                    created += 1
+                end
+
+                if index % 25 == 0 then
+                    refreshTreasureDebugGuiText(
+                        ("Highlighting dig area... %d / %d"):format(
+                            index,
+                            #parts
+                        )
+                    )
+                    task.wait()
+                end
+            end
+
+            treasureDebugLog(
+                ("GREEN AREA | AllPhysicalCandidatesHighlighted=%d"):format(created)
+            )
+
+            refreshTreasureDebugGuiText(
+                ("Green dig area ready | %d matching terrain parts"):format(created)
+            )
+        end)
     end
 
     local function isTreasureChartTool(object)
@@ -5306,68 +5309,68 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     markerPosition = getTreasureDigSurfacePosition(markerPart)
 
                     treasureDebugLog(
-                        ("MARKER SOURCE | Candidate[1]=%s | SurfacePosition=%s")
+                        ("MARKER SOURCE | PhysicalCandidate[1]=%s | SurfacePosition=%s")
                             :format(
                                 treasureDebugValue(markerPart),
                                 treasureDebugValue(markerPosition)
                             )
                     )
+
+                    if markerPosition then
+                        createTreasureChartMarker(markerPosition, info)
+
+                        if treasureChartESP then
+                            treasureChartESP.physicalTarget = true
+                        end
+                    end
+
+                    treasureDebugLog(
+                        ("TARGET TYPE | Physical=%s | Candidates=%d")
+                            :format(
+                                tostring(markerPart ~= nil),
+                                #treasureChartCandidateParts
+                            )
+                    )
+                    treasureDebugLog("STEP | AfterPhysicalMarkerCreate")
+                    treasureChartNeedsScan = false
                 else
+                    -- No physical part matched yet. Request streaming around
+                    -- the clue's mathematical center, but never turn that
+                    -- approximation into a visible/teleportable treasure target.
                     local center, size = getTreasureIslandBounds(islandModel)
                     local directionVector = treasureDirectionVector(info.direction)
                     local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
+                    local streamPosition
 
                     if center and size and directionVector and band then
                         local radius = math.max(size.X, size.Z) * 0.5
                         local middleRadius =
                             radius * ((band[1] + band[2]) * 0.5)
 
-                        markerPosition =
+                        streamPosition =
                             center + directionVector * middleRadius
 
                         treasureDebugLog(
-                            ("MARKER SOURCE | MidpointFallback | Center=%s | Position=%s | Radius=%.2f")
-                                :format(
-                                    treasureDebugValue(center),
-                                    treasureDebugValue(markerPosition),
-                                    radius
-                                )
-                        )
-                    else
-                        treasureDebugLog(
-                            "MARKER FAIL | Could not calculate midpoint fallback"
+                            ("NO PHYSICAL CANDIDATE | StreamRequest=%s")
+                                :format(treasureDebugValue(streamPosition))
                         )
                     end
+
+                    if streamPosition then
+                        pcall(function()
+                            if type(workspace.RequestStreamAroundAsync) == "function" then
+                                workspace:RequestStreamAroundAsync(streamPosition, 2)
+                            end
+                        end)
+                    end
+
+                    treasureChartNeedsScan = true
+
+                    if treasureChartStatus then
+                        treasureChartStatus.Text =
+                            "Treasure Chart Finder: waiting for matching dig terrain to stream..."
+                    end
                 end
-
-                if markerPosition then
-                    pcall(function()
-                        if type(workspace.RequestStreamAroundAsync) == "function" then
-                            workspace:RequestStreamAroundAsync(markerPosition, 2)
-                            treasureDebugLog(
-                                ("STREAM REQUEST | Position=%s")
-                                    :format(treasureDebugValue(markerPosition))
-                            )
-                        end
-                    end)
-                end
-
-                createTreasureChartMarker(markerPosition, info)
-
-                if treasureChartESP then
-                    treasureChartESP.physicalTarget = markerPart ~= nil
-                end
-
-                treasureDebugLog(
-                    ("TARGET TYPE | Physical=%s")
-                        :format(tostring(markerPart ~= nil))
-                )
-                treasureDebugLog("STEP | AfterMarkerCreate")
-
-                -- A successful island lookup is enough to finish this scan.
-                -- The physical candidate list may still be empty; the marker
-                -- fallback handles that case without blocking STUDS.
-                treasureChartNeedsScan = false
             else
                 -- Keep the scan pending so the next retry can catch the island
                 -- once its streamed model/parts have appeared in Workspace.Map.
