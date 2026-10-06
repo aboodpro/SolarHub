@@ -3320,7 +3320,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartSection = UI.createSection(
         miscTab,
         "Treasure Chart Finder",
-        240
+        280
     )
 
     UI.createToggle(
@@ -4072,8 +4072,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
     end)
 
     local treasureTeleportButton = Instance.new("TextButton")
-    treasureTeleportButton.Size = UDim2.fromOffset(130, 28)
-    treasureTeleportButton.Position = UDim2.fromOffset(150, 194)
+    treasureTeleportButton.Size = UDim2.new(1, -20, 0, 28)
+    treasureTeleportButton.Position = UDim2.fromOffset(10, 228)
     treasureTeleportButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     treasureTeleportButton.BorderSizePixel = 0
     treasureTeleportButton.Text = "TP TO TREASURE"
