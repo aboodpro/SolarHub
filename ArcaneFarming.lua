@@ -114,7 +114,6 @@ function ArcaneFarming.Init(Shared, UI, Context)
 
     local openFishingDebugList
     local connectFishingDebugHooks
-    local fishingDebugConnections = {}
 
     local fishingSection = UI.createSection(
         farmingTab,
