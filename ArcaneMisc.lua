@@ -2808,14 +2808,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
     Config.ArcaneChestESP = Config.ArcaneChestESP == true
     Config.ArcaneTreasureChartESP = Config.ArcaneTreasureChartESP == true
     Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
-    Config.ArcaneAutoFishing = Config.ArcaneAutoFishing == true
-    Config.ArcaneFishingDebug = Config.ArcaneFishingDebug == true
-
-    if type(Config.ArcaneFishingRod) ~= "string"
-        or Config.ArcaneFishingRod == "" then
-        Config.ArcaneFishingRod = FISHING_ROD_OPTIONS[1] or "Wooden Rod"
-    end
-
     -- Chest filters start OFF. The user selects the chest types they want.
     if type(Config.ArcaneChestFilter) ~= "table" then
         Config.ArcaneChestFilter = {}
