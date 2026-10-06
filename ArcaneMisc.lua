@@ -3416,6 +3416,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartNeedsScan = true
     local treasureChartLastScanAttempt = 0
     local treasureDeepScanning = false
+    local treasureTeleportGui = nil
 
     -- Forward declarations: these helpers are referenced by Treasure Chart
     -- functions that are defined earlier in this module.
@@ -5388,6 +5389,102 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 .. (info.surface and (" | " .. info.surface) or "")
         end
     end
+
+    local function destroyTreasureTeleportGui()
+        if treasureTeleportGui then
+            pcall(function()
+                treasureTeleportGui:Destroy()
+            end)
+            treasureTeleportGui = nil
+        end
+    end
+
+    local function createTreasureTeleportGui()
+        if treasureTeleportGui and treasureTeleportGui.Parent then
+            return
+        end
+
+        local playerGui = Shared.playerGui
+
+        if not playerGui then
+            return
+        end
+
+        treasureTeleportGui = Instance.new("ScreenGui")
+        treasureTeleportGui.Name = "SolarHubTreasureTeleport"
+        treasureTeleportGui.ResetOnSpawn = false
+        treasureTeleportGui.DisplayOrder = 1000001
+        treasureTeleportGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        treasureTeleportGui.Parent = playerGui
+
+        local button = Instance.new("TextButton")
+        button.Name = "Teleport"
+        button.AnchorPoint = Vector2.new(1, 0)
+        button.Position = UDim2.new(1, -18, 0, 72)
+        button.Size = UDim2.fromOffset(160, 38)
+        button.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+        button.BorderSizePixel = 0
+        button.Text = "TP TO TREASURE"
+        button.TextColor3 = Color3.fromRGB(235, 235, 240)
+        button.Font = Enum.Font.GothamBold
+        button.TextSize = 10
+        button.AutoButtonColor = true
+        button.Parent = treasureTeleportGui
+        Instance.new("UICorner", button).CornerRadius = UDim.new(0, 8)
+
+        button.Activated:Connect(function()
+            local position = treasureChartESP and treasureChartESP.position
+            local character = Shared.player and Shared.player.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+
+            if typeof(position) ~= "Vector3" or not root then
+                button.Text = typeof(position) == "Vector3"
+                    and "NO CHARACTER"
+                    or "NO TARGET"
+
+                task.delay(1.1, function()
+                    if button and button.Parent then
+                        button.Text = "TP TO TREASURE"
+                    end
+                end)
+
+                treasureDebugLog(
+                    ("TP | Failed | Position=%s | Root=%s")
+                        :format(
+                            treasureDebugValue(position),
+                            treasureDebugValue(root)
+                        )
+                )
+                return
+            end
+
+            local targetPosition = position + Vector3.new(0, 5, 0)
+            local ok, err = pcall(function()
+                root.CFrame = CFrame.new(targetPosition)
+            end)
+
+            button.Text = ok and "TELEPORTED" or "TP FAILED"
+
+            treasureDebugLog(
+                ("TP | %s | Position=%s%s")
+                    :format(
+                        ok and "Success" or "Failed",
+                        treasureDebugValue(targetPosition),
+                        ok and "" or (" | Error=" .. tostring(err))
+                    )
+            )
+
+            task.delay(1.1, function()
+                if button and button.Parent then
+                    button.Text = "TP TO TREASURE"
+                end
+            end)
+        end)
+    end
+
+    createTreasureTeleportGui()
+
+    Context.registerCleanup(destroyTreasureTeleportGui)
 
     task.spawn(function()
         task.wait(1)
