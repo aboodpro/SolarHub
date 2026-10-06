@@ -4090,6 +4090,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local character = Shared.player and Shared.player.Character
         local root = character and character:FindFirstChild("HumanoidRootPart")
 
+        if not marker or marker.physicalTarget ~= true then
+            treasureTeleportButton.Text = "TARGET NOT READY"
+
+            task.delay(1.2, function()
+                if treasureTeleportButton and treasureTeleportButton.Parent then
+                    treasureTeleportButton.Text = "TP TO TREASURE"
+                end
+            end)
+
+            treasureDebugLog("TP | Blocked | Physical treasure target is not loaded")
+            return
+        end
+
         if typeof(position) ~= "Vector3" then
             treasureTeleportButton.Text = "NO TARGET"
 
@@ -4692,6 +4705,31 @@ function ArcaneMisc.Init(Shared, UI, Context)
         return nil
     end
 
+    local function treasurePartHasNoTreasureSpot(part)
+        if not part or not part:IsA("BasePart") then
+            return true
+        end
+
+        -- Runtime diagnostics showed the map contains BoolValues named
+        -- "NoTreasureSpot" directly under Fragmentable parts. Treat those parts
+        -- as explicitly ineligible for buried treasure.
+        local marker = part:FindFirstChild("NoTreasureSpot")
+
+        if marker and marker:IsA("BoolValue") then
+            return marker.Value ~= false
+        end
+
+        -- Also allow the marker to be attached slightly deeper in the part's
+        -- immediate descendant tree for streamed variants.
+        local nested = part:FindFirstChild("NoTreasureSpot", true)
+
+        if nested and nested:IsA("BoolValue") then
+            return nested.Value ~= false
+        end
+
+        return false
+    end
+
     local function treasurePartMatchesSurface(part, surface)
         if not surface then
             return true
@@ -4699,16 +4737,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local material = part.Material
         local name = treasureNormalize(part.Name)
+        local parentName = part.Parent and treasureNormalize(part.Parent.Name) or ""
 
         if surface == "SAND" then
             return material == Enum.Material.Sand
                 or name:find("sand", 1, true) ~= nil
+                or parentName:find("sand", 1, true) ~= nil
         end
 
         if surface == "SNOW" then
             return material == Enum.Material.Snow
                 or material == Enum.Material.Glacier
                 or name:find("snow", 1, true) ~= nil
+                or parentName:find("snow", 1, true) ~= nil
         end
 
         if surface == "GROUND" then
@@ -4718,9 +4759,23 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 or material == Enum.Material.Mud
                 or name:find("ground", 1, true) ~= nil
                 or name:find("grass", 1, true) ~= nil
+                or parentName:find("ground", 1, true) ~= nil
+                or parentName:find("grass", 1, true) ~= nil
         end
 
         return true
+    end
+
+    local function getTreasureDigSurfacePosition(part)
+        if not part or not part:IsA("BasePart") then
+            return nil
+        end
+
+        -- Highlight/target the top surface rather than the BasePart center.
+        local halfHeight = math.abs(part.Size.Y) * 0.5
+
+        return part.Position
+            + part.CFrame.UpVector * (halfHeight + 0.15)
     end
 
     local function getTreasureIslandBounds(model)
@@ -4728,15 +4783,31 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return nil
         end
 
-        local ok, cf, size = pcall(function()
+        -- Prefer the model pivot as the island's authored center. Fall back to
+        -- the bounding box only for older/oddly-authored models.
+        local okPivot, pivot = pcall(function()
+            return model:GetPivot()
+        end)
+
+        local okBounds, cf, size = pcall(function()
             return model:GetBoundingBox()
         end)
 
-        if not ok or not cf or not size then
+        if not okBounds or not cf or not size then
+            if okPivot and pivot then
+                return pivot.Position, Vector3.new(0, 0, 0)
+            end
+
             return nil
         end
 
-        return cf.Position, size
+        local center = okPivot and pivot.Position or cf.Position
+
+        if not center then
+            center = cf.Position
+        end
+
+        return center, size
     end
 
     local function getTreasureChartExplicitSpot(islandModel)
@@ -4836,8 +4907,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return {}
         end
 
-        -- A generic treasure tag is not guaranteed to belong to the
-        -- active TextN clue, so candidate selection must use the clue itself.
         local islandRadius = math.max(size.X, size.Z) * 0.5
 
         if islandRadius <= 10 then
@@ -4849,17 +4918,34 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local minRadius = islandRadius * band[1]
         local maxRadius = islandRadius * band[2]
+        local targetRadius = (minRadius + maxRadius) * 0.5
         local targetAngle = math.atan2(directionVector.Z, directionVector.X)
         local candidates = {}
 
-        for index, part in ipairs(islandModel:GetDescendants()) do
-            if index % 800 == 0 then
+        -- Buried treasure is associated with the island's Fragmentable terrain.
+        -- Do not treat arbitrary buildings/decor/large terrain containers as a
+        -- treasure target.
+        local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
+            or islandModel
+
+        local scanned = 0
+        local surfaceMatched = 0
+        local rejectedNoSpot = 0
+
+        for _, part in ipairs(fragmentable:GetDescendants()) do
+            scanned += 1
+
+            if scanned % 700 == 0 then
                 task.wait()
             end
 
             if part:IsA("BasePart")
                 and part.Transparency < 0.85
-                and math.max(part.Size.X, part.Size.Z) >= 1 then
+                and math.max(part.Size.X, part.Size.Z) >= 1
+                and not treasurePartHasNoTreasureSpot(part)
+                and treasurePartMatchesSurface(part, info.surface) then
+
+                surfaceMatched += 1
 
                 local offset = Vector3.new(
                     part.Position.X - center.X,
@@ -4877,27 +4963,43 @@ function ArcaneMisc.Init(Shared, UI, Context)
                         difference = math.abs(difference - (math.pi * 2))
                     end
 
-                    if difference <= math.rad(13.5)
-                        and treasurePartMatchesSurface(part, info.surface) then
-                        table.insert(candidates, part)
+                    if difference <= math.rad(18) then
+                        local radialScore = math.abs(radial - targetRadius) / math.max(islandRadius, 1)
+                        local angularScore = difference / math.pi
+
+                        table.insert(candidates, {
+                            part = part,
+                            score = radialScore + angularScore,
+                            position = getTreasureDigSurfacePosition(part),
+                        })
                     end
                 end
+            elseif part:IsA("BasePart")
+                and part:FindFirstChild("NoTreasureSpot") then
+                rejectedNoSpot += 1
             end
         end
 
-        -- Prefer larger land/path parts; they are fewer and easier to inspect.
         table.sort(candidates, function(a, b)
-            return (a.Size.X * a.Size.Z) > (b.Size.X * b.Size.Z)
+            return a.score < b.score
         end)
 
+        local result = {}
+
+        for index = 1, math.min(#candidates, 12) do
+            result[index] = candidates[index].part
+        end
+
         treasureDebugLog(
-            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Count=%d | Radius=%.2f | Band=%.3f-%.3f")
+            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Count=%d | SurfaceMatched=%d | NoTreasureRejected=%d | Radius=%.2f | Band=%.3f-%.3f")
                 :format(
                     tostring(info.island),
                     tostring(info.direction),
                     tostring(info.distance),
                     tostring(info.surface),
-                    #candidates,
+                    #result,
+                    surfaceMatched,
+                    rejectedNoSpot,
                     islandRadius,
                     band[1],
                     band[2]
@@ -4906,20 +5008,22 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         for index = 1, math.min(#candidates, 5) do
             local candidate = candidates[index]
+            local part = candidate.part
 
             treasureDebugLog(
-                ("CANDIDATE[%d] | %s | Pos=%s | Size=%s | Material=%s")
+                ("CANDIDATE[%d] | %s | Score=%.4f | SurfacePos=%s | Size=%s | Material=%s")
                     :format(
                         index,
-                        treasureDebugValue(candidate),
-                        treasureDebugValue(candidate.Position),
-                        treasureDebugValue(candidate.Size),
-                        tostring(candidate.Material)
+                        treasureDebugValue(part),
+                        candidate.score,
+                        treasureDebugValue(candidate.position),
+                        treasureDebugValue(part.Size),
+                        tostring(part.Material)
                     )
             )
         end
 
-        return candidates
+        return result
     end
 
     local function createTreasureChartMarker(position, info)
@@ -4982,6 +5086,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             direction = info.direction,
             distanceClue = info.distance,
             greenShown = false,
+            physicalTarget = false,
         }
     end
 
@@ -5198,10 +5303,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 local markerPosition
 
                 if markerPart then
-                    markerPosition = markerPart.Position
+                    markerPosition = getTreasureDigSurfacePosition(markerPart)
 
                     treasureDebugLog(
-                        ("MARKER SOURCE | Candidate[1]=%s | Position=%s")
+                        ("MARKER SOURCE | Candidate[1]=%s | SurfacePosition=%s")
                             :format(
                                 treasureDebugValue(markerPart),
                                 treasureDebugValue(markerPosition)
@@ -5249,6 +5354,14 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                 createTreasureChartMarker(markerPosition, info)
 
+                if treasureChartESP then
+                    treasureChartESP.physicalTarget = markerPart ~= nil
+                end
+
+                treasureDebugLog(
+                    ("TARGET TYPE | Physical=%s")
+                        :format(tostring(markerPart ~= nil))
+                )
                 treasureDebugLog("STEP | AfterMarkerCreate")
 
                 -- A successful island lookup is enough to finish this scan.
@@ -5437,7 +5550,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
             local character = Shared.player and Shared.player.Character
             local root = character and character:FindFirstChild("HumanoidRootPart")
 
-            if typeof(position) ~= "Vector3" or not root then
+            if not marker
+                or marker.physicalTarget ~= true
+                or typeof(position) ~= "Vector3"
+                or not root then
                 button.Text = typeof(position) == "Vector3"
                     and "NO CHARACTER"
                     or "NO TARGET"
