@@ -3416,6 +3416,11 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartNeedsScan = true
     local treasureDeepScanning = false
 
+    -- Forward declarations: these helpers are referenced by Treasure Chart
+    -- functions that are defined earlier in this module.
+    local treasureNormalize
+    local getLocalPlayerRoot
+
     local function treasureDebugValue(value)
         if value == nil then
             return "<nil>"
@@ -4066,7 +4071,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         ["East Northeast"] = 337.5,
     }
 
-    local function treasureNormalize(value)
+    treasureNormalize = function(value)
         return tostring(value or ""):lower():gsub("[^%w]+", "")
     end
 
@@ -5191,7 +5196,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         )
     end
 
-    local function getLocalPlayerRoot()
+    getLocalPlayerRoot = function()
         local character = Shared.player.Character
 
         return character
