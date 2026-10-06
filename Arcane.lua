@@ -7309,7 +7309,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         )
     end
 
-    local function equipFishingRod()
+    local function equipFishingRod(forceClean)
         local rod = findFishingRod()
 
         if not rod then
@@ -7320,12 +7320,38 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         local humanoid = character
             and character:FindFirstChildOfClass("Humanoid")
 
-        if humanoid and rod.Parent ~= character then
+        if not humanoid or not character then
+            return rod
+        end
+
+        local currentTool = character:FindFirstChildWhichIsA("Tool")
+        local needsEquip = rod.Parent ~= character or currentTool ~= rod
+
+        if forceClean and needsEquip then
+            pcall(function()
+                humanoid:UnequipTools()
+            end)
+            task.wait(0.08)
+        end
+
+        if needsEquip or rod.Parent ~= character then
             pcall(function()
                 humanoid:EquipTool(rod)
             end)
+            task.wait(0.22)
+        end
 
-            task.wait(0.2)
+        -- Verify the selected rod is actually the equipped tool.
+        for _ = 1, 4 do
+            if rod.Parent == character
+                and character:FindFirstChildWhichIsA("Tool") == rod then
+                break
+            end
+
+            pcall(function()
+                humanoid:EquipTool(rod)
+            end)
+            task.wait(0.08)
         end
 
         return rod
@@ -7557,7 +7583,10 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             return false
         end
 
-        local rod = equipFishingRod()
+        -- A recovery starts as a completely fresh fishing attempt.
+        -- Cleanly unequip the current item first so Tool:Activate() behaves
+        -- exactly like a normal manual cast.
+        local rod = equipFishingRod(true)
 
         if not rod then
             fishingState = "WAITING_ROD"
@@ -7585,55 +7614,42 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         fishingDebugLog("STATE -> CASTING | Rod=" .. tostring(rod.Name))
         setFishingStatus("Casting...")
 
-        -- After an interruption, do not stop at EquipTool(). Wait until the
-        -- selected rod is actually equipped, then force the normal cast again.
         local character = Shared.player.Character
-        local castOk = false
 
-        for attempt = 1, 5 do
-            if not Config.ArcaneAutoFishing then
-                fishingCycleRunning = false
-                fishingLineInWater = false
-                fishingState = "OFF"
-                return false
-            end
+        if not character
+            or rod.Parent ~= character
+            or character:FindFirstChildWhichIsA("Tool") ~= rod then
 
-            character = Shared.player.Character
-
-            if not character or rod.Parent ~= character then
-                local currentRod = equipFishingRod()
-
-                if currentRod then
-                    rod = currentRod
-                end
-            end
-
-            character = Shared.player.Character
-
-            if character
-                and rod
-                and rod.Parent == character then
-
-                task.wait(0.08)
-
-                castOk = activateRod(rod)
-
-                if castOk then
-                    break
-                end
-            end
-
-            task.wait(0.12)
+            rod = equipFishingRod(true)
         end
+
+        if not rod or not rod.Parent then
+            fishingCycleRunning = false
+            fishingLineInWater = false
+            fishingState = "RECOVERY"
+            fishingDebugLog(
+                "CAST PREP FAILED | SelectedRod="
+                    .. tostring(Config.ArcaneFishingRod)
+            )
+            setFishingStatus("Preparing selected rod...")
+            task.wait(0.15)
+            return false
+        end
+
+        task.wait(0.10)
+
+        -- This is the same single activation used by the normal fishing cycle.
+        local castOk = activateRod(rod)
 
         if not castOk then
             fishingCycleRunning = false
+            fishingLineInWater = false
             fishingState = "RECOVERY"
             fishingDebugLog(
-                "CAST RETRY FAILED | SelectedRod="
+                "CAST FAILED | SelectedRod="
                     .. tostring(Config.ArcaneFishingRod)
             )
-            setFishingStatus("Could not cast selected rod. Retrying...")
+            setFishingStatus("Cast failed. Retrying...")
             task.wait(0.15)
             return false
         end
