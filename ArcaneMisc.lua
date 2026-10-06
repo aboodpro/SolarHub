@@ -3889,11 +3889,37 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local wanted = treasureNormalize(islandName)
 
+        -- Fast path: Roblox's recursive FindFirstChild is much cheaper than
+        -- walking every Map descendant on every chart refresh.
+        local exact = map:FindFirstChild(islandName, true)
+
+        if exact then
+            if exact:IsA("Model") then
+                treasureDebugLog(
+                    ("ISLAND FOUND | Method=RecursiveExactModel | Wanted=%s | Model=%s")
+                        :format(tostring(islandName), treasureDebugValue(exact))
+                )
+                return exact
+            end
+
+            local nested = exact:FindFirstChildWhichIsA("Model", true)
+
+            if nested then
+                treasureDebugLog(
+                    ("ISLAND FOUND | Method=RecursiveExactNested | Wanted=%s | Model=%s")
+                        :format(tostring(islandName), treasureDebugValue(nested))
+                )
+                return nested
+            end
+        end
+
+        -- Normalized direct-child lookup handles harmless naming differences
+        -- such as punctuation/casing without scanning the entire map.
         for _, child in ipairs(map:GetChildren()) do
             if treasureNormalize(child.Name) == wanted then
                 if child:IsA("Model") then
                     treasureDebugLog(
-                        ("ISLAND FOUND | Method=DirectChild | Wanted=%s | Model=%s")
+                        ("ISLAND FOUND | Method=NormalizedDirectChild | Wanted=%s | Model=%s")
                             :format(tostring(islandName), treasureDebugValue(child))
                     )
                     return child
@@ -3903,7 +3929,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                 if model then
                     treasureDebugLog(
-                        ("ISLAND FOUND | Method=NestedModel | Wanted=%s | Model=%s")
+                        ("ISLAND FOUND | Method=NormalizedNestedModel | Wanted=%s | Model=%s")
                             :format(tostring(islandName), treasureDebugValue(model))
                     )
                     return model
@@ -3911,10 +3937,27 @@ function ArcaneMisc.Init(Shared, UI, Context)
             end
         end
 
-        -- This fallback runs only when a new Chart needs a new island.
+        -- Final bounded fallback. The old implementation could spend a very
+        -- long time walking a huge streamed Map:GetDescendants() list, which
+        -- blocked the whole Finder and prevented SCAN/MARKER/DISTANCE logs.
+        local started = os.clock()
+        local maxLookupSeconds = 2.5
+
         for index, child in ipairs(map:GetDescendants()) do
-            if index % 700 == 0 then
+            if index % 500 == 0 then
                 task.wait()
+            end
+
+            if os.clock() - started >= maxLookupSeconds then
+                treasureDebugLog(
+                    ("ISLAND LOOKUP TIMEOUT | Wanted=%s | Checked=%d | Seconds=%.2f")
+                        :format(
+                            tostring(islandName),
+                            index,
+                            os.clock() - started
+                        )
+                )
+                break
             end
 
             if (child:IsA("Model") or child:IsA("Folder"))
@@ -3922,7 +3965,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                 if child:IsA("Model") then
                     treasureDebugLog(
-                        ("ISLAND FOUND | Method=DescendantModel | Wanted=%s | Model=%s")
+                        ("ISLAND FOUND | Method=BoundedNormalizedDescendant | Wanted=%s | Model=%s")
                             :format(tostring(islandName), treasureDebugValue(child))
                     )
                     return child
@@ -3932,14 +3975,18 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                 if nested then
                     treasureDebugLog(
-                        ("ISLAND FOUND | Method=DescendantNestedModel | Wanted=%s | Model=%s")
+                        ("ISLAND FOUND | Method=BoundedNormalizedNested | Wanted=%s | Model=%s")
                             :format(tostring(islandName), treasureDebugValue(nested))
                     )
+                    return nested
                 end
-
-                return nested
             end
         end
+
+        treasureDebugLog(
+            ("ISLAND NOT FOUND | Wanted=%s | Map=%s")
+                :format(tostring(islandName), treasureDebugValue(map))
+        )
 
         return nil
     end
