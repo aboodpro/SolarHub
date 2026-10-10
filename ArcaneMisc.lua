@@ -4346,12 +4346,24 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local distance
 
-        if normalized:find("fewpaces", 1, true) then
+        -- Charts use several natural-language variants for the same three
+        -- distance bands. Common charts often say "not too far ... from the
+        -- center" instead of the literal phrase "few paces".
+        if normalized:find("fewpaces", 1, true)
+            or normalized:find("fewsteps", 1, true)
+            or normalized:find("nottoofar", 1, true)
+            or normalized:find("slightly", 1, true)
+            or normalized:find("nearthecenter", 1, true)
+            or normalized:find("fromthecenter", 1, true) then
             distance = "Few paces"
-        elseif normalized:find("halfway", 1, true) then
+        elseif normalized:find("halfway", 1, true)
+            or normalized:find("midway", 1, true)
+            or normalized:find("roughlyhalf", 1, true) then
             distance = "Halfway"
         elseif normalized:find("ontheedge", 1, true)
-            or normalized:find("edge", 1, true) then
+            or normalized:find("boundary", 1, true)
+            or normalized:find("edge", 1, true)
+            or normalized:find("edges", 1, true) then
             distance = "On the edge"
         end
 
@@ -4675,7 +4687,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         treasureDebugLog(
-            ("CLUE PARSE | Chart=%s | Source=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s | StructuredIsland=%s | StructuredDirection=%s")
+            ("CLUE PARSE | Chart=%s | Source=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s | StructuredIsland=%s | StructuredDirection=%s | Raw=%s")
                 :format(
                     treasureDebugValue(chart),
                     tostring(activeSource),
@@ -4684,7 +4696,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     tostring(info.distance),
                     tostring(info.surface),
                     tostring(structured.island),
-                    tostring(structured.direction)
+                    tostring(structured.direction),
+                    tostring(info.rawText)
                 )
         )
 
