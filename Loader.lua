@@ -5,10 +5,10 @@
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local ARCANE_SOURCE_REF = "03e4e321ff57867f9370513a97621cae5428c0bd"
-local BLADE_BALL_SOURCE_REF = "92fe78e4b9372435267c7fd64b2683314969975a"
+local ARCANE_SOURCE_REF = "3b04c21ceed36270423643b9a63ff1e9112034eb"
+local MURDER_MYSTERY_2_SOURCE_REF = "08533c6e32fd63e9231a5ab3f83f6e438e7529ef"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-SOLARHUB-BLADEBALL-AUTOPARRY-1"
+local LOADER_VERSION = "2026-10-10-SOLARHUB-MM2-BASE-1"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -124,13 +124,9 @@ local function cleanupSolarHubRuntime()
         if type(getgenv) == "function" then
             local env = getgenv()
             local arcaneCleanup = env.SolarHubArcaneCleanup
-            local bladeBallCleanup = env.SolarHubBladeBallCleanup
 
             if type(arcaneCleanup) == "function" then
                 pcall(arcaneCleanup)
-            end
-            if type(bladeBallCleanup) == "function" then
-                pcall(bladeBallCleanup)
             end
 
             if env.SolarHubLoaderSession == SESSION_ID then
@@ -161,7 +157,6 @@ pcall(function()
 
         local previousCleanup = env.SolarHubCleanup
         local previousArcaneCleanup = env.SolarHubArcaneCleanup
-        local previousBladeBallCleanup = env.SolarHubBladeBallCleanup
 
         if type(previousCleanup) == "function" then
             pcall(previousCleanup)
@@ -170,16 +165,12 @@ pcall(function()
         if type(previousArcaneCleanup) == "function" then
             pcall(previousArcaneCleanup)
         end
-        if type(previousBladeBallCleanup) == "function" then
-            pcall(previousBladeBallCleanup)
-        end
 
         -- Hard-stop any leftover session loops, even if an older cleanup
         -- callback was missing or raised an error.
         env.SolarHubArcaneSession = nil
         env.SolarHubLoaderSession = nil
         env.SolarHubArcaneCleanup = nil
-        env.SolarHubBladeBallCleanup = nil
     end
 end)
 
@@ -509,9 +500,9 @@ local ALLOWED_GAMES = {
         PlaceIds = nil,
     },
     {
-        Name = "Blade Ball",
-        GameId = 4777817887,
-        -- Main Blade Ball experience (PlaceId 13772394625) and its places.
+        Name = "Murder Mystery 2",
+        GameId = 66654135,
+        -- Match the full Murder Mystery 2 universe.
         PlaceIds = nil,
     },
 }
@@ -730,7 +721,7 @@ task.spawn(function()
     -------------------------------------------------
     
     local lightweightGame = allowedGame.Name == "Arcane Odyssey"
-        or allowedGame.Name == "Blade Ball"
+        or allowedGame.Name == "Murder Mystery 2"
     local PREP_MIN_SECONDS = lightweightGame and 0.5 or 4
     local PREP_TIMEOUT_SECONDS = lightweightGame and 8 or 25
 
@@ -779,10 +770,10 @@ task.spawn(function()
         local player = game:GetService("Players").LocalPlayer
         local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
 
-        -- Arcane Odyssey and Blade Ball use dedicated lightweight contexts,
-        -- and do not need the Anime Expeditions RemoteEvents/ReplicaClient.
+        -- Arcane Odyssey and Murder Mystery 2 use dedicated lightweight
+        -- contexts and do not need the Anime Expeditions dependencies.
         if allowedGame.Name == "Arcane Odyssey"
-            or allowedGame.Name == "Blade Ball" then
+            or allowedGame.Name == "Murder Mystery 2" then
             return loaded
                 and player ~= nil
                 and playerGui ~= nil
@@ -820,8 +811,7 @@ task.spawn(function()
     local function fetchModule(fileName)
         local url = BASE_URL .. fileName .. "?v=" .. CACHE_BUST
 
-        -- Arcane modules use their matching immutable ref. BladeBall.lua is
-        -- pinned separately so the normal loader URL can always fetch its exact version.
+        -- Dedicated game modules are pinned to immutable commits.
         if allowedGame.Name == "Arcane Odyssey"
             and (fileName == "UI.lua"
                 or fileName == "Arcane.lua"
@@ -833,10 +823,10 @@ task.spawn(function()
                 .. fileName
                 .. "?v="
                 .. CACHE_BUST
-        elseif allowedGame.Name == "Blade Ball" and fileName == "BladeBall.lua" then
+        elseif allowedGame.Name == "Murder Mystery 2" and fileName == "MurderMystery2.lua" then
             url = "https://raw.githubusercontent.com/aboodpro/SolarHub/"
-                .. BLADE_BALL_SOURCE_REF
-                .. "/BladeBall.lua?v="
+                .. MURDER_MYSTERY_2_SOURCE_REF
+                .. "/MurderMystery2.lua?v="
                 .. CACHE_BUST
         end
 
@@ -867,10 +857,10 @@ task.spawn(function()
             "ArcaneMisc.lua",
             "ArcaneFarming.lua",
         }
-    elseif allowedGame.Name == "Blade Ball" then
+    elseif allowedGame.Name == "Murder Mystery 2" then
         moduleLoadOrder = {
             "UI.lua",
-            "BladeBall.lua",
+            "MurderMystery2.lua",
         }
     else
         moduleLoadOrder = {
@@ -984,14 +974,14 @@ task.spawn(function()
             warn("[Loader] " .. label .. " failed; continuing where possible.")
 
             if allowedGame.Name == "Arcane Odyssey"
-                or allowedGame.Name == "Blade Ball" then
+                or allowedGame.Name == "Murder Mystery 2" then
                 -- Dedicated games need the exact traceback visible instead of a
                 -- generic initialization error, so their modules can be debugged.
                 setLoadingStatus(label .. " failed - open DEBUG")
                 showDebugUI()
 
                 if capturedError then
-                    print("========== SOLARHUB ARCANE INIT ERROR ==========")
+                    print("========== SOLARHUB DEDICATED GAME INIT ERROR ==========")
                     print(capturedError)
                 end
             end
@@ -1004,8 +994,8 @@ task.spawn(function()
     
     local Shared
 
-    -- Arcane Odyssey has a separate lightweight client context.
-    -- Do not initialize the Anime Expeditions Shared module here.
+    -- Arcane Odyssey and Murder Mystery 2 use lightweight client contexts.
+    -- They do not initialize the Anime Expeditions Shared module.
     if allowedGame.Name == "Arcane Odyssey" then
         setLoadingStatus("Starting Arcane Odyssey...")
         print("[Loader] Building Arcane context...")
@@ -1027,9 +1017,9 @@ task.spawn(function()
             },
             IsArcaneOdyssey = true,
         }
-    elseif allowedGame.Name == "Blade Ball" then
-        setLoadingStatus("Starting Blade Ball...")
-        print("[Loader] Building Blade Ball context...")
+    elseif allowedGame.Name == "Murder Mystery 2" then
+        setLoadingStatus("Starting Murder Mystery 2...")
+        print("[Loader] Building Murder Mystery 2 context...")
 
         local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
@@ -1042,12 +1032,8 @@ task.spawn(function()
             Lighting = game:GetService("Lighting"),
             player = player,
             playerGui = player:WaitForChild("PlayerGui"),
-            Config = {
-                BladeBallAutoParry = false,
-                BladeBallParryLeadMs = 180,
-                BladeBallContactDistance = 12,
-            },
-            IsBladeBall = true,
+            Config = {},
+            IsMurderMystery2 = true,
         }
     else
         setLoadingStatus("Starting SolarHub...")
@@ -1072,27 +1058,21 @@ task.spawn(function()
         return
     end
 
-    -- Blade Ball uses its own lightweight Auto Parry module.
-    if allowedGame.Name == "Blade Ball" then
-        setLoadingStatus("Starting Blade Ball Auto Parry...")
-        print("[Loader] Loading Blade Ball module...")
+    -- Murder Mystery 2 uses its dedicated lightweight feature module.
+    if allowedGame.Name == "Murder Mystery 2" then
+        setLoadingStatus("Starting Murder Mystery 2...")
+        print("[Loader] Loading Murder Mystery 2 module...")
 
-        local bladeBall = runModule("BladeBall.Init", function()
-            local BladeBallModule = compiled.BladeBall()
-            return BladeBallModule.Init(Shared, UI, {
-                registerCleanup = function(fn)
-                    if type(fn) == "function" and type(getgenv) == "function" then
-                        getgenv().SolarHubBladeBallCleanup = fn
-                    end
-                end,
-            })
+        local mm2 = runModule("MurderMystery2.Init", function()
+            local MurderMystery2Module = compiled.MurderMystery2()
+            return MurderMystery2Module.Init(Shared, UI, {})
         end)
 
-        if bladeBall then
+        if mm2 then
             setLoadingStatus("SolarHub ready")
-            print("[Loader] Blade Ball module loaded.")
+            print("[Loader] Murder Mystery 2 module loaded.")
         else
-            setLoadingStatus("Blade Ball module failed - open DEBUG")
+            setLoadingStatus("Murder Mystery 2 module failed - open DEBUG")
         end
 
         task.spawn(finishLoadingScreen)
