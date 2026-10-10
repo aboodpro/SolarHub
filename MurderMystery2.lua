@@ -430,52 +430,52 @@ function MurderMystery2.Init(Shared, UI, Context)
         local currentGunHolder = nil
 
         for _, player in ipairs(Players:GetPlayers()) do
+            local hasKnife = getTool(player, "Knife") ~= nil
+            local hasGun = getTool(player, "Gun") ~= nil
+
+            -- Include the local player when tracking who last held the gun.
+            -- ESP visuals are intentionally only created for other players.
+            if hasGun then
+                currentGunHolder = currentGunHolder or player
+            end
+
+            if hasGun and awaitingPickup and currentGunDrop == nil
+                and player ~= droppedGunHolder then
+                pickedGunPlayers[player] = true
+                awaitingPickup = false
+            elseif not hasGun then
+                pickedGunPlayers[player] = nil
+            end
+
+            local role = nil
+            if hasKnife then
+                role = "MURDERER"
+            elseif hasGun then
+                if pickedGunPlayers[player] and Config.MM2PickedGunESP then
+                    role = "GUN PICKUP"
+                else
+                    role = "SHERIFF"
+                end
+            end
+
             if player ~= LocalPlayer then
-                local hasKnife = getTool(player, "Knife") ~= nil
-                local hasGun = getTool(player, "Gun") ~= nil
-
-                if hasKnife then
+                if role == "MURDERER" then
                     murdererCount += 1
+                elseif role == "SHERIFF" then
+                    sheriffCount += 1
+                elseif role == "GUN PICKUP" then
+                    pickedUpCount += 1
                 end
 
-                if hasGun then
-                    currentGunHolder = currentGunHolder or player
-                end
-
-                if hasGun and awaitingPickup and currentGunDrop == nil
-                    and player ~= droppedGunHolder then
-                    pickedGunPlayers[player] = true
-                    awaitingPickup = false
-                elseif not hasGun then
-                    pickedGunPlayers[player] = nil
-                end
-
-                local role = nil
-                if hasKnife then
-                    role = "MURDERER"
-                elseif hasGun then
-                    if pickedGunPlayers[player] and Config.MM2PickedGunESP then
-                        role = "GUN PICKUP"
-                        pickedUpCount += 1
+                if role == "GUN PICKUP" then
+                    if Config.MM2PickedGunESP then
+                        ensurePlayerVisual(player, role)
                     else
-                        role = "SHERIFF"
-                        sheriffCount += 1
+                        destroyPlayerVisual(player)
                     end
-                end
-
-                if Config.MM2RoleESP or Config.MM2PickedGunESP then
-                    if role == "GUN PICKUP" then
-                        if Config.MM2PickedGunESP then
-                            ensurePlayerVisual(player, role)
-                        else
-                            destroyPlayerVisual(player)
-                        end
-                    elseif role == "MURDERER" or role == "SHERIFF" then
-                        if Config.MM2RoleESP then
-                            ensurePlayerVisual(player, role)
-                        else
-                            destroyPlayerVisual(player)
-                        end
+                elseif role == "MURDERER" or role == "SHERIFF" then
+                    if Config.MM2RoleESP then
+                        ensurePlayerVisual(player, role)
                     else
                         destroyPlayerVisual(player)
                     end
@@ -495,6 +495,8 @@ function MurderMystery2.Init(Shared, UI, Context)
             end
         end
 
+        -- Once a dropped gun has been picked up, that player becomes the
+        -- tracked holder so another drop can trigger a fresh notification.
         if currentGunHolder and currentGunDrop == nil and not awaitingPickup then
             lastKnownGunHolder = currentGunHolder
         end
