@@ -4085,8 +4085,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end)
     end
 
-    treasureDebugButton.MouseButton1Click:Connect(function()
+    treasureDebugButton.Activated:Connect(function()
+        -- Opening the viewer should turn tracing on automatically so the
+        -- window does not look broken when the separate debug toggle is off.
+        Config.ArcaneTreasureChartDebug = true
+        treasureDebugLog("DEBUG VIEW OPENED | Logging enabled from VIEW DEBUG button")
         openTreasureDebugList()
+        refreshTreasureDebugGuiText("Debug logging enabled")
     end)
 
     local treasureTeleportButton = Instance.new("TextButton")
@@ -4236,22 +4241,28 @@ function ArcaneMisc.Init(Shared, UI, Context)
         return Vector3.new(math.cos(angle), 0, math.sin(angle))
     end
 
-    local function destroyTreasureChartESP()
-        if treasureChartESP then
-            if treasureChartESP.highlight then
-                pcall(function() treasureChartESP.highlight:Destroy() end)
-            end
-
-            if treasureChartESP.billboard then
-                pcall(function() treasureChartESP.billboard:Destroy() end)
-            end
-
-            if treasureChartESP.anchor then
-                pcall(function() treasureChartESP.anchor:Destroy() end)
-            end
-
-            treasureChartESP = nil
+    local function destroyTreasureChartMarkerVisual()
+        if not treasureChartESP then
+            return
         end
+
+        if treasureChartESP.highlight then
+            pcall(function() treasureChartESP.highlight:Destroy() end)
+        end
+
+        if treasureChartESP.billboard then
+            pcall(function() treasureChartESP.billboard:Destroy() end)
+        end
+
+        if treasureChartESP.anchor then
+            pcall(function() treasureChartESP.anchor:Destroy() end)
+        end
+
+        treasureChartESP = nil
+    end
+
+    local function destroyTreasureChartESP()
+        destroyTreasureChartMarkerVisual()
 
         for _, highlight in ipairs(treasureChartHighlights) do
             pcall(function() highlight:Destroy() end)
@@ -5192,8 +5203,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return normalizedRadius, difference
         end
 
-        local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
-            or islandModel
+        -- When strict search returns nothing, inspect the entire island container;
+        -- some islands keep physical ground chunks outside their Fragmentable folder.
+        local fragmentable = islandModel
 
         treasureDebugLog(
             ("CANDIDATE SOURCE | IslandContainer=%s | Class=%s | Fragmentable=%s")
@@ -5400,16 +5412,21 @@ function ArcaneMisc.Init(Shared, UI, Context)
         return bestPart
     end
 
-    local function createTreasureChartMarker(position, info)
+    local function createTreasureChartMarker(position, info, isEstimated)
         if not position then
             treasureDebugLog("MARKER FAIL | Position=nil")
             return
         end
 
+        -- Replacing an approximate target with a physical candidate must not
+        -- clear the candidate array that the caller just built.
+        destroyTreasureChartMarkerVisual()
+
         treasureDebugLog(
-            ("MARKER CREATE | Position=%s | Island=%s | Direction=%s | Distance=%s")
+            ("MARKER CREATE | Position=%s | Estimated=%s | Island=%s | Direction=%s | Distance=%s")
                 :format(
                     treasureDebugValue(position),
+                    tostring(isEstimated == true),
                     tostring(info.island),
                     tostring(info.direction),
                     tostring(info.distance)
@@ -5450,7 +5467,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             .. tostring(info.island or "?")
             .. "\n"
             .. tostring(info.direction or "?")
-            .. " | DIG AREA"
+            .. (isEstimated and " | APPROXIMATE AREA" or " | DIG AREA")
         label.Parent = billboard
 
         treasureChartESP = {
@@ -5462,7 +5479,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
             direction = info.direction,
             distanceClue = info.distance,
             greenShown = false,
-            physicalTarget = false,
+            estimated = isEstimated == true,
+            physicalTarget = isEstimated ~= true,
         }
     end
 
@@ -5669,13 +5687,14 @@ function ArcaneMisc.Init(Shared, UI, Context)
         }, "|")
 
         if chartKey ~= treasureChartLastKey then
+            destroyTreasureChartESP()
             treasureChartLastKey = chartKey
             treasureChartCurrentObject = chart
             treasureChartNeedsScan = true
         end
 
         if treasureChartNeedsScan
-            and (os.clock() - treasureChartLastScanAttempt) >= 0.35 then
+            and (os.clock() - treasureChartLastScanAttempt) >= 3.0 then
 
             -- The island may not exist yet because Arcane streams Map content
             -- after the chart GUI/tool becomes available. The old code marked
@@ -5686,8 +5705,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 ("SCAN ATTEMPT | Island=%s")
                     :format(tostring(info.island))
             )
-
-            destroyTreasureChartESP()
 
             local islandModel = findTreasureIslandModel(info.island)
 
@@ -5793,6 +5810,17 @@ function ArcaneMisc.Init(Shared, UI, Context)
                         end
 
                         if streamPosition then
+                            -- Keep a visible approximate marker and distance while
+                            -- waiting for the island's real diggable pieces to stream.
+                            if not treasureChartESP then
+                                createTreasureChartMarker(streamPosition, info, true)
+                            elseif treasureChartESP.estimated then
+                                treasureChartESP.position = streamPosition
+                                if treasureChartESP.anchor and treasureChartESP.anchor.Parent then
+                                    treasureChartESP.anchor.CFrame = CFrame.new(streamPosition)
+                                end
+                            end
+
                             pcall(function()
                                 if type(workspace.RequestStreamAroundAsync)
                                     == "function" then
@@ -5802,6 +5830,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
                                     )
                                 end
                             end)
+                        else
+                            treasureDebugLog(
+                                "ESTIMATED MARKER FAIL | Island bounds or clue band unavailable"
+                            )
                         end
 
                         treasureChartNeedsScan = true
@@ -5818,7 +5850,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 treasureChartNeedsScan = true
 
                 treasureDebugLog(
-                    ("SCAN RETRY QUEUED | Island=%s | NextRetry=0.35s")
+                    ("SCAN RETRY QUEUED | Island=%s | NextRetry=3s")
                         :format(tostring(info.island))
                 )
             end
@@ -5900,16 +5932,25 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             -- Update the text BEFORE the optional green-area work so a highlight
             -- error can never prevent the STUDS text from appearing.
+            local targetLabel
+            if treasureChartESP.estimated then
+                targetLabel = "APPROXIMATE AREA | WAITING FOR TERRAIN"
+            else
+                targetLabel = arrived and "GREEN DIG AREA" or "GO TO AREA"
+            end
+
             treasureChartESP.label.Text =
                 "TREASURE CHART | "
                 .. tostring(info.island)
                 .. "\n"
                 .. tostring(math.floor(displayDistance))
                 .. " STUDS | "
-                .. (arrived and "GREEN DIG AREA" or "GO TO AREA")
+                .. targetLabel
 
             pcall(function()
-                setTreasureChartGreenArea(arrived)
+                setTreasureChartGreenArea(
+                    arrived and not treasureChartESP.estimated
+                )
             end)
         elseif treasureChartESP then
             treasureDebugLog(
@@ -5944,6 +5985,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 .. " | Candidates: "
                 .. tostring(#treasureChartCandidateParts)
                 .. (info.surface and (" | " .. info.surface) or "")
+                .. (treasureChartESP and treasureChartESP.estimated
+                    and " | APPROXIMATE (waiting for physical terrain)"
+                    or "")
         end
     end
 
