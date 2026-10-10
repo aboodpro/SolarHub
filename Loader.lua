@@ -5,9 +5,9 @@
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local ARCANE_SOURCE_REF = "0d8bc512b0485aa340c54188e6422f7622b2dc12"
+local ARCANE_SOURCE_REF = "175a54fc4f26ccc11abc857ae921fe4ad98d74aa"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-ARCANE-65-GLOBAL-ESP-CLEANUP"
+local LOADER_VERSION = "2026-10-10-ARCANE-66-ORPHAN-ESP-WATCHDOG"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -154,6 +154,70 @@ pcall(function()
         local env = getgenv()
         env.SolarHubLoaderSession = SESSION_ID
         env.SolarHubCleanup = cleanupSolarHubRuntime
+    end
+end)
+
+-- Keep removing orphaned ESPs from old sessions. Some older builds have worker
+-- loops without session guards and can recreate objects after a one-time cleanup.
+local function cleanupOrphanedSolarHubESP()
+    local visualPrefixes = {
+        "SolarTreasure",
+        "SolarChest",
+        "SolarSideQuest",
+        "SolarBoss",
+    }
+
+    pcall(function()
+        for _, instance in ipairs(game:GetDescendants()) do
+            local name = tostring(instance.Name or "")
+            local visualName = false
+
+            for _, prefix in ipairs(visualPrefixes) do
+                if name:sub(1, #prefix) == prefix then
+                    visualName = true
+                    break
+                end
+            end
+
+            local visualClass = instance:IsA("Highlight")
+                or instance:IsA("BillboardGui")
+                or instance:IsA("BasePart")
+                or instance:IsA("Attachment")
+                or instance:IsA("SelectionBox")
+                or instance:IsA("BoxHandleAdornment")
+                or instance:IsA("Beam")
+
+            if visualName and visualClass then
+                local token = nil
+                pcall(function()
+                    token = instance:GetAttribute("SolarHubSessionToken")
+                end)
+
+                if token ~= SESSION_ID then
+                    pcall(function()
+                        instance:Destroy()
+                    end)
+                end
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    while true do
+        local currentSession = nil
+        pcall(function()
+            if type(getgenv) == "function" then
+                currentSession = getgenv().SolarHubLoaderSession
+            end
+        end)
+
+        if currentSession ~= SESSION_ID then
+            break
+        end
+
+        cleanupOrphanedSolarHubESP()
+        task.wait(0.3)
     end
 end)
 
