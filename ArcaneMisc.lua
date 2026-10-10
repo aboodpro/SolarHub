@@ -2798,6 +2798,21 @@ end
 -------------------------------------------------
 
 function ArcaneMisc.Init(Shared, UI, Context)
+    local function markSolarHubVisual(instance)
+        if not instance then
+            return
+        end
+
+        pcall(function()
+            if type(getgenv) == "function" then
+                instance:SetAttribute(
+                    "SolarHubSessionToken",
+                    tostring(getgenv().SolarHubLoaderSession or "")
+                )
+            end
+        end)
+    end
+
     local isArcaneSessionActive = Context.isSessionActive
     local Config = Shared.Config
     local tabs = UI.tabs or {}
@@ -2845,6 +2860,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local bossNotificationGui = Instance.new("ScreenGui")
     bossNotificationGui.Name = "SolarArcaneBossNotifications"
+    markSolarHubVisual(bossNotificationGui)
     bossNotificationGui.ResetOnSpawn = false
     bossNotificationGui.DisplayOrder = 999998
     bossNotificationGui.IgnoreGuiInset = true
@@ -3880,6 +3896,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         treasureDebugGui = Instance.new("ScreenGui")
         treasureDebugGui.Name = "SolarHubTreasureDebug"
+        markSolarHubVisual(treasureDebugGui)
         treasureDebugGui.ResetOnSpawn = false
         treasureDebugGui.DisplayOrder = 1000002
         treasureDebugGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -5401,6 +5418,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local anchor = Instance.new("Part")
         anchor.Name = "SolarTreasureChartMarker"
+        markSolarHubVisual(anchor)
         anchor.Anchored = true
         anchor.CanCollide = false
         anchor.CanTouch = false
@@ -5412,6 +5430,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "SolarTreasureChartInfo"
+        markSolarHubVisual(billboard)
         billboard.Adornee = anchor
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 0
@@ -5493,6 +5512,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 if part and part.Parent then
                     local highlight = Instance.new("Highlight")
                     highlight.Name = "SolarTreasureDigArea"
+                    markSolarHubVisual(highlight)
                     highlight.Adornee = part
                     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
                     highlight.FillColor = Color3.fromRGB(35, 255, 80)
@@ -5949,6 +5969,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         treasureTeleportGui = Instance.new("ScreenGui")
         treasureTeleportGui.Name = "SolarHubTreasureTeleport"
+        markSolarHubVisual(treasureTeleportGui)
         treasureTeleportGui.ResetOnSpawn = false
         treasureTeleportGui.DisplayOrder = 1000001
         treasureTeleportGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -6276,6 +6297,7 @@ local function createChestESP(target)
 
         local highlight = Instance.new("Highlight")
         highlight.Name = "SolarChestESP"
+        markSolarHubVisual(highlight)
         highlight.Adornee = target
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.FillColor = chestColor
@@ -6286,6 +6308,7 @@ local function createChestESP(target)
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "SolarChestESPInfo"
+        markSolarHubVisual(billboard)
         billboard.Adornee = root
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 0
@@ -6350,6 +6373,7 @@ local function createChestESP(target)
 
         local anchor = Instance.new("Part")
         anchor.Name = "SolarChestStaticAnchor"
+        markSolarHubVisual(anchor)
         anchor.Anchored = true
         anchor.CanCollide = false
         anchor.CanTouch = false
@@ -6441,11 +6465,13 @@ local function createChestESP(target)
 
         local anchor = Instance.new("Attachment")
         anchor.Name = "SolarChestStaticAttachment"
+        markSolarHubVisual(anchor)
         anchor.Position = position
         anchor.Parent = getStaticChestAnchor()
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "SolarChestStaticESPInfo"
+        markSolarHubVisual(billboard)
         billboard.Adornee = anchor
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 0
@@ -7217,6 +7243,7 @@ local function scanAllWorkspaceChests()
 
         local highlight = Instance.new("Highlight")
         highlight.Name = "SolarSideQuestESP"
+        markSolarHubVisual(highlight)
         highlight.Adornee = model
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.FillColor = Color3.fromRGB(220, 140, 40)
@@ -7227,6 +7254,7 @@ local function scanAllWorkspaceChests()
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "SolarSideQuestESPInfo"
+        markSolarHubVisual(billboard)
         billboard.Adornee = root
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 0
@@ -7340,6 +7368,7 @@ local function scanAllWorkspaceChests()
 
         local anchor = Instance.new("Part")
         anchor.Name = "SolarSideQuestVirtualAnchor"
+        markSolarHubVisual(anchor)
         anchor.Anchored = true
         anchor.CanCollide = false
         anchor.CanTouch = false
@@ -7351,6 +7380,7 @@ local function scanAllWorkspaceChests()
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "SolarSideQuestVirtualESPInfo"
+        markSolarHubVisual(billboard)
         billboard.Adornee = anchor
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 0
@@ -7372,6 +7402,7 @@ local function scanAllWorkspaceChests()
 
         local highlight = Instance.new("Highlight")
         highlight.Name = "SolarSideQuestVirtualHighlight"
+        markSolarHubVisual(highlight)
         highlight.Adornee = anchor
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.FillColor = Color3.fromRGB(220, 140, 40)
@@ -7408,6 +7439,7 @@ local function scanAllWorkspaceChests()
 
         local anchor = Instance.new("Part")
         anchor.Name = "SolarSideQuestLocationAnchor"
+        markSolarHubVisual(anchor)
         anchor.Anchored = true
         anchor.CanCollide = false
         anchor.CanTouch = false
@@ -7419,6 +7451,7 @@ local function scanAllWorkspaceChests()
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "SolarSideQuestLocationESPInfo"
+        markSolarHubVisual(billboard)
         billboard.Adornee = anchor
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 0
@@ -7438,6 +7471,7 @@ local function scanAllWorkspaceChests()
 
         local highlight = Instance.new("Highlight")
         highlight.Name = "SolarSideQuestLocationHighlight"
+        markSolarHubVisual(highlight)
         highlight.Adornee = anchor
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.FillColor = Color3.fromRGB(220, 140, 40)
@@ -7803,6 +7837,7 @@ local function scanAllWorkspaceChests()
 
         local highlight = Instance.new("Highlight")
         highlight.Name = "SolarBossESP"
+        markSolarHubVisual(highlight)
         highlight.Adornee = model
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.FillTransparency = 0.78
@@ -7811,6 +7846,7 @@ local function scanAllWorkspaceChests()
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "SolarBossESPInfo"
+        markSolarHubVisual(billboard)
         billboard.Adornee = root
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 0
