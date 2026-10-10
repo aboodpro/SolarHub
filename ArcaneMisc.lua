@@ -6189,8 +6189,11 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local nearestDistance = math.huge
 
         if playerRoot then
-            for _, part in ipairs(treasureChartCandidateParts) do
-                if part and part.Parent then
+            for index = #treasureChartCandidateParts, 1, -1 do
+                local part = treasureChartCandidateParts[index]
+                if not part or not part.Parent or not part:IsDescendantOf(workspace) then
+                    table.remove(treasureChartCandidateParts, index)
+                else
                     local distance =
                         (playerRoot.Position - part.Position).Magnitude
 
@@ -6201,16 +6204,16 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end
             end
 
-            if not nearest and treasureChartESP and treasureChartESP.position then
-                nearestDistance =
-                    (playerRoot.Position - treasureChartESP.position).Magnitude
+            -- Never keep navigating to a marker after its underlying live
+            -- diggable part disappeared/streamed out. The old fallback distance
+            -- made stale or estimated marker coordinates look authoritative.
+            if not nearest and treasureChartESP and treasureChartESP.physicalTarget then
                 treasureDebugLog(
-                    ("DISTANCE FALLBACK | MarkerPosition=%s | Distance=%.2f")
-                        :format(
-                            treasureDebugValue(treasureChartESP.position),
-                            nearestDistance
-                        )
+                    ("PHYSICAL TARGET INVALID | NoLiveDiggablePart | Marker=%s | Retry=true")
+                        :format(treasureDebugValue(treasureChartESP.anchor))
                 )
+                destroyTreasureChartESP()
+                treasureChartNeedsScan = true
             end
         end
 
@@ -6232,7 +6235,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
             local targetPosition = treasureChartESP.position
 
             if nearest then
-                targetPosition = nearest.Position
+                -- Keep the marker above the selected diggable part's surface,
+                -- not at the center of a possibly thick terrain chunk.
+                targetPosition =
+                    getTreasureDigSurfacePosition(nearest) or nearest.Position
             end
 
             treasureChartESP.position = targetPosition
@@ -6311,6 +6317,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 .. (info.surface and (" | " .. info.surface) or "")
                 .. (info.elevation and (" | " .. info.elevation) or "")
                 .. (info.coastal and " | COASTAL" or "")
+                .. (#treasureChartCandidateParts == 0 and " | WAITING FOR DIGGABLE TERRAIN (NO GUESSED TARGET)" or "")
                 .. (treasureChartESP and treasureChartESP.estimated
                     and " | APPROXIMATE (waiting for physical terrain)"
                     or "")
