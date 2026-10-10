@@ -4935,7 +4935,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return nil
         end
 
-        local wanted = treasureNormalize(islandName)
+        -- Workspace.Map can contain empty name-only folders (for example,
+        -- Map.Ierochos). The actual walkable terrain may be in a sibling
+        -- named "Ierochos_Surrounding" or in RS.UnloadIslands.
+        -- Search likely container names directly instead of walking every
+        -- descendant of the entire map (100k+ objects in live diagnostics).
+        local aliases = {
+            tostring(islandName),
+            tostring(islandName) .. "_Surrounding",
+            tostring(islandName) .. "-Surrounding",
+            tostring(islandName) .. " Surrounding",
+            tostring(islandName) .. "_Island",
+            tostring(islandName) .. " Island",
+        }
 
         local function getPhysicalStats(container)
             local minX, minY, minZ = math.huge, math.huge, math.huge
@@ -4950,7 +4962,11 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 return 0, Vector3.new(0, 0, 0), 0
             end
 
-            for _, object in ipairs(descendants) do
+            for index, object in ipairs(descendants) do
+                if index % 2500 == 0 then
+                    task.wait()
+                end
+
                 if object:IsA("BasePart")
                     and object.Transparency < 0.98
                     and math.max(object.Size.X, object.Size.Z) >= 1 then
@@ -4981,7 +4997,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return partCount, size, area
         end
 
-        local function tryRoot(root, sourceName)
+        local function tryRoot(root, sourceName, allowRecursiveFallback)
             if not root then
                 return nil
             end
@@ -4993,7 +5009,17 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 if not object
                     or seen[object]
                     or not (object:IsA("Model") or object:IsA("Folder"))
-                    or treasureNormalize(object.Name) ~= wanted then
+                    or treasureNormalize(object.Name) ~= treasureNormalize(islandName)
+                        and not treasureNormalize(object.Name):find(
+                            treasureNormalize(islandName) .. "surrounding",
+                            1,
+                            true
+                        )
+                        and not treasureNormalize(object.Name):find(
+                            treasureNormalize(islandName) .. "island",
+                            1,
+                            true
+                        ) then
                     return
                 end
 
@@ -5011,8 +5037,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
                         )
                 )
 
-                -- Reject UI/data placeholders (the earlier Ierochos result had
-                -- only 18 descendants and a 1x1 footprint, not an island mesh).
                 if partCount >= 8 and size.X >= 40 and size.Z >= 40 then
                     table.insert(candidates, {
                         object = object,
@@ -5028,30 +5052,42 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end
             end
 
-            if root:IsA("Model") or root:IsA("Folder") then
-                consider(root)
+            -- First do O(number-of-aliases) direct-child lookups. This quickly
+            -- handles the normal layout without scanning the whole hierarchy.
+            for _, alias in ipairs(aliases) do
+                local ok, found = pcall(function()
+                    return root:FindFirstChild(alias)
+                end)
+
+                if ok and found then
+                    consider(found)
+                end
             end
 
-            local ok, descendants = pcall(function()
-                return root:GetDescendants()
-            end)
+            -- Unloaded island templates can be nested in folders. Only the
+            -- unloaded-template source gets a recursive name lookup fallback;
+            -- do not run a Lua GetDescendants loop over Workspace.Map.
+            if #candidates == 0 and allowRecursiveFallback then
+                local recursiveAliases = {
+                    tostring(islandName) .. "_Surrounding",
+                    tostring(islandName) .. "-Surrounding",
+                    tostring(islandName) .. " Surrounding",
+                    tostring(islandName),
+                    tostring(islandName) .. "_Island",
+                    tostring(islandName) .. " Island",
+                }
 
-            if ok and descendants then
-                local started = os.clock()
-                for index, object in ipairs(descendants) do
-                    if index % 500 == 0 then
-                        task.wait()
+                for _, alias in ipairs(recursiveAliases) do
+                    local ok, found = pcall(function()
+                        return root:FindFirstChild(alias, true)
+                    end)
+
+                    if ok and found then
+                        consider(found)
+                        if #candidates > 0 then
+                            break
+                        end
                     end
-
-                    if os.clock() - started >= 3.0 then
-                        treasureDebugLog(
-                            ("ISLAND LOOKUP TIMEOUT | Wanted=%s | Source=%s | Checked=%d")
-                                :format(tostring(islandName), sourceName, index)
-                        )
-                        break
-                    end
-
-                    consider(object)
                 end
             end
 
@@ -5065,7 +5101,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             local best = candidates[1]
             if best then
                 treasureDebugLog(
-                    ("ISLAND FOUND | Method=BestPhysicalContainer | Source=%s | Wanted=%s | Container=%s | Parts=%d | Footprint=%.1fx%.1f")
+                    ("ISLAND FOUND | Method=NamedPhysicalContainer | Source=%s | Wanted=%s | Container=%s | Parts=%d | Footprint=%.1fx%.1f")
                         :format(
                             sourceName,
                             tostring(islandName),
@@ -5078,19 +5114,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 return best.object
             end
 
+            treasureDebugLog(
+                ("ISLAND LOOKUP NO NAMED GEOMETRY | Wanted=%s | Source=%s | Recursive=%s")
+                    :format(tostring(islandName), sourceName, tostring(allowRecursiveFallback))
+            )
             return nil
         end
 
-        -- Prefer actual geometry in the live map. If a name-only Folder is
-        -- present, reject it and keep searching instead of returning it early.
-        local live = tryRoot(map, "Workspace.Map")
+        local live = tryRoot(map, "Workspace.Map", false)
         if live then
             return live
         end
 
-        -- Some islands have their full physical template stored in this source
-        -- even when Workspace.Map contains only a small placeholder container.
-        local unloaded = tryRoot(unloadIslands, "RS.UnloadIslands")
+        local unloaded = tryRoot(unloadIslands, "RS.UnloadIslands", true)
         if unloaded then
             return unloaded
         end
