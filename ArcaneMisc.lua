@@ -5309,8 +5309,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             if part:IsA("BasePart")
                 and part.Transparency < 0.85
                 and math.max(part.Size.X, part.Size.Z) >= 1
-                and not treasurePartHasNoTreasureSpot(part)
-                and treasurePartMatchesSurface(part, info.surface) then
+                and not treasurePartHasNoTreasureSpot(part) then
 
                 local dx = part.Position.X - center.X
                 local dz = part.Position.Z - center.Z
@@ -5351,7 +5350,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         treasureDebugLog(
-            ("FALLBACK PHYSICAL | Part=%s | Score=%s | Scanned=%d")
+            ("FALLBACK PHYSICAL | Part=%s | Score=%s | Scanned=%d | SurfaceFilter=IgnoredAfterStrictMatchFailed")
                 :format(
                     treasureDebugValue(bestPart),
                     bestPart and ("%.4f"):format(bestScore) or "<nil>",
@@ -5949,17 +5948,15 @@ function ArcaneMisc.Init(Shared, UI, Context)
         Instance.new("UICorner", button).CornerRadius = UDim.new(0, 8)
 
         button.Activated:Connect(function()
-            local position = treasureChartESP and treasureChartESP.position
+            local marker = treasureChartESP
+            local position = marker and marker.position
             local character = Shared.player and Shared.player.Character
             local root = character and character:FindFirstChild("HumanoidRootPart")
 
             if not marker
                 or marker.physicalTarget ~= true
-                or typeof(position) ~= "Vector3"
-                or not root then
-                button.Text = typeof(position) == "Vector3"
-                    and "NO CHARACTER"
-                    or "NO TARGET"
+                or typeof(position) ~= "Vector3" then
+                button.Text = "NO TARGET"
 
                 task.delay(1.1, function()
                     if button and button.Parent then
@@ -5968,11 +5965,29 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end)
 
                 treasureDebugLog(
-                    ("TP | Failed | Position=%s | Root=%s")
+                    ("TP | Failed | Marker=%s | Physical=%s | Position=%s | Root=%s")
                         :format(
+                            treasureDebugValue(marker),
+                            tostring(marker and marker.physicalTarget),
                             treasureDebugValue(position),
                             treasureDebugValue(root)
                         )
+                )
+                return
+            end
+
+            if not root then
+                button.Text = "NO CHARACTER"
+
+                task.delay(1.1, function()
+                    if button and button.Parent then
+                        button.Text = "TP TO TREASURE"
+                    end
+                end)
+
+                treasureDebugLog(
+                    ("TP | Failed | CharacterRootMissing | Position=%s")
+                        :format(treasureDebugValue(position))
                 )
                 return
             end
