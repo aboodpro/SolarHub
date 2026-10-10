@@ -15,16 +15,18 @@ function MurderMystery2.Init(Shared, UI, Context)
     end
 
     Config.MM2RoleESP = Config.MM2RoleESP ~= false
+    Config.MM2PlayersESP = Config.MM2PlayersESP ~= false
     Config.MM2GunDropESP = Config.MM2GunDropESP ~= false
     Config.MM2GunDropNotifications = Config.MM2GunDropNotifications ~= false
     Config.MM2PickedGunESP = Config.MM2PickedGunESP ~= false
 
     local RED = Color3.fromRGB(255, 55, 65)
     local BLUE = Color3.fromRGB(65, 145, 255)
+    local GREEN = Color3.fromRGB(70, 235, 110)
     local YELLOW = Color3.fromRGB(255, 220, 55)
     local MUTED = Color3.fromRGB(170, 170, 180)
 
-    local playerSection = UI.createSection(tab, "Role ESP", 184)
+    local playerSection = UI.createSection(tab, "Players & Roles ESP", 228)
     UI.createToggle(
         playerSection,
         "Murderer / Sheriff ESP",
@@ -40,10 +42,18 @@ function MurderMystery2.Init(Shared, UI, Context)
         86
     )
 
+    UI.createToggle(
+        playerSection,
+        "Players ESP",
+        "Shows ordinary players in green; recognized roles keep their role colors.",
+        "MM2PlayersESP",
+        134
+    )
+
     local playerStatus = Instance.new("TextLabel")
     playerStatus.Name = "SolarHubMM2RoleStatus"
     playerStatus.BackgroundTransparency = 1
-    playerStatus.Position = UDim2.fromOffset(12, 136)
+    playerStatus.Position = UDim2.fromOffset(12, 184)
     playerStatus.Size = UDim2.new(1, -24, 0, 25)
     playerStatus.Font = Enum.Font.Gotham
     playerStatus.Text = "Role ESP: starting..."
@@ -184,7 +194,15 @@ function MurderMystery2.Init(Shared, UI, Context)
 
         local roleColor = role == "MURDERER" and RED
             or role == "SHERIFF" and BLUE
-            or YELLOW
+            or role == "GUN PICKUP" and YELLOW
+            or GREEN
+
+        local displayText
+        if role == "GUN PICKUP" or role == "PLAYER" then
+            displayText = player.DisplayName
+        else
+            displayText = role .. " | " .. player.DisplayName
+        end
 
         if not data then
             local highlight = Instance.new("Highlight")
@@ -219,7 +237,7 @@ function MurderMystery2.Init(Shared, UI, Context)
                 label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
                 label.TextStrokeTransparency = 0.25
                 label.TextColor3 = roleColor
-                label.Text = role .. " | " .. player.DisplayName
+                label.Text = displayText
                 label.Parent = labelGui
             end
 
@@ -240,7 +258,7 @@ function MurderMystery2.Init(Shared, UI, Context)
             local label = data.labelGui:FindFirstChild("Name")
             if label and label:IsA("TextLabel") then
                 label.TextColor3 = roleColor
-                label.Text = role .. " | " .. player.DisplayName
+                label.Text = displayText
             end
             local root = character:FindFirstChild("Head") or getCharacterRoot(character)
             if root then
@@ -427,14 +445,15 @@ function MurderMystery2.Init(Shared, UI, Context)
         local murdererCount = 0
         local sheriffCount = 0
         local pickedUpCount = 0
+        local ordinaryCount = 0
         local currentGunHolder = nil
 
+        -- Identify roles when the corresponding Tool is already replicated
+        -- to this client. No client-only animation timer is used as evidence.
         for _, player in ipairs(Players:GetPlayers()) do
             local hasKnife = getTool(player, "Knife") ~= nil
             local hasGun = getTool(player, "Gun") ~= nil
 
-            -- Include the local player when tracking who last held the gun.
-            -- ESP visuals are intentionally only created for other players.
             if hasGun then
                 currentGunHolder = currentGunHolder or player
             end
@@ -447,7 +466,7 @@ function MurderMystery2.Init(Shared, UI, Context)
                 pickedGunPlayers[player] = nil
             end
 
-            local role = nil
+            local role
             if hasKnife then
                 role = "MURDERER"
             elseif hasGun then
@@ -456,6 +475,8 @@ function MurderMystery2.Init(Shared, UI, Context)
                 else
                     role = "SHERIFF"
                 end
+            else
+                role = "PLAYER"
             end
 
             if player ~= LocalPlayer then
@@ -465,29 +486,39 @@ function MurderMystery2.Init(Shared, UI, Context)
                     sheriffCount += 1
                 elseif role == "GUN PICKUP" then
                     pickedUpCount += 1
+                elseif role == "PLAYER" then
+                    ordinaryCount += 1
                 end
 
                 if role == "GUN PICKUP" then
                     if Config.MM2PickedGunESP then
                         ensurePlayerVisual(player, role)
+                    elseif Config.MM2PlayersESP then
+                        ensurePlayerVisual(player, "PLAYER")
                     else
                         destroyPlayerVisual(player)
                     end
                 elseif role == "MURDERER" or role == "SHERIFF" then
                     if Config.MM2RoleESP then
                         ensurePlayerVisual(player, role)
+                    elseif Config.MM2PlayersESP then
+                        ensurePlayerVisual(player, "PLAYER")
                     else
                         destroyPlayerVisual(player)
                     end
+                elseif Config.MM2PlayersESP then
+                    ensurePlayerVisual(player, "PLAYER")
                 else
                     destroyPlayerVisual(player)
                 end
 
                 local visual = playerVisuals[player]
                 if visual and visual.highlight then
-                    local roleColor = role == "MURDERER" and RED
-                        or role == "SHERIFF" and BLUE
-                        or YELLOW
+                    local roleColor = visual.role == "MURDERER" and RED
+                        or visual.role == "SHERIFF" and BLUE
+                        or visual.role == "GUN PICKUP" and YELLOW
+                        or GREEN
+
                     visual.highlight.FillTransparency = 0.56
                     visual.highlight.FillColor = roleColor
                     visual.highlight.OutlineColor = roleColor
@@ -495,17 +526,17 @@ function MurderMystery2.Init(Shared, UI, Context)
             end
         end
 
-        -- Once a dropped gun has been picked up, that player becomes the
-        -- tracked holder so another drop can trigger a fresh notification.
+        -- Track the latest live holder for subsequent drop notification.
         if currentGunHolder and currentGunDrop == nil and not awaitingPickup then
             lastKnownGunHolder = currentGunHolder
         end
 
         if playerStatus and playerStatus.Parent then
-            local nextStatus = ("Murderer: %d | Sheriff: %d | New gun holder: %d"):format(
+            local nextStatus = ("Murderer: %d | Sheriff: %d | Picked up: %d | Players: %d"):format(
                 murdererCount,
                 sheriffCount,
-                pickedUpCount
+                pickedUpCount,
+                ordinaryCount
             )
             if lastStatus.player ~= nextStatus then
                 lastStatus.player = nextStatus
