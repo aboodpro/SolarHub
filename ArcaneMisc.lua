@@ -3534,7 +3534,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end
             end
 
-            if not wanted then
+            if not wanted and (object == model or object:IsA("Model")) then
                 local okTags, tags = pcall(function()
                     return game:GetService("CollectionService"):GetTags(object)
                 end)
