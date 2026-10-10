@@ -3368,9 +3368,76 @@ function ArcaneMisc.Init(Shared, UI, Context)
         140
     )
 
+    -------------------------------------------------
+    -- RARE CHART CLUE SLOT SELECTOR
+    -------------------------------------------------
+    Config.ArcaneTreasureChartClueSlot =
+        tonumber(Config.ArcaneTreasureChartClueSlot)
+
+    local clueSlotButtons = {}
+    local clueSlotOptions = {
+        {label = "AUTO", slot = nil},
+        {label = "TEXT 1", slot = 1},
+        {label = "TEXT 2", slot = 2},
+        {label = "TEXT 3", slot = 3},
+    }
+
+    local function updateClueSlotButtons()
+        local selectedSlot = Config.ArcaneTreasureChartClueSlot
+
+        for _, entry in ipairs(clueSlotOptions) do
+            local button = clueSlotButtons[entry.label]
+            if button then
+                local active = selectedSlot == entry.slot
+                button.BackgroundColor3 = active
+                    and Color3.fromRGB(185, 126, 35)
+                    or Color3.fromRGB(43, 43, 54)
+            end
+        end
+    end
+
+    for index, entry in ipairs(clueSlotOptions) do
+        local button = Instance.new("TextButton")
+        button.Name = "ClueSlot" .. tostring(index)
+        button.Size = UDim2.new(0.25, -6, 0, 22)
+        button.Position = UDim2.new((index - 1) * 0.25, 5, 0, 176)
+        button.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+        button.BorderSizePixel = 0
+        button.Text = entry.label
+        button.TextColor3 = Color3.fromRGB(235, 235, 240)
+        button.Font = Enum.Font.GothamBold
+        button.TextSize = 8
+        button.Parent = treasureChartSection
+        Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
+        clueSlotButtons[entry.label] = button
+
+        button.Activated:Connect(function()
+            Config.ArcaneTreasureChartClueSlot = entry.slot
+            destroyTreasureChartESP()
+            treasureChartLastKey = nil
+            treasureChartCurrentObject = nil
+            treasureChartNeedsScan = true
+            treasureChartLastScanAttempt = 0
+            updateClueSlotButtons()
+
+            treasureDebugLog(
+                ("CLUE SLOT SELECTED | Slot=%s")
+                    :format(entry.slot and ("Text" .. tostring(entry.slot)) or "AUTO")
+            )
+
+            if treasureChartStatus then
+                treasureChartStatus.Text = entry.slot
+                    and ("Selected Text" .. tostring(entry.slot) .. " - waiting for chart scan...")
+                    or "Selected AUTO - following the active clue in the chart UI..."
+            end
+        end)
+    end
+
+    updateClueSlotButtons()
+
     local treasureDebugButton = Instance.new("TextButton")
     treasureDebugButton.Size = UDim2.fromOffset(130, 28)
-    treasureDebugButton.Position = UDim2.fromOffset(10, 194)
+    treasureDebugButton.Position = UDim2.fromOffset(10, 204)
     treasureDebugButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     treasureDebugButton.BorderSizePixel = 0
     treasureDebugButton.Text = "VIEW DEBUG"
@@ -4096,7 +4163,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local treasureTeleportButton = Instance.new("TextButton")
     treasureTeleportButton.Size = UDim2.new(1, -20, 0, 28)
-    treasureTeleportButton.Position = UDim2.fromOffset(10, 228)
+    treasureTeleportButton.Position = UDim2.fromOffset(10, 236)
     treasureTeleportButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     treasureTeleportButton.BorderSizePixel = 0
     treasureTeleportButton.Text = "TP TO TREASURE"
@@ -4541,7 +4608,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         return data
     end
 
-    local function findTreasureChartActiveText(chart)
+    local function findTreasureChartActiveText(chart, preferredIndex)
         if not chart then
             return nil, nil, nil
         end
@@ -4571,10 +4638,31 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return nil, nil, nil
         end
 
+        if preferredIndex then
+            for _, clue in ipairs(clueValues) do
+                if clue.index == preferredIndex then
+                    treasureDebugLog(
+                        ("ACTIVE CLUE | Source=SelectedSlot | Text%d | Value=%s")
+                            :format(
+                                clue.index,
+                                treasureDebugValue(clue.text)
+                            )
+                    )
+                    return clue.text, "Text" .. tostring(clue.index), clue.source
+                end
+            end
+
+            treasureDebugLog(
+                ("SELECTED CLUE MISSING | Text%d | Available=%d")
+                    :format(preferredIndex, #clueValues)
+            )
+            return nil, nil, nil
+        end
+
         local playerGui = Shared.playerGui
 
         if playerGui then
-            local visibleMatches = {}
+            local visibleMatches = {};
 
             for _, guiObject in ipairs(playerGui:GetDescendants()) do
                 if (guiObject:IsA("TextLabel")
@@ -4709,8 +4797,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
     end
 
     local function getTreasureChartInfo(chart)
+        local preferredIndex = tonumber(Config.ArcaneTreasureChartClueSlot)
         local activeText, activeSource, clueSource =
-            findTreasureChartActiveText(chart)
+            findTreasureChartActiveText(chart, preferredIndex)
 
         local text = activeText or ""
         local info = parseTreasureChartText(text)
@@ -4804,119 +4893,166 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local wanted = treasureNormalize(islandName)
 
+        local function getPhysicalStats(container)
+            local minX, minY, minZ = math.huge, math.huge, math.huge
+            local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+            local partCount = 0
+
+            local ok, descendants = pcall(function()
+                return container:GetDescendants()
+            end)
+
+            if not ok or not descendants then
+                return 0, Vector3.new(0, 0, 0), 0
+            end
+
+            for _, object in ipairs(descendants) do
+                if object:IsA("BasePart")
+                    and object.Transparency < 0.98
+                    and math.max(object.Size.X, object.Size.Z) >= 1 then
+
+                    local p = object.Position
+                    local half = object.Size * 0.5
+
+                    minX = math.min(minX, p.X - math.abs(half.X))
+                    minY = math.min(minY, p.Y - math.abs(half.Y))
+                    minZ = math.min(minZ, p.Z - math.abs(half.Z))
+                    maxX = math.max(maxX, p.X + math.abs(half.X))
+                    maxY = math.max(maxY, p.Y + math.abs(half.Y))
+                    maxZ = math.max(maxZ, p.Z + math.abs(half.Z))
+                    partCount += 1
+                end
+            end
+
+            if partCount == 0 then
+                return 0, Vector3.new(0, 0, 0), 0
+            end
+
+            local size = Vector3.new(
+                maxX - minX,
+                maxY - minY,
+                maxZ - minZ
+            )
+            local area = math.max(size.X, 0) * math.max(size.Z, 0)
+            return partCount, size, area
+        end
+
         local function tryRoot(root, sourceName)
             if not root then
                 return nil
             end
 
-            local exact = root:FindFirstChild(islandName, true)
+            local candidates = {}
+            local seen = {}
 
-            if exact and (exact:IsA("Model") or exact:IsA("Folder")) then
+            local function consider(object)
+                if not object
+                    or seen[object]
+                    or not (object:IsA("Model") or object:IsA("Folder"))
+                    or treasureNormalize(object.Name) ~= wanted then
+                    return
+                end
+
+                seen[object] = true
+                local partCount, size, area = getPhysicalStats(object)
+
                 treasureDebugLog(
-                    ("ISLAND FOUND | Method=RecursiveExactContainer | Source=%s | Wanted=%s | Container=%s | Class=%s")
+                    ("ISLAND CANDIDATE | Source=%s | Container=%s | Parts=%d | Footprint=%.1fx%.1f")
+                        :format(
+                            sourceName,
+                            treasureDebugValue(object),
+                            partCount,
+                            size.X,
+                            size.Z
+                        )
+                )
+
+                -- Reject UI/data placeholders (the earlier Ierochos result had
+                -- only 18 descendants and a 1x1 footprint, not an island mesh).
+                if partCount >= 8 and size.X >= 40 and size.Z >= 40 then
+                    table.insert(candidates, {
+                        object = object,
+                        partCount = partCount,
+                        size = size,
+                        area = area,
+                    })
+                else
+                    treasureDebugLog(
+                        ("ISLAND CANDIDATE REJECTED | Source=%s | Container=%s | Reason=NoMeaningfulWorldGeometry")
+                            :format(sourceName, treasureDebugValue(object))
+                    )
+                end
+            end
+
+            if root:IsA("Model") or root:IsA("Folder") then
+                consider(root)
+            end
+
+            local ok, descendants = pcall(function()
+                return root:GetDescendants()
+            end)
+
+            if ok and descendants then
+                local started = os.clock()
+                for index, object in ipairs(descendants) do
+                    if index % 500 == 0 then
+                        task.wait()
+                    end
+
+                    if os.clock() - started >= 3.0 then
+                        treasureDebugLog(
+                            ("ISLAND LOOKUP TIMEOUT | Wanted=%s | Source=%s | Checked=%d")
+                                :format(tostring(islandName), sourceName, index)
+                        )
+                        break
+                    end
+
+                    consider(object)
+                end
+            end
+
+            table.sort(candidates, function(a, b)
+                if a.area == b.area then
+                    return a.partCount > b.partCount
+                end
+                return a.area > b.area
+            end)
+
+            local best = candidates[1]
+            if best then
+                treasureDebugLog(
+                    ("ISLAND FOUND | Method=BestPhysicalContainer | Source=%s | Wanted=%s | Container=%s | Parts=%d | Footprint=%.1fx%.1f")
                         :format(
                             sourceName,
                             tostring(islandName),
-                            treasureDebugValue(exact),
-                            exact.ClassName
+                            treasureDebugValue(best.object),
+                            best.partCount,
+                            best.size.X,
+                            best.size.Z
                         )
                 )
-                return exact
-            end
-
-            for _, child in ipairs(root:GetChildren()) do
-                if treasureNormalize(child.Name) == wanted then
-                    if child:IsA("Model") or child:IsA("Folder") then
-                        treasureDebugLog(
-                            ("ISLAND FOUND | Method=NormalizedDirectContainer | Source=%s | Wanted=%s | Container=%s | Class=%s")
-                                :format(
-                                    sourceName,
-                                    tostring(islandName),
-                                    treasureDebugValue(child),
-                                    child.ClassName
-                                )
-                        )
-                        return child
-                    end
-                end
+                return best.object
             end
 
             return nil
         end
 
-        -- First use the live streamed map, then the game's replicated
-        -- UnloadIslands source. The latter is essential for a truly global
-        -- Treasure Chart Finder because the destination island may be far
-        -- outside the client's current streaming radius.
+        -- Prefer actual geometry in the live map. If a name-only Folder is
+        -- present, reject it and keep searching instead of returning it early.
         local live = tryRoot(map, "Workspace.Map")
-
         if live then
             return live
         end
 
+        -- Some islands have their full physical template stored in this source
+        -- even when Workspace.Map contains only a small placeholder container.
         local unloaded = tryRoot(unloadIslands, "RS.UnloadIslands")
-
         if unloaded then
             return unloaded
         end
 
-        -- Final bounded fallback over both roots.
-        local roots = {
-            {
-                root = map,
-                source = "Workspace.Map",
-            },
-            {
-                root = unloadIslands,
-                source = "RS.UnloadIslands",
-            },
-        }
-
-        local started = os.clock()
-        local maxLookupSeconds = 2.5
-
-        for _, entry in ipairs(roots) do
-            if entry.root then
-                local descendants = entry.root:GetDescendants()
-
-                for index, child in ipairs(descendants) do
-                    if index % 500 == 0 then
-                        task.wait()
-                    end
-
-                    if os.clock() - started >= maxLookupSeconds then
-                        treasureDebugLog(
-                            ("ISLAND LOOKUP TIMEOUT | Wanted=%s | Source=%s | Checked=%d | Seconds=%.2f")
-                                :format(
-                                    tostring(islandName),
-                                    entry.source,
-                                    index,
-                                    os.clock() - started
-                                )
-                        )
-                        return nil
-                    end
-
-                    if (child:IsA("Model") or child:IsA("Folder"))
-                        and treasureNormalize(child.Name) == wanted then
-
-                        treasureDebugLog(
-                            ("ISLAND FOUND | Method=BoundedNormalizedContainer | Source=%s | Wanted=%s | Container=%s | Class=%s")
-                                :format(
-                                    entry.source,
-                                    tostring(islandName),
-                                    treasureDebugValue(child),
-                                    child.ClassName
-                                )
-                        )
-                        return child
-                    end
-                end
-            end
-        end
-
         treasureDebugLog(
-            ("ISLAND NOT FOUND | Wanted=%s | Map=%s | UnloadIslands=%s")
+            ("ISLAND NOT FOUND | Wanted=%s | Reason=NoPhysicalContainer | Map=%s | UnloadIslands=%s")
                 :format(
                     tostring(islandName),
                     treasureDebugValue(map),
@@ -6019,8 +6155,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 )
             end
 
+            local selectedSlotLabel = Config.ArcaneTreasureChartClueSlot
+                and ("Text" .. tostring(Config.ArcaneTreasureChartClueSlot))
+                or "AUTO"
+
             treasureChartStatus.Text =
-                "Chart: "
+                selectedSlotLabel
+                .. " | Chart: "
                 .. tostring(info.island)
                 .. " | "
                 .. tostring(info.direction)
