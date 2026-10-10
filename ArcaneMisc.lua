@@ -3446,8 +3446,14 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local now = os.clock()
         local cached = wantedCriminalDetectionCache[model]
-        if cached and now - cached.checkedAt < 1 then
-            return cached.isWanted
+        if cached then
+            -- A negative check is much more expensive than reading the cached
+            -- result. Recheck unknown NPCs every few seconds, while positive
+            -- matches refresh sooner in case the game changes their status.
+            local cacheWindow = cached.isWanted and 1 or 8
+            if now - cached.checkedAt < cacheWindow then
+                return cached.isWanted
+            end
         end
 
         local function isTruthy(value)
