@@ -4283,6 +4283,24 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
     end
 
+    local function isSolarHubGuiObject(object, playerGui)
+        local current = object
+
+        while current and current ~= playerGui do
+            local name = tostring(current.Name or "")
+
+            if name:sub(1, 8) == "SolarHub"
+                or name:sub(1, 12) == "SolarTreasure"
+                or name == "SolarArcaneBossNotifications" then
+                return true
+            end
+
+            current = current.Parent
+        end
+
+        return false
+    end
+
     local function collectTreasureChartGuiText()
         local playerGui = Shared.playerGui
         if not playerGui then
@@ -4292,9 +4310,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local parts = {}
 
         for _, object in ipairs(playerGui:GetDescendants()) do
-            if object:IsA("TextLabel")
+            if (object:IsA("TextLabel")
                 or object:IsA("TextButton")
-                or object:IsA("TextBox") then
+                or object:IsA("TextBox"))
+                and not isSolarHubGuiObject(object, playerGui) then
 
                 local text = tostring(object.Text or "")
 
@@ -4533,7 +4552,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 if (guiObject:IsA("TextLabel")
                     or guiObject:IsA("TextButton")
                     or guiObject:IsA("TextBox"))
-                    and guiObject.Visible then
+                    and guiObject.Visible
+                    and not isSolarHubGuiObject(guiObject, playerGui) then
 
                     local guiText = tostring(guiObject.Text or "")
 
@@ -5156,6 +5176,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
+            or islandModel
 
         treasureDebugLog(
             ("CANDIDATE SOURCE | IslandContainer=%s | Class=%s | Fragmentable=%s")
@@ -5286,6 +5307,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local directionVector = treasureDirectionVector(info.direction)
         local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
         local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
+            or islandModel
 
         if not center or not size or not directionVector or not band or not fragmentable then
             return nil
@@ -7963,6 +7985,10 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end
 
     workspace.DescendantAdded:Connect(function(instance)
+        if not isArcaneSessionActive() then
+            return
+        end
+
         local model = instance:IsA("Model")
             and instance
             or instance:FindFirstAncestorOfClass("Model")
@@ -8010,6 +8036,10 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     end)
 
     workspace.DescendantRemoving:Connect(function(instance)
+        if not isArcaneSessionActive() then
+            return
+        end
+
         if instance:IsA("Model") then
             removeModel(instance)
             chestCandidates[instance] = nil
@@ -8521,7 +8551,10 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
 
     local function cleanupArcaneSession()
-        destroyTreasureDebugGui()
+        -- Remove chart marker, all green Highlights, and debug UI on re-execute.
+        pcall(destroyTreasureChartESP)
+        pcall(destroyTreasureDebugGui)
+        pcall(destroyTreasureTeleportGui)
 
         for chest in pairs(chestLifecycleWatchers) do
             cleanupChestLifecycleWatcher(chest)
