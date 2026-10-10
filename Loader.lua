@@ -37,8 +37,8 @@ local function destroyKnownSolarHubArtifacts()
                 local name = tostring(child.Name or "")
 
                 if name:sub(1, 8) == "SolarHub"
-                    or name:sub(1, 10) == "SolarArcane"
-                    or name:sub(1, 12) == "SolarTreasure" then
+                    or name:sub(1, 11) == "SolarArcane"
+                    or name:sub(1, 13) == "SolarTreasure" then
                     pcall(function()
                         child:Destroy()
                     end)
