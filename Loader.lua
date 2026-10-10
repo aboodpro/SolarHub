@@ -6,8 +6,9 @@
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "03e4e321ff57867f9370513a97621cae5428c0bd"
+local BLADE_BALL_SOURCE_REF = "6d45a31865d28d64e5b8a3f845e3d39b988ec262"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-ARCANE-83-WANTED-DISCOVERY-FIX"
+local LOADER_VERSION = "2026-10-10-SOLARHUB-BLADEBALL-TIMING-1"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -123,9 +124,13 @@ local function cleanupSolarHubRuntime()
         if type(getgenv) == "function" then
             local env = getgenv()
             local arcaneCleanup = env.SolarHubArcaneCleanup
+            local bladeBallCleanup = env.SolarHubBladeBallCleanup
 
             if type(arcaneCleanup) == "function" then
                 pcall(arcaneCleanup)
+            end
+            if type(bladeBallCleanup) == "function" then
+                pcall(bladeBallCleanup)
             end
 
             if env.SolarHubLoaderSession == SESSION_ID then
@@ -156,6 +161,7 @@ pcall(function()
 
         local previousCleanup = env.SolarHubCleanup
         local previousArcaneCleanup = env.SolarHubArcaneCleanup
+        local previousBladeBallCleanup = env.SolarHubBladeBallCleanup
 
         if type(previousCleanup) == "function" then
             pcall(previousCleanup)
@@ -164,12 +170,16 @@ pcall(function()
         if type(previousArcaneCleanup) == "function" then
             pcall(previousArcaneCleanup)
         end
+        if type(previousBladeBallCleanup) == "function" then
+            pcall(previousBladeBallCleanup)
+        end
 
         -- Hard-stop any leftover session loops, even if an older cleanup
         -- callback was missing or raised an error.
         env.SolarHubArcaneSession = nil
         env.SolarHubLoaderSession = nil
         env.SolarHubArcaneCleanup = nil
+        env.SolarHubBladeBallCleanup = nil
     end
 end)
 
@@ -498,6 +508,12 @@ local ALLOWED_GAMES = {
         -- Match the Universe/GameId so all supported Arcane places are allowed.
         PlaceIds = nil,
     },
+    {
+        Name = "Blade Ball",
+        GameId = 4777817887,
+        -- Main Blade Ball experience (PlaceId 13772394625) and its places.
+        PlaceIds = nil,
+    },
 }
 
 -------------------------------------------------
@@ -713,8 +729,10 @@ task.spawn(function()
     -- PREPARATION
     -------------------------------------------------
     
-    local PREP_MIN_SECONDS = allowedGame.Name == "Arcane Odyssey" and 0.5 or 4
-    local PREP_TIMEOUT_SECONDS = allowedGame.Name == "Arcane Odyssey" and 5 or 25
+    local lightweightGame = allowedGame.Name == "Arcane Odyssey"
+        or allowedGame.Name == "Blade Ball"
+    local PREP_MIN_SECONDS = lightweightGame and 0.5 or 4
+    local PREP_TIMEOUT_SECONDS = lightweightGame and 8 or 25
 
     local function isCurrentSession()
         if type(getgenv) ~= "function" then
@@ -761,8 +779,10 @@ task.spawn(function()
         local player = game:GetService("Players").LocalPlayer
         local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
 
-        -- Arcane Odyssey does not need the Anime Expeditions RemoteEvents/ReplicaClient.
-        if allowedGame.Name == "Arcane Odyssey" then
+        -- Arcane Odyssey and Blade Ball use dedicated lightweight contexts,
+        -- and do not need the Anime Expeditions RemoteEvents/ReplicaClient.
+        if allowedGame.Name == "Arcane Odyssey"
+            or allowedGame.Name == "Blade Ball" then
             return loaded
                 and player ~= nil
                 and playerGui ~= nil
@@ -800,17 +820,23 @@ task.spawn(function()
     local function fetchModule(fileName)
         local url = BASE_URL .. fileName .. "?v=" .. CACHE_BUST
 
-        -- Arcane is fetched from an immutable commit ref so executors cannot
-        -- accidentally reuse an older cached Arcane.lua from main.
-        if fileName == "UI.lua"
-            or fileName == "Arcane.lua"
-            or fileName == "ArcaneMisc.lua"
-            or fileName == "ArcaneFarming.lua" then
+        -- Arcane modules use their matching immutable ref. BladeBall.lua is
+        -- pinned separately so the normal loader URL can always fetch its exact version.
+        if allowedGame.Name == "Arcane Odyssey"
+            and (fileName == "UI.lua"
+                or fileName == "Arcane.lua"
+                or fileName == "ArcaneMisc.lua"
+                or fileName == "ArcaneFarming.lua") then
             url = "https://raw.githubusercontent.com/aboodpro/SolarHub/"
                 .. ARCANE_SOURCE_REF
                 .. "/"
                 .. fileName
                 .. "?v="
+                .. CACHE_BUST
+        elseif allowedGame.Name == "Blade Ball" and fileName == "BladeBall.lua" then
+            url = "https://raw.githubusercontent.com/aboodpro/SolarHub/"
+                .. BLADE_BALL_SOURCE_REF
+                .. "/BladeBall.lua?v="
                 .. CACHE_BUST
         end
 
@@ -840,6 +866,11 @@ task.spawn(function()
             "Arcane.lua",
             "ArcaneMisc.lua",
             "ArcaneFarming.lua",
+        }
+    elseif allowedGame.Name == "Blade Ball" then
+        moduleLoadOrder = {
+            "UI.lua",
+            "BladeBall.lua",
         }
     else
         moduleLoadOrder = {
@@ -952,10 +983,10 @@ task.spawn(function()
         if not ok then
             warn("[Loader] " .. label .. " failed; continuing where possible.")
 
-            if allowedGame.Name == "Arcane Odyssey" then
-                -- Arcane initialization errors used to collapse into the generic
-                -- "Arcane failed to initialize" message. Keep the exact traceback
-                -- visible so module-split regressions can be fixed from evidence.
+            if allowedGame.Name == "Arcane Odyssey"
+                or allowedGame.Name == "Blade Ball" then
+                -- Dedicated games need the exact traceback visible instead of a
+                -- generic initialization error, so their modules can be debugged.
                 setLoadingStatus(label .. " failed - open DEBUG")
                 showDebugUI()
 
@@ -996,6 +1027,28 @@ task.spawn(function()
             },
             IsArcaneOdyssey = true,
         }
+    elseif allowedGame.Name == "Blade Ball" then
+        setLoadingStatus("Starting Blade Ball...")
+        print("[Loader] Building Blade Ball context...")
+
+        local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
+        Shared = {
+            Players = Players,
+            UserInputService = game:GetService("UserInputService"),
+            HttpService = game:GetService("HttpService"),
+            RunService = game:GetService("RunService"),
+            ReplicatedStorage = game:GetService("ReplicatedStorage"),
+            Lighting = game:GetService("Lighting"),
+            player = player,
+            playerGui = player:WaitForChild("PlayerGui"),
+            Config = {
+                BladeBallTimingAssist = false,
+                BladeBallParryLeadMs = 180,
+                BladeBallContactDistance = 12,
+            },
+            IsBladeBall = true,
+        }
     else
         setLoadingStatus("Starting SolarHub...")
         print("[Loader] Loading Shared...")
@@ -1016,6 +1069,33 @@ task.spawn(function()
     end)
 
     if not UI then
+        return
+    end
+
+    -- Blade Ball uses its own lightweight timing-assist module.
+    if allowedGame.Name == "Blade Ball" then
+        setLoadingStatus("Starting Blade Ball timing coach...")
+        print("[Loader] Loading Blade Ball module...")
+
+        local bladeBall = runModule("BladeBall.Init", function()
+            local BladeBallModule = compiled.BladeBall()
+            return BladeBallModule.Init(Shared, UI, {
+                registerCleanup = function(fn)
+                    if type(fn) == "function" and type(getgenv) == "function" then
+                        getgenv().SolarHubBladeBallCleanup = fn
+                    end
+                end,
+            })
+        end)
+
+        if bladeBall then
+            setLoadingStatus("SolarHub ready")
+            print("[Loader] Blade Ball module loaded.")
+        else
+            setLoadingStatus("Blade Ball module failed - open DEBUG")
+        end
+
+        task.spawn(finishLoadingScreen)
         return
     end
 
