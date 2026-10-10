@@ -5793,18 +5793,64 @@ function ArcaneMisc.Init(Shared, UI, Context)
                         local streamPosition
 
                         if center and size and directionVector and band then
-                            local radius =
-                                math.max(size.X, size.Z) * 0.5
+                            -- Match the same directional island-edge calculation
+                            -- used by the candidate filter instead of a circular
+                            -- radius, which is inaccurate on long/narrow islands.
+                            local halfX = math.max(math.abs(size.X) * 0.5, 1)
+                            local halfZ = math.max(math.abs(size.Z) * 0.5, 1)
+                            local dx = directionVector.X
+                            local dz = directionVector.Z
+                            local denominator =
+                                (dx * dx) / (halfX * halfX)
+                                + (dz * dz) / (halfZ * halfZ)
+                            local edgeRadius = denominator > 0
+                                and (1 / math.sqrt(denominator))
+                                or math.max(halfX, halfZ)
                             local middleRadius =
-                                radius * ((band[1] + band[2]) * 0.5)
+                                edgeRadius * ((band[1] + band[2]) * 0.5)
 
                             streamPosition =
                                 center + directionVector * middleRadius
 
+                            -- Snap the estimated X/Z to the real island surface,
+                            -- so STUDS measures distance to the ground instead
+                            -- of to the island bounding-box center's height.
+                            pcall(function()
+                                local rayParams = RaycastParams.new()
+                                rayParams.FilterType = Enum.RaycastFilterType.Include
+                                rayParams.FilterDescendantsInstances = {islandModel}
+                                rayParams.IgnoreWater = true
+
+                                local rayStart = Vector3.new(
+                                    streamPosition.X,
+                                    center.Y + math.abs(size.Y) * 0.5 + 150,
+                                    streamPosition.Z
+                                )
+                                local rayDirection = Vector3.new(
+                                    0,
+                                    -(math.abs(size.Y) + 650),
+                                    0
+                                )
+                                local hit = workspace:Raycast(
+                                    rayStart,
+                                    rayDirection,
+                                    rayParams
+                                )
+
+                                if hit then
+                                    streamPosition = Vector3.new(
+                                        streamPosition.X,
+                                        hit.Position.Y + 2,
+                                        streamPosition.Z
+                                    )
+                                end
+                            end)
+
                             treasureDebugLog(
-                                ("NO PHYSICAL CANDIDATE | StreamRequest=%s")
+                                ("NO PHYSICAL CANDIDATE | ApproxPosition=%s | SurfaceSnapped=%s")
                                     :format(
-                                        treasureDebugValue(streamPosition)
+                                        treasureDebugValue(streamPosition),
+                                        tostring(streamPosition.Y ~= center.Y)
                                     )
                             )
                         end
