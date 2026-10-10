@@ -5,9 +5,9 @@
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local ARCANE_SOURCE_REF = "979ce5f4f7321413204040e171ee3ec7b03c7f77"
+local ARCANE_SOURCE_REF = "fe8db21c1eac5c95190c423b44404a76a1754a95"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-ARCANE-77-TREASURE-CHART-REMOVED"
+local LOADER_VERSION = "2026-10-10-ARCANE-78-WANTED-CRIMINAL-ESP"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -30,6 +30,7 @@ local function destroyKnownSolarHubArtifacts()
         "SolarChest",
         "SolarSideQuest",
         "SolarBoss",
+        "SolarWanted",
         "SolarFish",
     }
 
@@ -991,6 +992,7 @@ task.spawn(function()
             playerGui = player:WaitForChild("PlayerGui"),
             Config = {
                 ArcaneBossESP = false,
+                ArcaneWantedCriminalESP = false,
             },
             IsArcaneOdyssey = true,
         }
