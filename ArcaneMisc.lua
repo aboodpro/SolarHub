@@ -3431,6 +3431,10 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local function hasWantedCriminalText(value)
         local normalized = normalizeName(value)
         return normalized:find("wantedcriminal", 1, true) ~= nil
+            or normalized:find("notoriouscriminal", 1, true) ~= nil
+            or normalized:find("wantednpc", 1, true) ~= nil
+            or normalized:find("bountynpc", 1, true) ~= nil
+            or normalized:find("bountycriminal", 1, true) ~= nil
             or (normalized:find("wanted", 1, true) ~= nil
                 and normalized:find("criminal", 1, true) ~= nil)
     end
@@ -3473,8 +3477,22 @@ function ArcaneMisc.Init(Shared, UI, Context)
         -- Read explicit game metadata from the model, rig parts, and value objects.
         -- Wanted NPCs have randomized names, so name matching alone is insufficient.
         local objectsToCheck = {model}
+        local allModelText = {tostring(model.Name)}
+        if humanoid then
+            allModelText[#allModelText + 1] = tostring(humanoid.DisplayName)
+        end
+
         for _, descendant in ipairs(model:GetDescendants()) do
             objectsToCheck[#objectsToCheck + 1] = descendant
+            if descendant:IsA("TextLabel")
+                or descendant:IsA("TextButton")
+                or descendant:IsA("TextBox") then
+                allModelText[#allModelText + 1] = tostring(descendant.Text)
+            end
+        end
+
+        if not wanted and hasWantedCriminalText(table.concat(allModelText, " ")) then
+            wanted = true
         end
 
         for _, object in ipairs(objectsToCheck) do
@@ -3524,10 +3542,27 @@ function ArcaneMisc.Init(Shared, UI, Context)
             if okAttributes and type(attributes) == "table" then
                 for key, value in pairs(attributes) do
                     local normalizedKey = normalizeName(key)
+                    local metadataKey = normalizedKey:find("type", 1, true) ~= nil
+                        or normalizedKey:find("status", 1, true) ~= nil
+                        or normalizedKey:find("role", 1, true) ~= nil
+                        or normalizedKey:find("faction", 1, true) ~= nil
+                        or normalizedKey:find("alignment", 1, true) ~= nil
+                    local metadataValue = normalizeName(value)
+
                     if hasWantedCriminalText(value)
                         or ((normalizedKey:find("wanted", 1, true) ~= nil
-                            or normalizedKey:find("criminal", 1, true) ~= nil)
-                            and isTruthy(value)) then
+                            or normalizedKey:find("criminal", 1, true) ~= nil
+                            or normalizedKey:find("bounty", 1, true) ~= nil)
+                            and isTruthy(value))
+                        or (metadataKey and (
+                            metadataValue == "wanted"
+                            or metadataValue == "criminal"
+                            or metadataValue == "bounty"
+                            or metadataValue == "bountyhunter"
+                            or metadataValue == "wantednpc"
+                            or metadataValue == "notorious"
+                            or metadataValue == "villain"
+                        )) then
                         wanted = true
                         break
                     end
@@ -3540,7 +3575,11 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end)
                 if okTags and type(tags) == "table" then
                     for _, tag in ipairs(tags) do
-                        if hasWantedCriminalText(tag) then
+                        local normalizedTag = normalizeName(tag)
+                        if hasWantedCriminalText(tag)
+                            or normalizedTag == "wanted"
+                            or normalizedTag == "criminal"
+                            or normalizedTag == "bounty" then
                             wanted = true
                             break
                         end
