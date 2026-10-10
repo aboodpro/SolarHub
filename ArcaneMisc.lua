@@ -5344,8 +5344,39 @@ function ArcaneMisc.Init(Shared, UI, Context)
         return nil, nil
     end
 
+    local function findTreasureChartDiggableContainer(islandModel)
+        if not islandModel then
+            return nil
+        end
+
+        if treasureNormalize(islandModel.Name) == "fragmentable" then
+            return islandModel
+        end
+
+        local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
+        if fragmentable
+            and (fragmentable:IsA("Folder") or fragmentable:IsA("Model")) then
+            return fragmentable
+        end
+
+        return nil
+    end
+
     local function buildTreasureChartCandidates(islandModel, info)
-        local center, size = getTreasureIslandBounds(islandModel)
+        -- Only score the game's actual destructible/diggable terrain hierarchy.
+        -- Scanning the entire island also finds decorative rocks/buildings that
+        -- satisfy the geometric clue but cannot be dug.
+        local fragmentable = findTreasureChartDiggableContainer(islandModel)
+
+        if not fragmentable then
+            treasureDebugLog(
+                ("CANDIDATES FAIL | NoFragmentableDigTerrain | Island=%s | Container=%s")
+                    :format(tostring(info.island), treasureDebugValue(islandModel))
+            )
+            return {}
+        end
+
+        local center, size = getTreasureIslandBounds(fragmentable)
 
         if not center or not size or not info.direction or not info.distance then
             treasureDebugLog(
@@ -5416,10 +5447,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return normalizedRadius, difference
         end
 
-        -- When strict search returns nothing, inspect the entire island container;
-        -- some islands keep physical ground chunks outside their Fragmentable folder.
-        local fragmentable = islandModel
-
         treasureDebugLog(
             ("CANDIDATE SOURCE | IslandContainer=%s | Class=%s | Fragmentable=%s")
                 :format(
@@ -5428,14 +5455,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     treasureDebugValue(fragmentable)
                 )
         )
-
-        if not fragmentable then
-            treasureDebugLog(
-                ("CANDIDATES FAIL | FragmentableMissing | Island=%s")
-                    :format(tostring(info.island))
-            )
-            return {}
-        end
 
         for _, part in ipairs(fragmentable:GetDescendants()) do
             scanned += 1
@@ -5563,13 +5582,20 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return nil
         end
 
-        local center, size = getTreasureIslandBounds(islandModel)
+        local fragmentable = findTreasureChartDiggableContainer(islandModel)
+        if not fragmentable then
+            treasureDebugLog(
+                ("FALLBACK PHYSICAL FAIL | NoFragmentableDigTerrain | Island=%s")
+                    :format(tostring(info.island))
+            )
+            return nil
+        end
+
+        local center, size = getTreasureIslandBounds(fragmentable)
         local directionVector = treasureDirectionVector(info.direction)
         local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
-        local fragmentable = islandModel:FindFirstChild("Fragmentable", true)
-            or islandModel
 
-        if not center or not size or not directionVector or not band or not fragmentable then
+        if not center or not size or not directionVector or not band then
             return nil
         end
 
@@ -5591,7 +5617,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
             if part:IsA("BasePart")
                 and part.Transparency < 0.85
                 and math.max(part.Size.X, part.Size.Z) >= 1
-                and not treasurePartHasNoTreasureSpot(part) then
+                and not treasurePartHasNoTreasureSpot(part)
+                and treasurePartMatchesSurface(part, info.surface) then
 
                 local dx = part.Position.X - center.X
                 local dz = part.Position.Z - center.Z
@@ -5648,7 +5675,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         treasureDebugLog(
-            ("FALLBACK PHYSICAL | Part=%s | Score=%s | Scanned=%d | SurfaceFilter=IgnoredAfterStrictMatchFailed")
+            ("FALLBACK PHYSICAL | Part=%s | Score=%s | Scanned=%d | SurfaceFilter=Enforced")
                 :format(
                     treasureDebugValue(bestPart),
                     bestPart and ("%.4f"):format(bestScore) or "<nil>",
@@ -6105,16 +6132,17 @@ function ArcaneMisc.Init(Shared, UI, Context)
                         end
 
                         if streamPosition then
-                            -- Keep a visible approximate marker and distance while
-                            -- waiting for the island's real diggable pieces to stream.
-                            if not treasureChartESP then
-                                createTreasureChartMarker(streamPosition, info, true)
-                            elseif treasureChartESP.estimated then
-                                treasureChartESP.position = streamPosition
-                                if treasureChartESP.anchor and treasureChartESP.anchor.Parent then
-                                    treasureChartESP.anchor.CFrame = CFrame.new(streamPosition)
-                                end
+                            -- Use the estimate only as a streaming hint. Never display
+                            -- an estimated point as a real dig target: it can land on
+                            -- a rock/building or non-diggable surface.
+                            if treasureChartESP and treasureChartESP.estimated then
+                                destroyTreasureChartESP()
                             end
+
+                            treasureDebugLog(
+                                ("APPROXIMATE POSITION | StreamRequestOnly=true | Position=%s | NoMarker=true")
+                                    :format(treasureDebugValue(streamPosition))
+                            )
 
                             pcall(function()
                                 if type(workspace.RequestStreamAroundAsync)
@@ -6127,7 +6155,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
                             end)
                         else
                             treasureDebugLog(
-                                "ESTIMATED MARKER FAIL | Island bounds or clue band unavailable"
+                                "ESTIMATED MARKER SKIPPED | Island bounds or clue band unavailable"
                             )
                         end
 
