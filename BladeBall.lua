@@ -273,6 +273,21 @@ function BladeBall.Init(Shared, UI, Context)
                 status:Destroy()
             end)
         end
+
+        pcall(function()
+            if type(getgenv) == "function" then
+                local env = getgenv()
+                if env.SolarHubBladeBallCleanup == cleanup then
+                    env.SolarHubBladeBallCleanup = nil
+                end
+            end
+        end)
+    end
+
+    if type(getgenv) == "function" then
+        pcall(function()
+            getgenv().SolarHubBladeBallCleanup = cleanup
+        end)
     end
 
     if Context and type(Context.registerCleanup) == "function" then
