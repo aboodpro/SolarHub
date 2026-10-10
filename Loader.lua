@@ -6,9 +6,9 @@
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "03e4e321ff57867f9370513a97621cae5428c0bd"
-local BLADE_BALL_SOURCE_REF = "6d45a31865d28d64e5b8a3f845e3d39b988ec262"
+local BLADE_BALL_SOURCE_REF = "92fe78e4b9372435267c7fd64b2683314969975a"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-SOLARHUB-BLADEBALL-TIMING-1"
+local LOADER_VERSION = "2026-10-10-SOLARHUB-BLADEBALL-AUTOPARRY-1"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -1043,7 +1043,7 @@ task.spawn(function()
             player = player,
             playerGui = player:WaitForChild("PlayerGui"),
             Config = {
-                BladeBallTimingAssist = false,
+                BladeBallAutoParry = false,
                 BladeBallParryLeadMs = 180,
                 BladeBallContactDistance = 12,
             },
@@ -1072,9 +1072,9 @@ task.spawn(function()
         return
     end
 
-    -- Blade Ball uses its own lightweight timing-assist module.
+    -- Blade Ball uses its own lightweight Auto Parry module.
     if allowedGame.Name == "Blade Ball" then
-        setLoadingStatus("Starting Blade Ball timing coach...")
+        setLoadingStatus("Starting Blade Ball Auto Parry...")
         print("[Loader] Loading Blade Ball module...")
 
         local bladeBall = runModule("BladeBall.Init", function()
