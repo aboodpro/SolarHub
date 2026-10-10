@@ -57,6 +57,7 @@ local Config = {
     WalkAround = true,
     DisableAutoTeleportAFKChamber = true,
     ArcaneBossESP = false,
+    ArcaneWantedCriminalESP = false,
 }
 Shared.Config = Config
 
