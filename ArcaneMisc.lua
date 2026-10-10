@@ -3368,11 +3368,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
         140
     )
 
-    -------------------------------------------------
-    -- RARE CHART CLUE SLOT SELECTOR
-    -------------------------------------------------
-    -- Forward declarations used by the clue-slot button callbacks.
-    -- They must be declared before the callbacks so Lua captures the module locals.
     local destroyTreasureChartESP
     local treasureDebugLog
     local treasureChartLastKey
@@ -3380,73 +3375,11 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartNeedsScan
     local treasureChartLastScanAttempt
 
-    Config.ArcaneTreasureChartClueSlot =
-        tonumber(Config.ArcaneTreasureChartClueSlot)
-
-    local clueSlotButtons = {}
-    local clueSlotOptions = {
-        {label = "AUTO", slot = nil},
-        {label = "TEXT 1", slot = 1},
-        {label = "TEXT 2", slot = 2},
-        {label = "TEXT 3", slot = 3},
-    }
-
-    local function updateClueSlotButtons()
-        local selectedSlot = Config.ArcaneTreasureChartClueSlot
-
-        for _, entry in ipairs(clueSlotOptions) do
-            local button = clueSlotButtons[entry.label]
-            if button then
-                local active = selectedSlot == entry.slot
-                button.BackgroundColor3 = active
-                    and Color3.fromRGB(185, 126, 35)
-                    or Color3.fromRGB(43, 43, 54)
-            end
-        end
-    end
-
-    for index, entry in ipairs(clueSlotOptions) do
-        local button = Instance.new("TextButton")
-        button.Name = "ClueSlot" .. tostring(index)
-        button.Size = UDim2.new(0.25, -6, 0, 22)
-        button.Position = UDim2.new((index - 1) * 0.25, 5, 0, 176)
-        button.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
-        button.BorderSizePixel = 0
-        button.Text = entry.label
-        button.TextColor3 = Color3.fromRGB(235, 235, 240)
-        button.Font = Enum.Font.GothamBold
-        button.TextSize = 8
-        button.Parent = treasureChartSection
-        Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
-        clueSlotButtons[entry.label] = button
-
-        button.Activated:Connect(function()
-            Config.ArcaneTreasureChartClueSlot = entry.slot
-            destroyTreasureChartESP()
-            treasureChartLastKey = nil
-            treasureChartCurrentObject = nil
-            treasureChartNeedsScan = true
-            treasureChartLastScanAttempt = 0
-            updateClueSlotButtons()
-
-            treasureDebugLog(
-                ("CLUE SLOT SELECTED | Slot=%s")
-                    :format(entry.slot and ("Text" .. tostring(entry.slot)) or "AUTO")
-            )
-
-            if treasureChartStatus then
-                treasureChartStatus.Text = entry.slot
-                    and ("Selected Text" .. tostring(entry.slot) .. " - waiting for chart scan...")
-                    or "Selected AUTO - following the active clue in the chart UI..."
-            end
-        end)
-    end
-
-    updateClueSlotButtons()
+    Config.ArcaneTreasureChartClueSlot = nil
 
     local treasureDebugButton = Instance.new("TextButton")
     treasureDebugButton.Size = UDim2.fromOffset(130, 28)
-    treasureDebugButton.Position = UDim2.fromOffset(10, 204)
+    treasureDebugButton.Position = UDim2.fromOffset(10, 194)
     treasureDebugButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     treasureDebugButton.BorderSizePixel = 0
     treasureDebugButton.Text = "VIEW DEBUG"
@@ -4172,7 +4105,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local treasureTeleportButton = Instance.new("TextButton")
     treasureTeleportButton.Size = UDim2.new(1, -20, 0, 28)
-    treasureTeleportButton.Position = UDim2.fromOffset(10, 236)
+    treasureTeleportButton.Position = UDim2.fromOffset(10, 228)
     treasureTeleportButton.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
     treasureTeleportButton.BorderSizePixel = 0
     treasureTeleportButton.Text = "TP TO TREASURE"
@@ -4617,7 +4550,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         return data
     end
 
-    local function findTreasureChartActiveText(chart, preferredIndex)
+    local function findTreasureChartActiveText(chart)
         if not chart then
             return nil, nil, nil
         end
@@ -4626,13 +4559,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         for _, child in ipairs(chart:GetDescendants()) do
             if child:IsA("StringValue") then
-                local name = tostring(child.Name)
-                local number = name:match("^Text(%d+)$")
+                local number = tostring(child.Name):match("^Text(%d+)$")
+                local clueText = tostring(child.Value or "")
 
-                if number then
+                if number and clueText ~= "" then
                     table.insert(clueValues, {
                         index = tonumber(number),
-                        text = tostring(child.Value or ""),
+                        text = clueText,
                         source = child,
                     })
                 end
@@ -4644,55 +4577,89 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end)
 
         if #clueValues == 0 then
-            return nil, nil, nil
-        end
-
-        if preferredIndex then
-            for _, clue in ipairs(clueValues) do
-                if clue.index == preferredIndex then
-                    treasureDebugLog(
-                        ("ACTIVE CLUE | Source=SelectedSlot | Text%d | Value=%s")
-                            :format(
-                                clue.index,
-                                treasureDebugValue(clue.text)
-                            )
-                    )
-                    return clue.text, "Text" .. tostring(clue.index), clue.source
-                end
-            end
-
-            treasureDebugLog(
-                ("SELECTED CLUE MISSING | Text%d | Available=%d")
-                    :format(preferredIndex, #clueValues)
-            )
+            treasureDebugLog("CLUE SOURCE FAIL | No TextN StringValues found in chart tool")
             return nil, nil, nil
         end
 
         local playerGui = Shared.playerGui
 
+        local function isActuallyVisible(object)
+            local current = object
+
+            while current and current ~= playerGui do
+                if current:IsA("GuiObject") and not current.Visible then
+                    return false
+                end
+
+                if current:IsA("ScreenGui") and not current.Enabled then
+                    return false
+                end
+
+                current = current.Parent
+            end
+
+            return true
+        end
+
+        local function belongsToTreasureChartGui(object)
+            local current = object
+
+            while current and current ~= playerGui do
+                if current.Name == "TreasureChartGui" then
+                    return true
+                end
+
+                current = current.Parent
+            end
+
+            return false
+        end
+
+        local function normalizedMatch(a, b)
+            local na = treasureNormalize(a)
+            local nb = treasureNormalize(b)
+
+            return na ~= ""
+                and nb ~= ""
+                and (
+                    na == nb
+                    or na:find(nb, 1, true) ~= nil
+                    or nb:find(na, 1, true) ~= nil
+                )
+        end
+
         if playerGui then
-            local visibleMatches = {};
+            local exactMatches = {}
+            local chartUiTexts = {}
 
             for _, guiObject in ipairs(playerGui:GetDescendants()) do
                 if (guiObject:IsA("TextLabel")
                     or guiObject:IsA("TextButton")
                     or guiObject:IsA("TextBox"))
-                    and guiObject.Visible
+                    and isActuallyVisible(guiObject)
                     and not isSolarHubGuiObject(guiObject, playerGui) then
 
                     local guiText = tostring(guiObject.Text or "")
 
                     if guiText ~= "" then
-                        for _, clue in ipairs(clueValues) do
-                            if guiText == clue.text
-                                or guiText:find(clue.text, 1, true)
-                                or clue.text:find(guiText, 1, true) then
+                        local inChartGui = belongsToTreasureChartGui(guiObject)
 
-                                table.insert(visibleMatches, {
+                        if inChartGui then
+                            table.insert(chartUiTexts, {
+                                object = guiObject,
+                                text = guiText,
+                            })
+                        end
+
+                        for _, clue in ipairs(clueValues) do
+                            if normalizedMatch(guiText, clue.text) then
+                                table.insert(exactMatches, {
                                     clue = clue,
                                     object = guiObject,
+                                    inChartGui = inChartGui,
+                                    exact = treasureNormalize(guiText)
+                                        == treasureNormalize(clue.text),
                                 })
-
                                 break
                             end
                         end
@@ -4700,11 +4667,25 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end
             end
 
-            if #visibleMatches > 0 then
-                local match = visibleMatches[#visibleMatches]
+            -- The rendered game clue determines the current stage. Text1,
+            -- Text2 and Text3 are sequential stages, not user-selectable modes.
+            table.sort(exactMatches, function(a, b)
+                if a.inChartGui ~= b.inChartGui then
+                    return a.inChartGui
+                end
+
+                if a.exact ~= b.exact then
+                    return a.exact
+                end
+
+                return a.clue.index < b.clue.index
+            end)
+
+            if #exactMatches > 0 then
+                local match = exactMatches[1]
 
                 treasureDebugLog(
-                    ("ACTIVE CLUE | Source=PlayerGui | Text%d | GUI=%s")
+                    ("ACTIVE CLUE | Source=PlayerGui | Text%d | GUI=%s | AutoStage=true")
                         :format(
                             match.clue.index,
                             treasureDebugValue(match.object)
@@ -4713,12 +4694,39 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
                 return match.clue.text, "Text" .. tostring(match.clue.index), match.clue.source
             end
+
+            -- If the active clue is reformatted by the game UI, parse only the
+            -- currently rendered clue text instead of merging hidden future stages.
+            for _, entry in ipairs(chartUiTexts) do
+                local normalized = treasureNormalize(entry.text)
+                local looksLikeClue =
+                    normalized:find("halfway", 1, true) ~= nil
+                    or normalized:find("midway", 1, true) ~= nil
+                    or normalized:find("fewpaces", 1, true) ~= nil
+                    or normalized:find("ontheedge", 1, true) ~= nil
+                    or normalized:find("buried", 1, true) ~= nil
+                    or normalized:find("fromthecenter", 1, true) ~= nil
+
+                if looksLikeClue then
+                    treasureDebugLog(
+                        ("ACTIVE CLUE | Source=PlayerGuiText | GUI=%s | Text=%s | AutoStage=true")
+                            :format(
+                                treasureDebugValue(entry.object),
+                                entry.text
+                            )
+                    )
+
+                    return entry.text, "PlayerGuiText", nil
+                end
+            end
         end
 
+        -- Use the first clue only while the game's chart UI has not appeared.
+        -- Once it is rendered, never regress to Text1 if the stage has changed.
         local first = clueValues[1]
 
         treasureDebugLog(
-            ("ACTIVE CLUE | Source=ToolFallback | Text%d")
+            ("ACTIVE CLUE | Source=ToolFallback | Text%d | UIUnavailable=true")
                 :format(first.index)
         )
 
@@ -4806,9 +4814,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
     end
 
     local function getTreasureChartInfo(chart)
-        local preferredIndex = tonumber(Config.ArcaneTreasureChartClueSlot)
         local activeText, activeSource, clueSource =
-            findTreasureChartActiveText(chart, preferredIndex)
+            findTreasureChartActiveText(chart)
 
         local text = activeText or ""
         local info = parseTreasureChartText(text)
@@ -4851,33 +4858,20 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 )
         )
 
-        -- If the active clue text did not parse fully, keep the GUI fallback
-        -- as a secondary source, but never merge multiple TextN clue strings.
         if not info.island or not info.direction or not info.distance then
-            local guiText = collectTreasureChartGuiText()
-
-            if guiText ~= "" then
-                local guiInfo = parseTreasureChartText(guiText)
-
-                if guiInfo.island and guiInfo.direction and guiInfo.distance then
-                    info = guiInfo
-                    info.rawText = guiText
-
-                    treasureDebugLog(
-                        ("CLUE PARSE FALLBACK | Source=PlayerGui | Island=%s | Direction=%s | Distance=%s | Surface=%s")
-                            :format(
-                                tostring(info.island),
-                                tostring(info.direction),
-                                tostring(info.distance),
-                                tostring(info.surface)
-                            )
+            treasureDebugLog(
+                ("CLUE INCOMPLETE | Source=%s | Island=%s | Direction=%s | Distance=%s | Raw=%s")
+                    :format(
+                        tostring(activeSource),
+                        tostring(info.island),
+                        tostring(info.direction),
+                        tostring(info.distance),
+                        tostring(text)
                     )
-
-                    return info
-                end
-            end
+            )
         end
 
+        info.stage = tonumber(tostring(activeSource):match("Text(%d+)"))
         info.rawText = text
         return info
     end
@@ -5805,8 +5799,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local info = getTreasureChartInfo(chart)
 
         treasureDebugLog(
-            ("REFRESH INFO | Island=%s | Direction=%s | Distance=%s | Surface=%s")
+            ("REFRESH INFO | Stage=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s")
                 :format(
+                    tostring(info.stage or activeSource),
                     tostring(info.island),
                     tostring(info.direction),
                     tostring(info.distance),
@@ -5829,6 +5824,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             tostring(info.direction),
             tostring(info.distance),
             tostring(info.surface),
+            tostring(info.stage or activeSource),
         }, "|")
 
         if chartKey ~= treasureChartLastKey then
@@ -6164,13 +6160,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 )
             end
 
-            local selectedSlotLabel = Config.ArcaneTreasureChartClueSlot
-                and ("Text" .. tostring(Config.ArcaneTreasureChartClueSlot))
-                or "AUTO"
-
             treasureChartStatus.Text =
-                selectedSlotLabel
-                .. " | Chart: "
+                (info.stage and ("Stage: " .. tostring(info.stage) .. " | ") or "Stage: AUTO | ")
+                .. "Chart: "
                 .. tostring(info.island)
                 .. " | "
                 .. tostring(info.direction)
