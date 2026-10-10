@@ -4354,7 +4354,11 @@ function ArcaneMisc.Init(Shared, UI, Context)
             or normalized:find("nottoofar", 1, true)
             or normalized:find("slightly", 1, true)
             or normalized:find("nearthecenter", 1, true)
-            or normalized:find("fromthecenter", 1, true) then
+            or (
+                normalized:find("fromthecenter", 1, true)
+                and not normalized:find("halfway", 1, true)
+                and not normalized:find("midway", 1, true)
+            ) then
             distance = "Few paces"
         elseif normalized:find("halfway", 1, true)
             or normalized:find("midway", 1, true)
