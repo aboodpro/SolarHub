@@ -155,7 +155,9 @@ function UI.Init(Shared)
     local tabErrors = {}
     local tabNames
 
-    if Shared.IsArcaneOdyssey == true then
+    if Shared.IsBladeBall == true then
+        tabNames = { "Blade Ball", "UI Settings" }
+    elseif Shared.IsArcaneOdyssey == true then
         tabNames = { "Farming", "Misc", "UI Settings" }
     else
         tabNames = { "Lobby", "Joiner", "Game", "Auto Play", "Macro", "Webhook", "Misc", "UI Settings" }
@@ -166,7 +168,8 @@ function UI.Init(Shared)
         tabContainer.Name = name .. "Tab"
         tabContainer.Size = UDim2.new(1, 0, 1, 0)
         tabContainer.BackgroundTransparency = 1
-        local initialTab = Shared.IsArcaneOdyssey and "Farming" or "Macro"
+        local initialTab = Shared.IsBladeBall and "Blade Ball"
+            or (Shared.IsArcaneOdyssey and "Farming" or "Macro")
         tabContainer.Visible = (name == initialTab)
         tabContainer.CanvasSize = UDim2.new(0, 0, 0, 900)
         tabContainer.ScrollBarThickness = 3
@@ -212,7 +215,8 @@ function UI.Init(Shared)
 
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -12, 0, 34)
-        local initialTab = Shared.IsArcaneOdyssey and "Farming" or "Macro"
+        local initialTab = Shared.IsBladeBall and "Blade Ball"
+            or (Shared.IsArcaneOdyssey and "Farming" or "Macro")
         btn.BackgroundColor3 = (name == initialTab) and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(28, 28, 36)
         btn.Text = "   " .. name
         btn.Font = Enum.Font.GothamMedium
