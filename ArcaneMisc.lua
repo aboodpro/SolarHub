@@ -2970,7 +2970,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local section = UI.createSection(
         miscTab,
         "Arcane Odyssey",
-        330
+        382
     )
 
     UI.createToggle(
@@ -2981,18 +2981,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
         32
     )
 
-    local wantedCriminalSection = UI.createSection(
-        miscTab,
-        "Wanted Criminals",
-        88
-    )
-
     UI.createToggle(
-        wantedCriminalSection,
+        section,
         "Wanted Criminal ESP",
-        "Highlights bounty NPCs marked Wanted Criminal.",
+        "Highlights NPCs marked Wanted Criminal.",
         "ArcaneWantedCriminalESP",
-        32
+        80
     )
 
     UI.createToggle(
@@ -3000,12 +2994,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
         "Structure Scan",
         "Scans bosses, chests, side quest NPCs/locations, templates and remotes.",
         "ArcaneBossDebug",
-        80
+        132
     )
 
     local scanButton = Instance.new("TextButton")
     scanButton.Size = UDim2.new(1, -16, 0, 34)
-    scanButton.Position = UDim2.fromOffset(8, 124)
+    scanButton.Position = UDim2.fromOffset(8, 176)
     scanButton.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
     scanButton.BorderSizePixel = 0
     scanButton.Text = "CHEST DEBUG v6"
@@ -3017,7 +3011,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local copyButton = Instance.new("TextButton")
     copyButton.Size = UDim2.fromOffset(70, 24)
-    copyButton.Position = UDim2.new(1, -78, 0, 166)
+    copyButton.Position = UDim2.new(1, -78, 0, 218)
     copyButton.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
     copyButton.BorderSizePixel = 0
     copyButton.Text = "COPY"
@@ -3028,7 +3022,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     Instance.new("UICorner", copyButton).CornerRadius = UDim.new(0, 6)
 
     local debugBox = Instance.new("TextBox")
-    debugBox.Position = UDim2.fromOffset(8, 195)
+    debugBox.Position = UDim2.fromOffset(8, 247)
     debugBox.Size = UDim2.new(1, -16, 0, 125)
     debugBox.BackgroundColor3 = Color3.fromRGB(8, 8, 11)
     debugBox.BorderSizePixel = 0
