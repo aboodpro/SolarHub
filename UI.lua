@@ -155,8 +155,8 @@ function UI.Init(Shared)
     local tabErrors = {}
     local tabNames
 
-    if Shared.IsBladeBall == true then
-        tabNames = { "Blade Ball", "UI Settings" }
+    if Shared.IsMurderMystery2 == true then
+        tabNames = { "Murder Mystery 2", "UI Settings" }
     elseif Shared.IsArcaneOdyssey == true then
         tabNames = { "Farming", "Misc", "UI Settings" }
     else
@@ -168,7 +168,7 @@ function UI.Init(Shared)
         tabContainer.Name = name .. "Tab"
         tabContainer.Size = UDim2.new(1, 0, 1, 0)
         tabContainer.BackgroundTransparency = 1
-        local initialTab = Shared.IsBladeBall and "Blade Ball"
+        local initialTab = Shared.IsMurderMystery2 and "Murder Mystery 2"
             or (Shared.IsArcaneOdyssey and "Farming" or "Macro")
         tabContainer.Visible = (name == initialTab)
         tabContainer.CanvasSize = UDim2.new(0, 0, 0, 900)
@@ -215,7 +215,7 @@ function UI.Init(Shared)
 
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -12, 0, 34)
-        local initialTab = Shared.IsBladeBall and "Blade Ball"
+        local initialTab = Shared.IsMurderMystery2 and "Murder Mystery 2"
             or (Shared.IsArcaneOdyssey and "Farming" or "Macro")
         btn.BackgroundColor3 = (name == initialTab) and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(28, 28, 36)
         btn.Text = "   " .. name
