@@ -4738,8 +4738,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local island
         local islandNameLength = 0
-
-        -- First try the known list, then try live island names from the map.
         local islandNames = {}
 
         for _, name in ipairs(TREASURE_CHART_ISLANDS) do
@@ -4747,7 +4745,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         local map = workspace:FindFirstChild("Map")
-
         if map then
             for _, object in ipairs(map:GetChildren()) do
                 if object:IsA("Model") or object:IsA("Folder") then
@@ -4758,21 +4755,25 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         for name in pairs(islandNames) do
             local normalizedName = treasureNormalize(name)
+            local shortName = normalizedName:gsub("island$", "")
 
             if normalizedName ~= ""
-                and normalized:find(normalizedName, 1, true)
-                and #normalizedName > islandNameLength then
-                island = name
-                islandNameLength = #normalizedName
+                and (
+                    normalized:find(normalizedName, 1, true)
+                    or (#shortName >= 4 and normalized:find(shortName, 1, true))
+                ) then
+                local candidateLength = math.max(#normalizedName, #shortName)
+                if candidateLength > islandNameLength then
+                    island = name
+                    islandNameLength = candidateLength
+                end
             end
         end
 
         local direction
         local directionLength = 0
-
         for _, name in ipairs(TREASURE_CHART_DIRECTIONS) do
             local normalizedName = treasureNormalize(name)
-
             if normalized:find(normalizedName, 1, true)
                 and #normalizedName > directionLength then
                 direction = name
@@ -4781,11 +4782,20 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         local distance
-
-        if normalized:find("fewpaces", 1, true) then
+        if normalized:find("fewpaces", 1, true)
+            or normalized:find("fewsteps", 1, true)
+            or normalized:find("nottoofar", 1, true)
+            or normalized:find("nearthecenter", 1, true)
+            or (
+                normalized:find("fromthecenter", 1, true)
+                and not normalized:find("halfway", 1, true)
+                and not normalized:find("midway", 1, true)
+            ) then
             distance = "Few paces"
         elseif normalized:find("halfway", 1, true)
-            or normalized:find("midway", 1, true) then
+            or normalized:find("midway", 1, true)
+            or normalized:find("roughlyhalf", 1, true)
+            or normalized:find("aboutmidway", 1, true) then
             distance = "Halfway"
         elseif normalized:find("ontheedge", 1, true)
             or normalized:find("edge", 1, true)
@@ -4794,7 +4804,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         local surface
-
         if normalized:find("snow", 1, true) then
             surface = "SNOW"
         elseif normalized:find("sand", 1, true) then
@@ -4804,11 +4813,41 @@ function ArcaneMisc.Init(Shared, UI, Context)
             surface = "GROUND"
         end
 
+        local elevation
+        if normalized:find("abovetheclouds", 1, true)
+            or normalized:find("skyisland", 1, true)
+            or normalized:find("abovetheworld", 1, true) then
+            elevation = "SKY"
+        elseif normalized:find("sealevel", 1, true)
+            or normalized:find("atwaterlevel", 1, true)
+            or normalized:find("nearwaterlevel", 1, true) then
+            elevation = "SEA_LEVEL"
+        elseif normalized:find("highvantage", 1, true)
+            or normalized:find("highcliff", 1, true)
+            or normalized:find("greatheight", 1, true)
+            or normalized:find("decentheight", 1, true)
+            or normalized:find("higherground", 1, true)
+            or normalized:find("highground", 1, true)
+            or normalized:find("highabove", 1, true)
+            or normalized:find("atopacliff", 1, true)
+            or normalized:find("higherearth", 1, true)
+            or normalized:find("highaltitude", 1, true) then
+            elevation = "HIGH"
+        end
+
+        local coastal =
+            normalized:find("coastal", 1, true) ~= nil
+            or normalized:find("overlookingthesea", 1, true) ~= nil
+            or normalized:find("neartheocean", 1, true) ~= nil
+            or normalized:find("bythesea", 1, true) ~= nil
+
         return {
             island = island,
             direction = direction,
             distance = distance,
             surface = surface,
+            elevation = elevation,
+            coastal = coastal,
             rawText = text,
         }
     end
@@ -4844,7 +4883,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         treasureDebugLog(
-            ("CLUE PARSE | Chart=%s | Source=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s | StructuredIsland=%s | StructuredDirection=%s | Raw=%s")
+            ("CLUE PARSE | Chart=%s | Source=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s | Elevation=%s | Coastal=%s | StructuredIsland=%s | StructuredDirection=%s | Raw=%s")
                 :format(
                     treasureDebugValue(chart),
                     tostring(activeSource),
@@ -4852,6 +4891,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     tostring(info.direction),
                     tostring(info.distance),
                     tostring(info.surface),
+                    tostring(info.elevation),
+                    tostring(info.coastal),
                     tostring(structured.island),
                     tostring(structured.direction),
                     tostring(info.rawText)
@@ -5401,12 +5442,29 @@ function ArcaneMisc.Init(Shared, UI, Context)
                         getTreasureDigSurfacePosition(part)
 
                     if surfacePosition then
+                        local heightRange = math.max(math.abs(size.Y), 1)
+                        local normalizedHeight = math.clamp(
+                            (part.Position.Y - (center.Y - heightRange * 0.5))
+                                / heightRange,
+                            0,
+                            1
+                        )
+                        local elevationPenalty = 0
+
+                        if info.elevation == "HIGH" then
+                            elevationPenalty = (1 - normalizedHeight) * 0.65
+                        elseif info.elevation == "SEA_LEVEL" then
+                            elevationPenalty = normalizedHeight * 0.65
+                        end
+
                         table.insert(candidates, {
                             part = part,
-                            score = radialScore + angularScore * 0.45,
+                            score = radialScore + angularScore * 0.45 + elevationPenalty,
                             position = surfacePosition,
                             normalizedRadius = normalizedRadius,
                             angularDifference = angularDifference,
+                            normalizedHeight = normalizedHeight,
+                            elevationPenalty = elevationPenalty,
                         })
                     end
                 end
@@ -5429,12 +5487,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
         end
 
         treasureDebugLog(
-            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Count=%d | ALL_MATCHING_PARTS=true | Scanned=%d | SurfaceMatched=%d | NoTreasureRejected=%d | Footprint=%.1fx%.1f")
+            ("CANDIDATES DONE | Island=%s | Direction=%s | Distance=%s | Surface=%s | Elevation=%s | Count=%d | ALL_MATCHING_PARTS=true | Scanned=%d | SurfaceMatched=%d | NoTreasureRejected=%d | Footprint=%.1fx%.1f")
                 :format(
                     tostring(info.island),
                     tostring(info.direction),
                     tostring(info.distance),
                     tostring(info.surface),
+                    tostring(info.elevation),
                     #result,
                     scanned,
                     surfaceMatched,
@@ -5524,9 +5583,25 @@ function ArcaneMisc.Init(Shared, UI, Context)
                     local normalizedRadius =
                         radial / math.max(edgeRadius, 1)
 
+                    local heightRange = math.max(math.abs(size.Y), 1)
+                    local normalizedHeight = math.clamp(
+                        (part.Position.Y - (center.Y - heightRange * 0.5))
+                            / heightRange,
+                        0,
+                        1
+                    )
+                    local elevationPenalty = 0
+
+                    if info.elevation == "HIGH" then
+                        elevationPenalty = (1 - normalizedHeight) * 0.45
+                    elseif info.elevation == "SEA_LEVEL" then
+                        elevationPenalty = normalizedHeight * 0.45
+                    end
+
                     local score =
                         math.abs(normalizedRadius - targetRadius)
                         + (difference / math.pi) * 0.65
+                        + elevationPenalty
 
                     if normalizedRadius >= band[1] - 0.28
                         and normalizedRadius <= band[2] + 0.28
@@ -5801,7 +5876,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         treasureDebugLog(
             ("REFRESH INFO | Stage=%s | Island=%s | Direction=%s | Distance=%s | Surface=%s")
                 :format(
-                    tostring(info.stage or activeSource),
+                    tostring(info.stage or info.rawText),
                     tostring(info.island),
                     tostring(info.direction),
                     tostring(info.distance),
@@ -5824,7 +5899,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             tostring(info.direction),
             tostring(info.distance),
             tostring(info.surface),
-            tostring(info.stage or activeSource),
+            tostring(info.stage or info.rawText),
         }, "|")
 
         if chartKey ~= treasureChartLastKey then
@@ -6173,6 +6248,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 .. " | Candidates: "
                 .. tostring(#treasureChartCandidateParts)
                 .. (info.surface and (" | " .. info.surface) or "")
+                .. (info.elevation and (" | " .. info.elevation) or "")
+                .. (info.coastal and " | COASTAL" or "")
                 .. (treasureChartESP and treasureChartESP.estimated
                     and " | APPROXIMATE (waiting for physical terrain)"
                     or "")
