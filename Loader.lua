@@ -202,7 +202,7 @@ local function cleanupOrphanedSolarHubVisual(instance)
     local name = tostring(instance.Name or "")
     local visualName = name:sub(1, 13) == "SolarTreasure"
         or name:sub(1, 10) == "SolarChest"
-        or name:sub(1, 13) == "SolarSideQuest"
+        or name:sub(1, 14) == "SolarSideQuest"
         or name:sub(1, 9) == "SolarBoss"
 
     if not visualName then
