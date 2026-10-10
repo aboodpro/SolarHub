@@ -93,6 +93,21 @@ end
 
 
 function ArcaneFarming.Init(Shared, UI, Context)
+    local function markSolarHubVisual(instance)
+        if not instance then
+            return
+        end
+
+        pcall(function()
+            if type(getgenv) == "function" then
+                instance:SetAttribute(
+                    "SolarHubSessionToken",
+                    tostring(getgenv().SolarHubLoaderSession or "")
+                )
+            end
+        end)
+    end
+
     local isArcaneSessionActive = Context.isSessionActive
     local Config = Shared.Config
     local fishingDebugConnections = {}
@@ -367,6 +382,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
 
         fishingDebugGui = Instance.new("ScreenGui")
         fishingDebugGui.Name = "SolarHubFishingDebug"
+        markSolarHubVisual(fishingDebugGui)
         fishingDebugGui.ResetOnSpawn = false
         fishingDebugGui.DisplayOrder = 1000001
         fishingDebugGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
