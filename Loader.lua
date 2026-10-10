@@ -7,7 +7,7 @@
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "0d8bc512b0485aa340c54188e6422f7622b2dc12"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-ARCANE-64-SINGLE-INSTANCE-TREASURE-FIX"
+local LOADER_VERSION = "2026-10-10-ARCANE-65-GLOBAL-ESP-CLEANUP"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -19,42 +19,73 @@ local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.r
 local solarHubCleanupFinished = false
 
 local function destroyKnownSolarHubArtifacts()
+    -- Legacy ESP objects are parented to world models/parts, not just PlayerGui.
+    -- Sweep descendants so old Highlights, BillboardGuis, anchors, and chart
+    -- markers are removed even if the previous session's cleanup failed.
+    local ownedPrefixes = {
+        "SolarHub",
+        "SolarArcane",
+        "SolarTreasure",
+        "SolarChest",
+        "SolarSideQuest",
+        "SolarBoss",
+        "SolarFish",
+    }
+
+    local function isOwnedSolarVisual(instance)
+        local name = tostring(instance.Name or "")
+        local hasOwnedPrefix = false
+
+        for _, prefix in ipairs(ownedPrefixes) do
+            if name:sub(1, #prefix) == prefix then
+                hasOwnedPrefix = true
+                break
+            end
+        end
+
+        if not hasOwnedPrefix then
+            return false
+        end
+
+        return instance:IsA("ScreenGui")
+            or instance:IsA("Highlight")
+            or instance:IsA("BillboardGui")
+            or instance:IsA("BasePart")
+            or instance:IsA("Attachment")
+            or instance:IsA("Beam")
+            or instance:IsA("SelectionBox")
+            or instance:IsA("BoxHandleAdornment")
+            or instance:IsA("SurfaceGui")
+    end
+
     pcall(function()
-        local players = game:GetService("Players")
-        local player = players.LocalPlayer
+        local descendants = game:GetDescendants()
 
-        if not player then
-            return
-        end
+        -- Delete leaf instances first; this also catches ESP objects parented
+        -- directly to chest/boss models rather than to a dedicated folder.
+        for index = #descendants, 1, -1 do
+            local instance = descendants[index]
 
-        local playerGui = player:FindFirstChildOfClass("PlayerGui")
-        if not playerGui then
-            return
-        end
-
-        for _, child in ipairs(playerGui:GetChildren()) do
-            if child:IsA("ScreenGui") then
-                local name = tostring(child.Name or "")
-
-                if name:sub(1, 8) == "SolarHub"
-                    or name:sub(1, 11) == "SolarArcane"
-                    or name:sub(1, 13) == "SolarTreasure" then
-                    pcall(function()
-                        child:Destroy()
-                    end)
-                end
+            if instance and instance.Parent and isOwnedSolarVisual(instance) then
+                pcall(function()
+                    instance:Destroy()
+                end)
             end
         end
     end)
 
+    -- Explicitly remove the three named workspace anchors for older builds.
     pcall(function()
         local ownedWorkspaceObjects = {
             SolarTreasureChartMarker = true,
             SolarTreasureEstimatedDigArea = true,
             SolarChestStaticAnchor = true,
+            SolarChestStaticAttachment = true,
+            SolarSideQuestVirtualAnchor = true,
+            SolarSideQuestLocationAnchor = true,
         }
 
-        for _, child in ipairs(workspace:GetChildren()) do
+        for _, child in ipairs(workspace:GetDescendants()) do
             if ownedWorkspaceObjects[child.Name] then
                 pcall(function()
                     child:Destroy()
@@ -63,7 +94,6 @@ local function destroyKnownSolarHubArtifacts()
         end
     end)
 end
-
 local function cleanupSolarHubRuntime()
     if solarHubCleanupFinished then
         return
@@ -93,22 +123,27 @@ local function cleanupSolarHubRuntime()
     destroyKnownSolarHubArtifacts()
 end
 
--- Ask the previous run to clean up first. Explicitly call the Arcane cleanup
--- too as a fallback for sessions created by older Loader versions.
+-- Stop the previous run before creating any new UI or ESP. Capture both
+-- callbacks first because the loader cleanup may unset the Arcane callback.
 pcall(function()
     if type(getgenv) == "function" then
         local env = getgenv()
         local previousCleanup = env.SolarHubCleanup
+        local previousArcaneCleanup = env.SolarHubArcaneCleanup
 
         if type(previousCleanup) == "function" then
             pcall(previousCleanup)
         end
 
-        local previousArcaneCleanup = env.SolarHubArcaneCleanup
-
         if type(previousArcaneCleanup) == "function" then
             pcall(previousArcaneCleanup)
         end
+
+        -- Hard-stop any leftover session loops, even if an older cleanup
+        -- callback was missing or raised an error.
+        env.SolarHubArcaneSession = nil
+        env.SolarHubLoaderSession = nil
+        env.SolarHubArcaneCleanup = nil
     end
 end)
 
