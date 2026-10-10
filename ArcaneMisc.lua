@@ -5070,11 +5070,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
             if #candidates == 0 and allowRecursiveFallback then
                 local recursiveAliases = {
                     tostring(islandName) .. "_Surrounding",
-                    tostring(islandName) .. "-Surrounding",
-                    tostring(islandName) .. " Surrounding",
                     tostring(islandName),
                     tostring(islandName) .. "_Island",
-                    tostring(islandName) .. " Island",
                 }
 
                 for _, alias in ipairs(recursiveAliases) do
