@@ -5,9 +5,9 @@
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local ARCANE_SOURCE_REF = "4fff58c46dbd0b814cb5f42f61ebb2199d904678"
+local ARCANE_SOURCE_REF = "ff711eb3984d630a86a593de1b150bc83cdb4228"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-ARCANE-72-AUTO-SEQUENTIAL-TREASURE-STAGES"
+local LOADER_VERSION = "2026-10-10-ARCANE-73-SEQUENTIAL-STAGES-ELEVATION"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
