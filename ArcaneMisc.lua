@@ -4290,8 +4290,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
             local name = tostring(current.Name or "")
 
             if name:sub(1, 8) == "SolarHub"
-                or name:sub(1, 12) == "SolarTreasure"
-                or name == "SolarArcaneBossNotifications" then
+                or name:sub(1, 13) == "SolarTreasure"
+                or name == "SolarArcaneBossNotifications" or name:sub(1, 11) == "SolarArcane" then
                 return true
             end
 
