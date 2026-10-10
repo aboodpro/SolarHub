@@ -3371,6 +3371,15 @@ function ArcaneMisc.Init(Shared, UI, Context)
     -------------------------------------------------
     -- RARE CHART CLUE SLOT SELECTOR
     -------------------------------------------------
+    -- Forward declarations used by the clue-slot button callbacks.
+    -- They must be declared before the callbacks so Lua captures the module locals.
+    local destroyTreasureChartESP
+    local treasureDebugLog
+    local treasureChartLastKey
+    local treasureChartCurrentObject
+    local treasureChartNeedsScan
+    local treasureChartLastScanAttempt
+
     Config.ArcaneTreasureChartClueSlot =
         tonumber(Config.ArcaneTreasureChartClueSlot)
 
@@ -3486,8 +3495,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local sideQuestCandidates = {}
 
     local treasureChartESP = nil
-    local treasureChartCurrentObject = nil
-    local treasureChartLastKey = nil
+    treasureChartCurrentObject = nil
+    treasureChartLastKey = nil
     local treasureDebugLines = {}
     local MAX_TREASURE_DEBUG_LINES = 250
     local treasureDebugGui = nil
@@ -3496,8 +3505,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local treasureChartHighlights = {}
     local treasureChartIslandModel = nil
     local treasureChartLastObjectScan = 0
-    local treasureChartNeedsScan = true
-    local treasureChartLastScanAttempt = 0
+    treasureChartNeedsScan = true
+    treasureChartLastScanAttempt = 0
     local treasureDeepScanning = false
     local treasureTeleportGui = nil
 
@@ -3532,7 +3541,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         return tostring(value)
     end
 
-    local function treasureDebugLog(message)
+    treasureDebugLog = function(message)
         if not Config.ArcaneTreasureChartDebug then
             return
         end
@@ -4328,7 +4337,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         treasureChartESP = nil
     end
 
-    local function destroyTreasureChartESP()
+    destroyTreasureChartESP = function()
         destroyTreasureChartMarkerVisual()
 
         for _, highlight in ipairs(treasureChartHighlights) do
