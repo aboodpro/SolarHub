@@ -1,6 +1,6 @@
 --!strict
--- SolarHub Blade Ball timing coach.
--- This module helps the player time a manual parry; it does not send combat inputs.
+-- SolarHub Blade Ball Auto Parry.
+-- Uses a local F-key input when the live ball is approaching the local player.
 
 local BladeBall = {}
 
@@ -8,10 +8,11 @@ function BladeBall.Init(Shared, UI, Context)
     local Players = game:GetService("Players")
     local RunService = Shared.RunService or game:GetService("RunService")
     local Workspace = game:GetService("Workspace")
+    local VirtualInputManager = game:GetService("VirtualInputManager")
     local LocalPlayer = Shared.player or Players.LocalPlayer
     local Config = Shared.Config
 
-    Config.BladeBallTimingAssist = Config.BladeBallTimingAssist == true
+    Config.BladeBallAutoParry = Config.BladeBallAutoParry == true
     Config.BladeBallParryLeadMs = math.clamp(
         math.floor(tonumber(Config.BladeBallParryLeadMs) or 180),
         50,
@@ -28,13 +29,13 @@ function BladeBall.Init(Shared, UI, Context)
         error("[BladeBall] Blade Ball UI tab is missing.")
     end
 
-    local section = UI.createSection(tab, "Parry Timing Coach", 236)
+    local section = UI.createSection(tab, "Auto Parry", 236)
 
     UI.createToggle(
         section,
-        "Timing Assist",
-        "Shows a visual cue when the ball is about to reach you.",
-        "BladeBallTimingAssist",
+        "Auto Parry",
+        "Automatically taps F when the incoming ball is about to reach you.",
+        "BladeBallAutoParry",
         32
     )
 
@@ -54,7 +55,7 @@ function BladeBall.Init(Shared, UI, Context)
 
     UI.createSlider(
         section,
-        "Contact Distance (studs)",
+        "Parry Distance (studs)",
         "BladeBallContactDistance",
         5,
         22,
@@ -67,12 +68,12 @@ function BladeBall.Init(Shared, UI, Context)
     )
 
     local status = Instance.new("TextLabel")
-    status.Name = "BladeBallTimingAssistStatus"
+    status.Name = "BladeBallAutoParryStatus"
     status.BackgroundTransparency = 1
     status.Position = UDim2.fromOffset(10, 190)
     status.Size = UDim2.new(1, -20, 0, 34)
     status.Font = Enum.Font.GothamBold
-    status.Text = "Status: turn Timing Assist ON"
+    status.Text = "Status: Auto Parry OFF"
     status.TextColor3 = Color3.fromRGB(170, 170, 180)
     status.TextSize = 9
     status.TextWrapped = true
@@ -85,12 +86,17 @@ function BladeBall.Init(Shared, UI, Context)
     local characterAddedConnection
     local lastStatusText = ""
     local lastStatusAt = 0
+    local lastParryAt = 0
+    local inputBusy = false
+    local parriedBall = nil
+    local PARRY_COOLDOWN = 0.28
 
     local function setStatus(message, urgent)
         message = tostring(message)
         if message == lastStatusText and os.clock() - lastStatusAt < 0.2 then
             return
         end
+
         lastStatusText = message
         lastStatusAt = os.clock()
 
@@ -107,6 +113,7 @@ function BladeBall.Init(Shared, UI, Context)
         if not character then
             return nil
         end
+
         return character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
     end
 
@@ -122,11 +129,13 @@ function BladeBall.Init(Shared, UI, Context)
                 if item:GetAttribute("realBall") == true then
                     return item
                 end
+
                 if fallback == nil and item:GetAttribute("target") ~= nil then
                     fallback = item
                 end
             end
         end
+
         return fallback
     end
 
@@ -134,11 +143,17 @@ function BladeBall.Init(Shared, UI, Context)
         if value == nil then
             return false
         end
+
         if typeof(value) == "Instance" then
             if value == LocalPlayer or value == LocalPlayer.Character then
                 return true
             end
+
+            if value:IsA("Player") and value.UserId == LocalPlayer.UserId then
+                return true
+            end
         end
+
         local targetText = tostring(value):lower()
         return targetText == tostring(LocalPlayer.Name):lower()
             or targetText == tostring(LocalPlayer.UserId)
@@ -146,11 +161,14 @@ function BladeBall.Init(Shared, UI, Context)
     end
 
     local function isTargetingPlayer(ball)
-        local character = LocalPlayer.Character
-        if character and character:FindFirstChild("Highlight") then
+        if targetAttributeMatchesPlayer(ball:GetAttribute("target")) then
             return true
         end
-        return targetAttributeMatchesPlayer(ball:GetAttribute("target"))
+
+        -- Some rounds represent the current target with a Highlight on the
+        -- local character rather than the ball's target attribute.
+        local character = LocalPlayer.Character
+        return character ~= nil and character:FindFirstChild("Highlight") ~= nil
     end
 
     local function getBallVelocity(ball)
@@ -159,9 +177,11 @@ function BladeBall.Init(Shared, UI, Context)
             local ok, value = pcall(function()
                 return zoomies.VectorVelocity
             end)
+
             if ok and typeof(value) == "Vector3" and value.Magnitude > 0 then
                 return value
             end
+
             if zoomies:IsA("Vector3Value") and zoomies.Value.Magnitude > 0 then
                 return zoomies.Value
             end
@@ -170,34 +190,77 @@ function BladeBall.Init(Shared, UI, Context)
         local ok, value = pcall(function()
             return ball.AssemblyLinearVelocity
         end)
+
         if ok and typeof(value) == "Vector3" then
             return value
         end
+
         return Vector3.zero
+    end
+
+    local function pressParry()
+        local now = os.clock()
+        if inputBusy or now - lastParryAt < PARRY_COOLDOWN then
+            return false
+        end
+
+        inputBusy = true
+        lastParryAt = now
+
+        task.spawn(function()
+            local keyDownSent = false
+            local ok, err = pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+                keyDownSent = true
+                task.wait(0.035)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+                keyDownSent = false
+            end)
+
+            -- Release F even if the key-up call failed midway.
+            if keyDownSent then
+                pcall(function()
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+                end)
+            end
+
+            if not ok then
+                setStatus("input failed: " .. tostring(err), false)
+            end
+
+            inputBusy = false
+        end)
+
+        return true
     end
 
     local function update()
         if not active then
             return
         end
-        if Config.BladeBallTimingAssist ~= true then
-            setStatus("OFF", false)
+
+        if Config.BladeBallAutoParry ~= true then
+            parriedBall = nil
+            setStatus("Auto Parry OFF", false)
             return
         end
 
         local root = getRoot()
         if not root then
+            parriedBall = nil
             setStatus("waiting for your character", false)
             return
         end
 
         local ball = getRealBall()
         if not ball then
+            parriedBall = nil
             setStatus("waiting for the real ball in Workspace.Balls", false)
             return
         end
 
         if not isTargetingPlayer(ball) then
+            parriedBall = nil
             setStatus("ball found; it is not targeting you", false)
             return
         end
@@ -205,7 +268,10 @@ function BladeBall.Init(Shared, UI, Context)
         local offset = root.Position - ball.Position
         local distance = offset.Magnitude
         if distance < 0.001 then
-            setStatus("PARRY NOW — press F", true)
+            if parriedBall ~= ball and pressParry() then
+                parriedBall = ball
+                setStatus("AUTO PARRY SENT | contact range", true)
+            end
             return
         end
 
@@ -225,13 +291,20 @@ function BladeBall.Init(Shared, UI, Context)
         local timeToContact = math.max(0, distance - contactDistance) / closingSpeed
 
         if distance <= contactDistance or timeToContact <= leadSeconds then
-            setStatus(
-                ("PARRY NOW — press F | %.0f studs | ETA %.0f ms"):format(
-                    distance,
-                    timeToContact * 1000
-                ),
-                true
-            )
+            if parriedBall ~= ball and pressParry() then
+                parriedBall = ball
+                setStatus(
+                    ("AUTO PARRY SENT | %.0f studs | ETA %.0f ms"):format(
+                        distance,
+                        timeToContact * 1000
+                    ),
+                    true
+                )
+            elseif parriedBall == ball then
+                setStatus(("parry sent | %.0f studs"):format(distance), true)
+            else
+                setStatus("incoming ball; waiting for input cooldown", false)
+            end
         else
             setStatus(
                 ("targeting you | %.0f studs | ETA %.0f ms"):format(
@@ -251,6 +324,7 @@ function BladeBall.Init(Shared, UI, Context)
     end)
 
     characterAddedConnection = LocalPlayer.CharacterAdded:Connect(function()
+        parriedBall = nil
         setStatus("respawned; waiting for ball", false)
     end)
 
@@ -258,16 +332,19 @@ function BladeBall.Init(Shared, UI, Context)
         if not active then
             return
         end
+
         active = false
 
         if heartbeatConnection then
             heartbeatConnection:Disconnect()
             heartbeatConnection = nil
         end
+
         if characterAddedConnection then
             characterAddedConnection:Disconnect()
             characterAddedConnection = nil
         end
+
         if status then
             pcall(function()
                 status:Destroy()
@@ -294,8 +371,8 @@ function BladeBall.Init(Shared, UI, Context)
         Context.registerCleanup(cleanup)
     end
 
-    print("[BladeBall] Parry Timing Coach loaded.")
-    setStatus("ready; turn Timing Assist ON", false)
+    print("[BladeBall] Auto Parry loaded.")
+    setStatus("ready; turn Auto Parry ON", false)
     return true
 end
 
