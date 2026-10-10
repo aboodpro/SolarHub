@@ -2819,6 +2819,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local tabButtons = UI.tabButtons or {}
 
     Config.ArcaneBossESP = Config.ArcaneBossESP == true
+    Config.ArcaneWantedCriminalESP = Config.ArcaneWantedCriminalESP == true
     Config.ArcaneBossDebug = Config.ArcaneBossDebug == true
     Config.ArcaneChestESP = Config.ArcaneChestESP == true
     Config.ArcaneSideQuestESP = Config.ArcaneSideQuestESP == true
@@ -2977,6 +2978,20 @@ function ArcaneMisc.Init(Shared, UI, Context)
         "Boss ESP",
         "Shows detected bosses with HP and distance.",
         "ArcaneBossESP",
+        32
+    )
+
+    local wantedCriminalSection = UI.createSection(
+        miscTab,
+        "Wanted Criminals",
+        88
+    )
+
+    UI.createToggle(
+        wantedCriminalSection,
+        "Wanted Criminal ESP",
+        "Highlights bounty NPCs marked Wanted Criminal.",
+        "ArcaneWantedCriminalESP",
         32
     )
 
@@ -3347,6 +3362,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local espObjects = {}
     local candidateModels = {}
+    local wantedCriminalESPObjects = {}
+    local wantedCriminalDetectionCache = setmetatable({}, {__mode = "k"})
 
     local chestESPObjects = {}
     local staticChestESPObjects = {}
@@ -3391,6 +3408,184 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             espObjects[model] = nil
         end
+    end
+
+    local function destroyWantedCriminalESP(model)
+        local data = wantedCriminalESPObjects[model]
+
+        if not data then
+            return
+        end
+
+        if data.highlight then
+            pcall(function()
+                data.highlight:Destroy()
+            end)
+        end
+
+        if data.billboard then
+            pcall(function()
+                data.billboard:Destroy()
+            end)
+        end
+
+        wantedCriminalESPObjects[model] = nil
+    end
+
+    local function isWantedCriminalModel(model)
+        if not model or not model.Parent or not model:IsA("Model") then
+            return false
+        end
+
+        local now = os.clock()
+        local cached = wantedCriminalDetectionCache[model]
+        if cached and now - cached.checkedAt < 0.8 then
+            return cached.isWanted
+        end
+
+        local wanted = normalizeName(model.Name):find("wantedcriminal", 1, true) ~= nil
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local objectsToCheck = {model}
+        if humanoid then
+            table.insert(objectsToCheck, humanoid)
+        end
+
+        local root = getRoot(model)
+        if root and root ~= humanoid then
+            table.insert(objectsToCheck, root)
+        end
+
+        -- Prefer explicit game metadata when available.
+        for _, object in ipairs(objectsToCheck) do
+            local okAttributes, attributes = pcall(function()
+                return object:GetAttributes()
+            end)
+
+            if okAttributes and type(attributes) == "table" then
+                for key, value in pairs(attributes) do
+                    local normalizedKey = normalizeName(key)
+                    local normalizedValue = normalizeName(value)
+
+                    if (normalizedKey == "wantedcriminal"
+                        or normalizedKey == "iswantedcriminal"
+                        or normalizedKey == "criminalwanted")
+                        and (value == true or normalizedValue:find("wantedcriminal", 1, true)) then
+                        wanted = true
+                        break
+                    end
+
+                    if (normalizedKey == "title"
+                        or normalizedKey == "npctype"
+                        or normalizedKey == "type"
+                        or normalizedKey == "status")
+                        and normalizedValue:find("wantedcriminal", 1, true) then
+                        wanted = true
+                        break
+                    end
+                end
+            end
+
+            if wanted then
+                break
+            end
+        end
+
+        -- Some versions expose the role only in the NPC's overhead nameplate.
+        -- Look for the exact "Wanted Criminal" phrase, not a hardcoded NPC name.
+        if not wanted then
+            for _, descendant in ipairs(model:GetDescendants()) do
+                if descendant:IsA("TextLabel")
+                    or descendant:IsA("TextButton")
+                    or descendant:IsA("TextBox") then
+                    if normalizeName(descendant.Text):find("wantedcriminal", 1, true) then
+                        wanted = true
+                        break
+                    end
+                elseif descendant.Name
+                    and normalizeName(descendant.Name) == "wantedcriminal" then
+                    wanted = true
+                    break
+                end
+            end
+        end
+
+        -- Collection tags are another cheap, explicit marker if the game adds one.
+        if not wanted then
+            local collectionService = game:GetService("CollectionService")
+            local okTags, tags = pcall(function()
+                return collectionService:GetTags(model)
+            end)
+
+            if okTags and type(tags) == "table" then
+                for _, tag in ipairs(tags) do
+                    local normalizedTag = normalizeName(tag)
+                    if normalizedTag == "wantedcriminal"
+                        or normalizedTag == "iswantedcriminal" then
+                        wanted = true
+                        break
+                    end
+                end
+            end
+        end
+
+        wantedCriminalDetectionCache[model] = {
+            isWanted = wanted,
+            checkedAt = now,
+        }
+
+        return wanted
+    end
+
+    local function createWantedCriminalESP(model)
+        if not Config.ArcaneWantedCriminalESP
+            or not isWantedCriminalModel(model)
+            or wantedCriminalESPObjects[model] then
+            return
+        end
+
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local root = getRoot(model)
+        if not humanoid or not root then
+            return
+        end
+
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "SolarWantedCriminalESP"
+        markSolarHubVisual(highlight)
+        highlight.Adornee = model
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = Color3.fromRGB(210, 45, 78)
+        highlight.OutlineColor = Color3.fromRGB(255, 105, 135)
+        highlight.FillTransparency = 0.78
+        highlight.OutlineTransparency = 0
+        highlight.Parent = model
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "SolarWantedCriminalESPInfo"
+        markSolarHubVisual(billboard)
+        billboard.Adornee = root
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = 0
+        billboard.Size = UDim2.fromOffset(270, 76)
+        billboard.StudsOffset = Vector3.new(0, 4.2, 0)
+        billboard.Parent = root
+
+        local label = Instance.new("TextLabel")
+        label.BackgroundTransparency = 1
+        label.Size = UDim2.fromScale(1, 1)
+        label.Font = Enum.Font.GothamBold
+        label.TextColor3 = Color3.fromRGB(255, 105, 135)
+        label.TextStrokeTransparency = 0.2
+        label.TextSize = 13
+        label.TextWrapped = true
+        label.Text = "WANTED CRIMINAL"
+        label.Parent = billboard
+
+        wantedCriminalESPObjects[model] = {
+            highlight = highlight,
+            billboard = billboard,
+            label = label,
+        }
     end
 
     local function destroyChestESP(target)
@@ -5039,6 +5234,8 @@ local function scanAllWorkspaceChests()
 
     local function removeModel(model)
         candidateModels[model] = nil
+        destroyWantedCriminalESP(model)
+        wantedCriminalDetectionCache[model] = nil
 
         local bossName = getBossDisplayName(model)
         if bossName then
@@ -5175,6 +5372,10 @@ local function scanAllWorkspaceChests()
 
         if Config.ArcaneBossESP then
             createESP(model)
+        end
+
+        if Config.ArcaneWantedCriminalESP then
+            createWantedCriminalESP(model)
         end
     end
 
@@ -5409,6 +5610,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 targetedScanAccumulator = 0
 
                 if Config.ArcaneBossESP
+                    or Config.ArcaneWantedCriminalESP
                     or Config.ArcaneSideQuestESP then
                     pcall(scanTargetedWorldSources)
                 end
@@ -5465,6 +5667,18 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 end
             end
 
+            local wantedCriminalDetected = 0
+
+            if Config.ArcaneWantedCriminalESP then
+                for model, data in pairs(wantedCriminalESPObjects) do
+                    if model.Parent then
+                        wantedCriminalDetected += 1
+                    else
+                        destroyWantedCriminalESP(model)
+                    end
+                end
+            end
+
             local chestDetected = 0
 
             if Config.ArcaneChestESP then
@@ -5485,8 +5699,9 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 end
             end
 
-            statusLabel.Text = ("Boss: %d | Chests: %d | Side NPC: %d"):format(
+            statusLabel.Text = ("Boss: %d | Wanted: %d | Chests: %d | Side NPC: %d"):format(
                 detected,
+                wantedCriminalDetected,
                 chestDetected,
                 sideQuestDetected
             )
@@ -5691,6 +5906,53 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     task.spawn(function()
         while isArcaneSessionActive() do
+            task.wait(0.25)
+
+            if Config.ArcaneWantedCriminalESP then
+                local character = Shared.player.Character
+                local playerRoot = character
+                    and character:FindFirstChild("HumanoidRootPart")
+
+                for model, data in pairs(wantedCriminalESPObjects) do
+                    if not model.Parent then
+                        destroyWantedCriminalESP(model)
+                    elseif not isWantedCriminalModel(model) then
+                        destroyWantedCriminalESP(model)
+                    else
+                        local root = getRoot(model)
+                        local humanoid = model:FindFirstChildOfClass("Humanoid")
+
+                        if not root or not humanoid or humanoid.Health <= 0 then
+                            destroyWantedCriminalESP(model)
+                        else
+                            local distanceText = "STUDS: ?"
+
+                            if playerRoot then
+                                distanceText = ("STUDS: %d"):format(
+                                    math.floor((playerRoot.Position - root.Position).Magnitude)
+                                )
+                            end
+
+                            data.label.Text = string.format(
+                                "WANTED CRIMINAL\n%s\nHP: %d/%d | %s",
+                                tostring(humanoid.DisplayName ~= "" and humanoid.DisplayName or model.Name),
+                                math.floor(math.max(0, humanoid.Health)),
+                                math.floor(math.max(0, humanoid.MaxHealth)),
+                                distanceText
+                            )
+                        end
+                    end
+                end
+            else
+                for model in pairs(wantedCriminalESPObjects) do
+                    destroyWantedCriminalESP(model)
+                end
+            end
+        end
+    end)
+
+    task.spawn(function()
+        while isArcaneSessionActive() do
             task.wait(1)
 
             if not Config.ArcaneChestESP
@@ -5836,6 +6098,11 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         for model in pairs(espObjects) do
             destroyESP(model)
         end
+
+        for model in pairs(wantedCriminalESPObjects) do
+            destroyWantedCriminalESP(model)
+        end
+        table.clear(wantedCriminalDetectionCache)
 
         for model in pairs(sideQuestESPObjects) do
             destroySideQuestESP(model)
