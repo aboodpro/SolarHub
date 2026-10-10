@@ -5376,7 +5376,24 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return {}
         end
 
-        local center, size = getTreasureIslandBounds(fragmentable)
+        local fragmentableCenter, fragmentableSize =
+            getTreasureIslandBounds(fragmentable)
+        -- Treasure-chart directions are relative to the whole island, not
+        -- the subset of terrain parts that happens to be diggable/streamed.
+        -- Using Fragmentable's own bounds shifts the wedge when that container
+        -- is asymmetric, which can send the marker to the opposite side.
+        local center, size = getTreasureIslandBounds(islandModel)
+
+        treasureDebugLog(
+            ("REGION GEOMETRY | Basis=FullIslandModel | Island=%s | IslandCenter=%s | IslandSize=%s | FragmentableCenter=%s | FragmentableSize=%s")
+                :format(
+                    tostring(info.island),
+                    treasureDebugValue(center),
+                    treasureDebugValue(size),
+                    treasureDebugValue(fragmentableCenter),
+                    treasureDebugValue(fragmentableSize)
+                )
+        )
 
         if not center or not size or not info.direction or not info.distance then
             treasureDebugLog(
@@ -5591,7 +5608,24 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return nil
         end
 
-        local center, size = getTreasureIslandBounds(fragmentable)
+        local fragmentableCenter, fragmentableSize =
+            getTreasureIslandBounds(fragmentable)
+        -- Treasure-chart directions are relative to the whole island, not
+        -- the subset of terrain parts that happens to be diggable/streamed.
+        -- Using Fragmentable's own bounds shifts the wedge when that container
+        -- is asymmetric, which can send the marker to the opposite side.
+        local center, size = getTreasureIslandBounds(islandModel)
+
+        treasureDebugLog(
+            ("REGION GEOMETRY | Basis=FullIslandModel | Island=%s | IslandCenter=%s | IslandSize=%s | FragmentableCenter=%s | FragmentableSize=%s")
+                :format(
+                    tostring(info.island),
+                    treasureDebugValue(center),
+                    treasureDebugValue(size),
+                    treasureDebugValue(fragmentableCenter),
+                    treasureDebugValue(fragmentableSize)
+                )
+        )
         local directionVector = treasureDirectionVector(info.direction)
         local band = TREASURE_CHART_DISTANCE_BANDS[info.distance]
 
@@ -6278,7 +6312,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             pcall(function()
                 setTreasureChartGreenArea(
-                    arrived and not treasureChartESP.estimated
+                    arrived
+                    and treasureChartESP.physicalTarget == true
+                    and not treasureChartESP.estimated
                 )
             end)
         elseif treasureChartESP then
@@ -6476,16 +6512,31 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
             if marker and marker.position and playerRoot then
                 local distance = (playerRoot.Position - marker.position).Magnitude
-                local arrived = distance <= TREASURE_CHART_ARRIVAL_DISTANCE
+                local targetIsPhysical =
+                    marker.physicalTarget == true
+                    and marker.estimated ~= true
+                    and #treasureChartCandidateParts > 0
+                local arrived =
+                    targetIsPhysical
+                    and distance <= TREASURE_CHART_ARRIVAL_DISTANCE
 
                 if marker.label and marker.label.Parent then
+                    local targetStatus
+                    if not targetIsPhysical then
+                        targetStatus = "WAITING FOR VALID DIG TARGET"
+                    elseif arrived then
+                        targetStatus = "GREEN DIG AREA"
+                    else
+                        targetStatus = "GO TO AREA"
+                    end
+
                     marker.label.Text =
                         "TREASURE CHART | "
                         .. tostring(marker.island or "?")
                         .. "\n"
                         .. tostring(math.floor(distance))
                         .. " STUDS | "
-                        .. (arrived and "GREEN DIG AREA" or "GO TO AREA")
+                        .. targetStatus
                 end
 
                 if treasureChartStatus then
@@ -6500,10 +6551,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
                         .. tostring(math.floor(distance))
                         .. " | Candidates: "
                         .. tostring(#treasureChartCandidateParts)
+                        .. (targetIsPhysical and "" or " | NO VALID DIG TARGET")
                 end
 
                 pcall(function()
-                    setTreasureChartGreenArea(arrived)
+                    setTreasureChartGreenArea(
+                        targetIsPhysical and arrived == true
+                    )
                 end)
             end
         end
