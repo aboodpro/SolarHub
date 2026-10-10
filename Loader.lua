@@ -7,7 +7,7 @@
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "175a54fc4f26ccc11abc857ae921fe4ad98d74aa"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-ARCANE-66-ORPHAN-ESP-WATCHDOG"
+local LOADER_VERSION = "2026-10-10-ARCANE-67-EVENT-DRIVEN-ESP-CLEANUP"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -17,6 +17,7 @@ local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.r
 -- background workers are created. This keeps old Arcane loops/event handlers
 -- from overlapping the new session.
 local solarHubCleanupFinished = false
+local solarHubOrphanESPConnection = nil
 
 local function destroyKnownSolarHubArtifacts()
     -- Legacy ESP objects are parented to world models/parts, not just PlayerGui.
@@ -101,6 +102,22 @@ local function cleanupSolarHubRuntime()
 
     solarHubCleanupFinished = true
 
+    if solarHubOrphanESPConnection then
+        pcall(function()
+            solarHubOrphanESPConnection:Disconnect()
+        end)
+        solarHubOrphanESPConnection = nil
+    end
+
+    pcall(function()
+        if type(getgenv) == "function" then
+            local env = getgenv()
+            if env.SolarHubOrphanESPConnection then
+                env.SolarHubOrphanESPConnection = nil
+            end
+        end
+    end)
+
     pcall(function()
         if type(getgenv) == "function" then
             local env = getgenv()
@@ -128,6 +145,14 @@ end
 pcall(function()
     if type(getgenv) == "function" then
         local env = getgenv()
+        local oldOrphanConnection = env.SolarHubOrphanESPConnection
+        if oldOrphanConnection then
+            pcall(function()
+                oldOrphanConnection:Disconnect()
+            end)
+            env.SolarHubOrphanESPConnection = nil
+        end
+
         local previousCleanup = env.SolarHubCleanup
         local previousArcaneCleanup = env.SolarHubArcaneCleanup
 
@@ -157,69 +182,83 @@ pcall(function()
     end
 end)
 
--- Keep removing orphaned ESPs from old sessions. Some older builds have worker
--- loops without session guards and can recreate objects after a one-time cleanup.
-local function cleanupOrphanedSolarHubESP()
-    local visualPrefixes = {
-        "SolarTreasure",
-        "SolarChest",
-        "SolarSideQuest",
-        "SolarBoss",
-    }
+-- Event-driven orphan cleanup: never rescan the whole Workspace/game on a timer.
+local function cleanupOrphanedSolarHubVisual(instance)
+    if not instance or not instance.Parent then
+        return
+    end
 
+    local currentSession = nil
     pcall(function()
-        for _, instance in ipairs(game:GetDescendants()) do
-            local name = tostring(instance.Name or "")
-            local visualName = false
-
-            for _, prefix in ipairs(visualPrefixes) do
-                if name:sub(1, #prefix) == prefix then
-                    visualName = true
-                    break
-                end
-            end
-
-            local visualClass = instance:IsA("Highlight")
-                or instance:IsA("BillboardGui")
-                or instance:IsA("BasePart")
-                or instance:IsA("Attachment")
-                or instance:IsA("SelectionBox")
-                or instance:IsA("BoxHandleAdornment")
-                or instance:IsA("Beam")
-
-            if visualName and visualClass then
-                local token = nil
-                pcall(function()
-                    token = instance:GetAttribute("SolarHubSessionToken")
-                end)
-
-                if token ~= SESSION_ID then
-                    pcall(function()
-                        instance:Destroy()
-                    end)
-                end
-            end
+        if type(getgenv) == "function" then
+            currentSession = getgenv().SolarHubLoaderSession
         end
     end)
+
+    if currentSession ~= SESSION_ID then
+        return
+    end
+
+    local name = tostring(instance.Name or "")
+    local visualName = name:sub(1, 13) == "SolarTreasure"
+        or name:sub(1, 10) == "SolarChest"
+        or name:sub(1, 13) == "SolarSideQuest"
+        or name:sub(1, 9) == "SolarBoss"
+
+    if not visualName then
+        return
+    end
+
+    local visualClass = instance:IsA("Highlight")
+        or instance:IsA("BillboardGui")
+        or instance:IsA("BasePart")
+        or instance:IsA("Attachment")
+        or instance:IsA("SelectionBox")
+        or instance:IsA("BoxHandleAdornment")
+        or instance:IsA("Beam")
+
+    if not visualClass then
+        return
+    end
+
+    local token = nil
+    pcall(function()
+        token = instance:GetAttribute("SolarHubSessionToken")
+    end)
+
+    -- Visuals created by this session are tagged before being parented.
+    -- Old scripts that recreate untagged visuals are removed immediately.
+    if token ~= SESSION_ID then
+        pcall(function()
+            instance:Destroy()
+        end)
+    end
 end
 
-task.spawn(function()
-    while true do
-        local currentSession = nil
-        pcall(function()
-            if type(getgenv) == "function" then
-                currentSession = getgenv().SolarHubLoaderSession
-            end
-        end)
+local function installSolarHubOrphanCleanupConnection()
+    if type(getgenv) == "function" then
+        local env = getgenv()
+        local previousConnection = env.SolarHubOrphanESPConnection
 
-        if currentSession ~= SESSION_ID then
-            break
+        if previousConnection then
+            pcall(function()
+                previousConnection:Disconnect()
+            end)
         end
-
-        cleanupOrphanedSolarHubESP()
-        task.wait(0.3)
     end
-end)
+
+    local connection = game.DescendantAdded:Connect(function(instance)
+        cleanupOrphanedSolarHubVisual(instance)
+    end)
+
+    if type(getgenv) == "function" then
+        getgenv().SolarHubOrphanESPConnection = connection
+    end
+
+    return connection
+end
+
+solarHubOrphanESPConnection = installSolarHubOrphanCleanupConnection()
 
 
 -------------------------------------------------
