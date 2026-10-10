@@ -10,9 +10,115 @@ local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.r
 local LOADER_VERSION = "2026-10-10-ARCANE-62-TREASURE-TP-GUARD"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
+-------------------------------------------------
+-- SINGLE-INSTANCE BOOTSTRAP / CLEANUP
+-------------------------------------------------
+-- A second execute must stop the old SolarHub session BEFORE the new UI or
+-- background workers are created. This keeps old Arcane loops/event handlers
+-- from overlapping the new session.
+local solarHubCleanupFinished = false
+
+local function destroyKnownSolarHubArtifacts()
+    pcall(function()
+        local players = game:GetService("Players")
+        local player = players.LocalPlayer
+
+        if not player then
+            return
+        end
+
+        local playerGui = player:FindFirstChildOfClass("PlayerGui")
+        if not playerGui then
+            return
+        end
+
+        for _, child in ipairs(playerGui:GetChildren()) do
+            if child:IsA("ScreenGui") then
+                local name = tostring(child.Name or "")
+
+                if name:sub(1, 8) == "SolarHub"
+                    or name:sub(1, 10) == "SolarArcane"
+                    or name:sub(1, 12) == "SolarTreasure" then
+                    pcall(function()
+                        child:Destroy()
+                    end)
+                end
+            end
+        end
+    end)
+
+    pcall(function()
+        local ownedWorkspaceObjects = {
+            SolarTreasureChartMarker = true,
+            SolarTreasureEstimatedDigArea = true,
+            SolarChestStaticAnchor = true,
+        }
+
+        for _, child in ipairs(workspace:GetChildren()) do
+            if ownedWorkspaceObjects[child.Name] then
+                pcall(function()
+                    child:Destroy()
+                end)
+            end
+        end
+    end)
+end
+
+local function cleanupSolarHubRuntime()
+    if solarHubCleanupFinished then
+        return
+    end
+
+    solarHubCleanupFinished = true
+
+    pcall(function()
+        if type(getgenv) == "function" then
+            local env = getgenv()
+            local arcaneCleanup = env.SolarHubArcaneCleanup
+
+            if type(arcaneCleanup) == "function" then
+                pcall(arcaneCleanup)
+            end
+
+            if env.SolarHubLoaderSession == SESSION_ID then
+                env.SolarHubLoaderSession = nil
+            end
+
+            if env.SolarHubCleanup == cleanupSolarHubRuntime then
+                env.SolarHubCleanup = nil
+            end
+        end
+    end)
+
+    destroyKnownSolarHubArtifacts()
+end
+
+-- Ask the previous run to clean up first. Explicitly call the Arcane cleanup
+-- too as a fallback for sessions created by older Loader versions.
 pcall(function()
     if type(getgenv) == "function" then
-        getgenv().SolarHubLoaderSession = SESSION_ID
+        local env = getgenv()
+        local previousCleanup = env.SolarHubCleanup
+
+        if type(previousCleanup) == "function" then
+            pcall(previousCleanup)
+        end
+
+        local previousArcaneCleanup = env.SolarHubArcaneCleanup
+
+        if type(previousArcaneCleanup) == "function" then
+            pcall(previousArcaneCleanup)
+        end
+    end
+end)
+
+destroyKnownSolarHubArtifacts()
+
+pcall(function()
+    if type(getgenv) == "function" then
+        local env = getgenv()
+        env.SolarHubLoaderSession = SESSION_ID
+        env.SolarHubCleanup = cleanupSolarHubRuntime
     end
 end)
 
