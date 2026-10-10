@@ -3494,17 +3494,36 @@ function ArcaneMisc.Init(Shared, UI, Context)
         -- Look for the exact "Wanted Criminal" phrase, not a hardcoded NPC name.
         if not wanted then
             for _, descendant in ipairs(model:GetDescendants()) do
-                if descendant:IsA("TextLabel")
-                    or descendant:IsA("TextButton")
-                    or descendant:IsA("TextBox") then
-                    if normalizeName(descendant.Text):find("wantedcriminal", 1, true) then
+                -- Ignore SolarHub's own label, otherwise the ESP could keep
+                -- matching its self-created "WANTED CRIMINAL" text forever.
+                local belongsToSolarHubVisual = false
+                local ancestor = descendant
+
+                while ancestor and ancestor ~= model do
+                    local ancestorName = tostring(ancestor.Name or "")
+
+                    if ancestorName:sub(1, #"SolarWantedCriminalESP") == "SolarWantedCriminalESP"
+                        or ancestor:GetAttribute("SolarHubSessionToken") ~= nil then
+                        belongsToSolarHubVisual = true
+                        break
+                    end
+
+                    ancestor = ancestor.Parent
+                end
+
+                if not belongsToSolarHubVisual then
+                    if descendant:IsA("TextLabel")
+                        or descendant:IsA("TextButton")
+                        or descendant:IsA("TextBox") then
+                        if normalizeName(descendant.Text):find("wantedcriminal", 1, true) then
+                            wanted = true
+                            break
+                        end
+                    elseif descendant.Name
+                        and normalizeName(descendant.Name) == "wantedcriminal" then
                         wanted = true
                         break
                     end
-                elseif descendant.Name
-                    and normalizeName(descendant.Name) == "wantedcriminal" then
-                    wanted = true
-                    break
                 end
             end
         end
