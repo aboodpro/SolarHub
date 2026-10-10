@@ -2970,7 +2970,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local section = UI.createSection(
         miscTab,
         "Arcane Odyssey",
-        382
+        408
     )
 
     UI.createToggle(
@@ -3011,7 +3011,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local copyButton = Instance.new("TextButton")
     copyButton.Size = UDim2.fromOffset(70, 24)
-    copyButton.Position = UDim2.new(1, -78, 0, 218)
+    copyButton.Position = UDim2.new(1, -78, 0, 239)
     copyButton.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
     copyButton.BorderSizePixel = 0
     copyButton.Text = "COPY"
@@ -3022,7 +3022,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     Instance.new("UICorner", copyButton).CornerRadius = UDim.new(0, 6)
 
     local debugBox = Instance.new("TextBox")
-    debugBox.Position = UDim2.fromOffset(8, 247)
+    debugBox.Position = UDim2.fromOffset(8, 267)
     debugBox.Size = UDim2.new(1, -16, 0, 125)
     debugBox.BackgroundColor3 = Color3.fromRGB(8, 8, 11)
     debugBox.BorderSizePixel = 0
@@ -3088,8 +3088,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
     end)
 
     local statusLabel = Instance.new("TextLabel")
-    statusLabel.Size = UDim2.new(1, -90, 0, 24)
-    statusLabel.Position = UDim2.fromOffset(8, 166)
+    statusLabel.Size = UDim2.new(1, -16, 0, 22)
+    statusLabel.Position = UDim2.fromOffset(8, 212)
+    statusLabel.TextWrapped = true
     statusLabel.BackgroundTransparency = 1
     statusLabel.Text = "ESP: waiting for boss models..."
     statusLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
@@ -3357,6 +3358,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local espObjects = {}
     local candidateModels = {}
     local wantedCriminalESPObjects = {}
+    local wantedCriminalCandidates = setmetatable({}, {__mode = "k"})
     local wantedCriminalDetectionCache = setmetatable({}, {__mode = "k"})
 
     local chestESPObjects = {}
@@ -3426,6 +3428,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
         wantedCriminalESPObjects[model] = nil
     end
 
+    local function hasWantedCriminalText(value)
+        local normalized = normalizeName(value)
+        return normalized:find("wantedcriminal", 1, true) ~= nil
+            or (normalized:find("wanted", 1, true) ~= nil
+                and normalized:find("criminal", 1, true) ~= nil)
+    end
+
     local function isWantedCriminalModel(model)
         if not model or not model.Parent or not model:IsA("Model") then
             return false
@@ -3433,111 +3442,154 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
         local now = os.clock()
         local cached = wantedCriminalDetectionCache[model]
-        if cached and now - cached.checkedAt < 0.8 then
+        if cached and now - cached.checkedAt < 1 then
             return cached.isWanted
         end
 
-        local wanted = normalizeName(model.Name):find("wantedcriminal", 1, true) ~= nil
-        local humanoid = model:FindFirstChildOfClass("Humanoid")
-        local objectsToCheck = {model}
-        if humanoid then
-            table.insert(objectsToCheck, humanoid)
-        end
-
-        local root = getRoot(model)
-        if root and root ~= humanoid then
-            table.insert(objectsToCheck, root)
-        end
-
-        -- Prefer explicit game metadata when available.
-        for _, object in ipairs(objectsToCheck) do
-            local okAttributes, attributes = pcall(function()
-                return object:GetAttributes()
-            end)
-
-            if okAttributes and type(attributes) == "table" then
-                for key, value in pairs(attributes) do
-                    local normalizedKey = normalizeName(key)
-                    local normalizedValue = normalizeName(value)
-
-                    if (normalizedKey == "wantedcriminal"
-                        or normalizedKey == "iswantedcriminal"
-                        or normalizedKey == "criminalwanted")
-                        and (value == true or normalizedValue:find("wantedcriminal", 1, true)) then
-                        wanted = true
-                        break
-                    end
-
-                    if (normalizedKey == "title"
-                        or normalizedKey == "npctype"
-                        or normalizedKey == "type"
-                        or normalizedKey == "status")
-                        and normalizedValue:find("wantedcriminal", 1, true) then
-                        wanted = true
-                        break
-                    end
-                end
+        local function isTruthy(value)
+            if value == true then
+                return true
             end
+            if type(value) == "number" then
+                return value ~= 0
+            end
+            if type(value) == "string" then
+                local normalized = normalizeName(value)
+                return normalized == "true"
+                    or normalized == "wanted"
+                    or normalized == "criminal"
+                    or normalized == "wantedcriminal"
+                    or normalized == "notoriouscriminal"
+            end
+            return false
+        end
 
+        local wanted = hasWantedCriminalText(model.Name)
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if humanoid and hasWantedCriminalText(humanoid.DisplayName) then
+            wanted = true
+        end
+
+        -- Read explicit game metadata from the model, rig parts, and value objects.
+        -- Wanted NPCs have randomized names, so name matching alone is insufficient.
+        local objectsToCheck = {model}
+        for _, descendant in ipairs(model:GetDescendants()) do
+            objectsToCheck[#objectsToCheck + 1] = descendant
+        end
+
+        for _, object in ipairs(objectsToCheck) do
             if wanted then
                 break
             end
-        end
 
-        -- Some versions expose the role only in the NPC's overhead nameplate.
-        -- Look for the exact "Wanted Criminal" phrase, not a hardcoded NPC name.
-        if not wanted then
-            for _, descendant in ipairs(model:GetDescendants()) do
-                -- Ignore SolarHub's own label, otherwise the ESP could keep
-                -- matching its self-created "WANTED CRIMINAL" text forever.
-                local belongsToSolarHubVisual = false
-                local ancestor = descendant
+            local normalizedObjectName = normalizeName(object.Name)
+            local objectValue
 
-                while ancestor and ancestor ~= model do
-                    local ancestorName = tostring(ancestor.Name or "")
+            if object:IsA("BoolValue")
+                or object:IsA("StringValue")
+                or object:IsA("IntValue")
+                or object:IsA("NumberValue") then
+                objectValue = object.Value
+            end
 
-                    if ancestorName:sub(1, #"SolarWantedCriminalESP") == "SolarWantedCriminalESP"
-                        or ancestor:GetAttribute("SolarHubSessionToken") ~= nil then
-                        belongsToSolarHubVisual = true
-                        break
-                    end
+            if (normalizedObjectName == "wanted"
+                or normalizedObjectName == "iswanted"
+                or normalizedObjectName == "wantedcriminal"
+                or normalizedObjectName == "iswantedcriminal"
+                or normalizedObjectName == "criminal"
+                or normalizedObjectName == "iscriminal"
+                or normalizedObjectName == "notoriouscriminal")
+                and isTruthy(objectValue) then
+                wanted = true
+                break
+            end
 
-                    ancestor = ancestor.Parent
+            if objectValue ~= nil and hasWantedCriminalText(objectValue) then
+                wanted = true
+                break
+            end
+
+            if object:IsA("TextLabel")
+                or object:IsA("TextButton")
+                or object:IsA("TextBox") then
+                if hasWantedCriminalText(object.Text) then
+                    wanted = true
+                    break
                 end
+            end
 
-                if not belongsToSolarHubVisual then
-                    if descendant:IsA("TextLabel")
-                        or descendant:IsA("TextButton")
-                        or descendant:IsA("TextBox") then
-                        if normalizeName(descendant.Text):find("wantedcriminal", 1, true) then
-                            wanted = true
-                            break
-                        end
-                    elseif descendant.Name
-                        and normalizeName(descendant.Name) == "wantedcriminal" then
+            local okAttributes, attributes = pcall(function()
+                return object:GetAttributes()
+            end)
+            if okAttributes and type(attributes) == "table" then
+                for key, value in pairs(attributes) do
+                    local normalizedKey = normalizeName(key)
+                    if hasWantedCriminalText(value)
+                        or ((normalizedKey:find("wanted", 1, true) ~= nil
+                            or normalizedKey:find("criminal", 1, true) ~= nil)
+                            and isTruthy(value)) then
                         wanted = true
                         break
                     end
                 end
             end
-        end
 
-        -- Collection tags are another cheap, explicit marker if the game adds one.
-        if not wanted then
-            local collectionService = game:GetService("CollectionService")
-            local okTags, tags = pcall(function()
-                return collectionService:GetTags(model)
-            end)
-
-            if okTags and type(tags) == "table" then
-                for _, tag in ipairs(tags) do
-                    local normalizedTag = normalizeName(tag)
-                    if normalizedTag == "wantedcriminal"
-                        or normalizedTag == "iswantedcriminal" then
-                        wanted = true
-                        break
+            if not wanted then
+                local okTags, tags = pcall(function()
+                    return game:GetService("CollectionService"):GetTags(object)
+                end)
+                if okTags and type(tags) == "table" then
+                    for _, tag in ipairs(tags) do
+                        if hasWantedCriminalText(tag) then
+                            wanted = true
+                            break
+                        end
                     end
                 end
+            end
+        end
+
+        -- Some overhead tags are parented to PlayerGui and point at the NPC via Adornee.
+        -- Check those GUIs too; this avoids missing a wanted title outside the Model tree.
+        if not wanted and Shared.playerGui then
+            for _, gui in ipairs(Shared.playerGui:GetDescendants()) do
+                if gui:IsA("BillboardGui") and gui.Adornee then
+                    local adornee = gui.Adornee
+                    local adorneeModel = adornee:IsA("Model")
+                        and adornee
+                        or adornee:FindFirstAncestorOfClass("Model")
+
+                    if adorneeModel == model then
+                        local parts = {}
+                        for _, descendant in ipairs(gui:GetDescendants()) do
+                            if descendant:IsA("TextLabel")
+                                or descendant:IsA("TextButton")
+                                or descendant:IsA("TextBox") then
+                                parts[#parts + 1] = tostring(descendant.Text)
+                            end
+                        end
+                        if hasWantedCriminalText(table.concat(parts, " ")) then
+                            wanted = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        -- A spawned NPC can be grouped below a folder named for bounties/criminals.
+        if not wanted then
+            local parent = model.Parent
+            while parent and parent ~= workspace do
+                local parentName = normalizeName(parent.Name)
+                if parentName:find("wantedcriminal", 1, true)
+                    or parentName:find("wantednpc", 1, true)
+                    or parentName:find("bountynpc", 1, true)
+                    or parentName == "criminals" then
+                    wanted = true
+                    break
+                end
+                parent = parent.Parent
             end
         end
 
@@ -5388,6 +5440,7 @@ local function scanAllWorkspaceChests()
         end
 
         if Config.ArcaneWantedCriminalESP then
+            wantedCriminalCandidates[model] = true
             createWantedCriminalESP(model)
         end
     end
@@ -5568,6 +5621,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     local lastChestFilterSignature = nil
     local lastChestESPEnabled = Config.ArcaneChestESP == true
+    local lastWantedCriminalESPEnabled = Config.ArcaneWantedCriminalESP == true
     local targetedScanAccumulator = 0
     local chestScanAccumulator = 0
 
@@ -5588,6 +5642,43 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
     task.spawn(function()
         while isArcaneSessionActive() do
             task.wait(0.25)
+
+            local wantedCriminalEnabled = Config.ArcaneWantedCriminalESP == true
+            if wantedCriminalEnabled and not lastWantedCriminalESPEnabled then
+                -- Perform one yielding full-world pass when the user enables the
+                -- feature. Bounty NPCs can live outside Workspace.NPCs/Enemies.
+                task.spawn(function()
+                    local ok, err = xpcall(function()
+                        local descendants = workspace:GetDescendants()
+                        for index, instance in ipairs(descendants) do
+                            if not isArcaneSessionActive() then
+                                break
+                            end
+
+                            if instance:IsA("Model")
+                                and instance:FindFirstChildOfClass("Humanoid") then
+                                wantedCriminalCandidates[instance] = true
+                                createWantedCriminalESP(instance)
+                            end
+
+                            if index % 350 == 0 then
+                                task.wait()
+                            end
+                        end
+                    end, debug.traceback)
+
+                    if not ok then
+                        warn("[SolarHub] Wanted Criminal scan failed: " .. tostring(err))
+                    end
+                end)
+            elseif not wantedCriminalEnabled and lastWantedCriminalESPEnabled then
+                for model in pairs(wantedCriminalESPObjects) do
+                    destroyWantedCriminalESP(model)
+                end
+                table.clear(wantedCriminalCandidates)
+                table.clear(wantedCriminalDetectionCache)
+            end
+            lastWantedCriminalESPEnabled = wantedCriminalEnabled
 
             local currentChestFilterSignature = getChestFilterSignature()
             local chestSettingsChanged =
@@ -5683,7 +5774,19 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
             local wantedCriminalDetected = 0
 
             if Config.ArcaneWantedCriminalESP then
-                for model, data in pairs(wantedCriminalESPObjects) do
+                for model in pairs(wantedCriminalCandidates) do
+                    if not model.Parent then
+                        wantedCriminalCandidates[model] = nil
+                        wantedCriminalDetectionCache[model] = nil
+                        destroyWantedCriminalESP(model)
+                    else
+                        -- Retry unknown/late-added titles without rescanning the
+                        -- whole Workspace every frame.
+                        createWantedCriminalESP(model)
+                    end
+                end
+
+                for model in pairs(wantedCriminalESPObjects) do
                     if model.Parent then
                         wantedCriminalDetected += 1
                     else
@@ -6115,6 +6218,7 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
         for model in pairs(wantedCriminalESPObjects) do
             destroyWantedCriminalESP(model)
         end
+        table.clear(wantedCriminalCandidates)
         table.clear(wantedCriminalDetectionCache)
 
         for model in pairs(sideQuestESPObjects) do
