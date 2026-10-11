@@ -233,7 +233,7 @@ function ArcaneTools.Init(Shared, UI, Context)
                     end
                 end
             end
-            if #scanRoots > 0 then fullWorldScanDone = true end
+            if map then fullWorldScanDone = true end
         end
         for item in pairs(candidateSet) do
             local ok, err = pcall(inspect, item)
