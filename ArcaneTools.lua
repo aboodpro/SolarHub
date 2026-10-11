@@ -212,9 +212,19 @@ function ArcaneTools.Init(Shared, UI, Context)
                 for _, item in ipairs(tagged) do candidateSet[item] = true end
             end
         end
+        -- Map scan finds island/diving/structure chests; ship roots also catch
+        -- sealed chests parented outside Map.
         local map = workspace:FindFirstChild("Map")
-        if map then
-            for _, item in ipairs(map:GetDescendants()) do
+        local scanRoots = {}
+        if map then table.insert(scanRoots, map) end
+        for _, child in ipairs(workspace:GetChildren()) do
+            local n = normalize(child.Name)
+            if child ~= map and (n:find("ship", 1, true) or n:find("boat", 1, true) or n:find("npc", 1, true)) then
+                table.insert(scanRoots, child)
+            end
+        end
+        for _, rootFolder in ipairs(scanRoots) do
+            for _, item in ipairs(rootFolder:GetDescendants()) do
                 if item:IsA("Model") or item:IsA("BasePart") then
                     local n = normalize(item.Name)
                     if n:find("sealed", 1, true) or n == "chest" then candidateSet[item] = true end
@@ -230,7 +240,7 @@ function ArcaneTools.Init(Shared, UI, Context)
             end
         end
         for target, data in pairs(markers) do
-            if not target.Parent or not target:IsDescendantOf(workspace) then
+            if not target.Parent or not target:IsDescendantOf(workspace) or not typeEnabled(data.kind) then
                 destroyMarker(target)
             else
                 local root = getRoot(target)
@@ -385,21 +395,41 @@ function ArcaneTools.Init(Shared, UI, Context)
             SolarPerformanceMode = Config.SolarPerformanceMode,
             SolarRecoveryEnabled = Config.SolarRecoveryEnabled,
         }
+        local saved = false
         if type(getgenv) == "function" then
             getgenv().SolarHubArcaneProfile = profile
-            log("Profile saved to executor session environment")
-        else
-            log("Profile saved for this session only")
+            saved = true
         end
+        -- Persist across restarts when executor file APIs are available.
+        if type(writefile) == "function" then
+            pcall(function()
+                if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder("SolarHub") then
+                    makefolder("SolarHub")
+                end
+                writefile("SolarHub/ArcaneProfile.json", game:GetService("HttpService"):JSONEncode(profile))
+                saved = true
+            end)
+        end
+        log(saved and "Profile saved (persistent file when supported, otherwise session environment)" or "Profile saved for this session only")
         refreshReport()
     end)
     button(diagSection, "LOAD PROFILE", 10, 234, 105, function()
-        local profile = type(getgenv) == "function" and getgenv().SolarHubArcaneProfile or nil
+        local profile = nil
+        if type(readfile) == "function" and type(isfile) == "function" then
+            pcall(function()
+                if isfile("SolarHub/ArcaneProfile.json") then
+                    profile = game:GetService("HttpService"):JSONDecode(readfile("SolarHub/ArcaneProfile.json"))
+                end
+            end)
+        end
+        if type(profile) ~= "table" and type(getgenv) == "function" then
+            profile = getgenv().SolarHubArcaneProfile
+        end
         if type(profile) ~= "table" then
-            log("No saved profile found in this executor session")
+            log("No saved profile found (file APIs may be unavailable)")
         else
             for key, value in pairs(profile) do Config[key] = value end
-            log("Profile loaded; toggles that use cached UI indicators may need reopening")
+            log("Profile loaded")
             task.defer(function() pcall(scan) end)
         end
         refreshReport()
