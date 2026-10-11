@@ -261,7 +261,8 @@ function ArcaneTools.Init(Shared, UI, Context)
         retryCount = 0
     end
 
-    local sealedSection = UI.createSection(misc, "Sealed Chest ESP", 250)
+    local sealedSection = UI.createSection(misc, "Sealed Chest ESP", 292)
+    local toggleRefreshers = {}
     local function makeToggle(parent, title, key, y, desc)
         local button = Instance.new("TextButton")
         button.Size = UDim2.new(1, -20, 0, 36)
@@ -290,6 +291,7 @@ function ArcaneTools.Init(Shared, UI, Context)
         local function refresh()
             indicator.BackgroundColor3 = Config[key] and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(50, 50, 60)
         end
+        toggleRefreshers[key] = refresh
         button.Activated:Connect(function()
             Config[key] = not Config[key]
             refresh()
@@ -304,10 +306,10 @@ function ArcaneTools.Init(Shared, UI, Context)
     makeToggle(sealedSection, "Dark Sealed", "ArcaneSealedDark", 160)
 
     local info = Instance.new("TextLabel")
-    info.Size = UDim2.new(1, -20, 0, 32)
+    info.Size = UDim2.new(1, -20, 0, 72)
     info.Position = UDim2.fromOffset(10, 204)
     info.BackgroundTransparency = 1
-    info.Text = "Bronze/Nimbus are usually from defeated NPC ships, charts and diving spots; Dark from Dark Sea ships/islands."
+    info.Text = "Sealed chests must be carried to a shipwright to open. Bronze/Nimbus: defeated NPC ship decks, treasure-chart spots, diving spots and underwater structures. Dark: Atlantean ships after sinking them and defeating the crew, Dark Sea structures/islands (including Siren Rocks), Conquest fleet tasks and some daily quests. Inventory-only reward chests do not have a world location to ESP."
     info.TextWrapped = true
     info.TextXAlignment = Enum.TextXAlignment.Left
     info.TextYAlignment = Enum.TextYAlignment.Top
@@ -432,7 +434,10 @@ function ArcaneTools.Init(Shared, UI, Context)
         if type(profile) ~= "table" then
             log("No saved profile found (file APIs may be unavailable)")
         else
-            for key, value in pairs(profile) do Config[key] = value end
+            for key, value in pairs(profile) do
+                Config[key] = value
+                if toggleRefreshers[key] then toggleRefreshers[key]() end
+            end
             log("Profile loaded")
             task.defer(function() pcall(scan) end)
         end
