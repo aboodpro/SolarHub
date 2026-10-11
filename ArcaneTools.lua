@@ -46,6 +46,7 @@ function ArcaneTools.Init(Shared, UI, Context)
     local lastError = "None"
     local scanStatus = "Idle"
     local retryCount = 0
+    local fullWorldScanDone = false
     local MAX_RETRIES = 3
 
     Config.ArcaneSealedChestESP = Config.ArcaneSealedChestESP == true
@@ -216,20 +217,23 @@ function ArcaneTools.Init(Shared, UI, Context)
         -- sealed chests parented outside Map.
         local map = workspace:FindFirstChild("Map")
         local scanRoots = {}
-        if map then table.insert(scanRoots, map) end
-        for _, child in ipairs(workspace:GetChildren()) do
-            local n = normalize(child.Name)
-            if child ~= map and (n:find("ship", 1, true) or n:find("boat", 1, true) or n:find("npc", 1, true)) then
-                table.insert(scanRoots, child)
-            end
-        end
-        for _, rootFolder in ipairs(scanRoots) do
-            for _, item in ipairs(rootFolder:GetDescendants()) do
-                if item:IsA("Model") or item:IsA("BasePart") then
-                    local n = normalize(item.Name)
-                    if n:find("sealed", 1, true) or n == "chest" then candidateSet[item] = true end
+        if not fullWorldScanDone then
+            if map then table.insert(scanRoots, map) end
+            for _, child in ipairs(workspace:GetChildren()) do
+                local n = normalize(child.Name)
+                if child ~= map and (n:find("ship", 1, true) or n:find("boat", 1, true) or n:find("npc", 1, true)) then
+                    table.insert(scanRoots, child)
                 end
             end
+            for _, rootFolder in ipairs(scanRoots) do
+                for _, item in ipairs(rootFolder:GetDescendants()) do
+                    if item:IsA("Model") or item:IsA("BasePart") then
+                        local n = normalize(item.Name)
+                        if n:find("sealed", 1, true) or n == "chest" then candidateSet[item] = true end
+                    end
+                end
+            end
+            if #scanRoots > 0 then fullWorldScanDone = true end
         end
         for item in pairs(candidateSet) do
             local ok, err = pcall(inspect, item)
