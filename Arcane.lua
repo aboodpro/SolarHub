@@ -89,6 +89,10 @@ function Arcane.Init(Shared, UI, Modules)
     Modules.Misc.Init(Shared, UI, Context)
     Modules.Farming.Init(Shared, UI, Context)
 
+    if Modules.Tools and type(Modules.Tools.Init) == "function" then
+        Modules.Tools.Init(Shared, UI, Context)
+    end
+
     return true
 end
 
