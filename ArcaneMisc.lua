@@ -756,7 +756,7 @@ local function looksLikeChestModel(model)
     -- Strong identity from the model name. A named chest is enough to identify
     -- it; the actual root can be any BasePart when the model has no direct Base.
     if normalized:find("chest", 1, true)
-        or normalized:find("treasure", 1, true)
+        or normalized:find("buriedtreasure", 1, true)
         or normalized:find("sealed", 1, true)
         or normalized == "common"
         or normalized == "uncommon"
@@ -4731,38 +4731,33 @@ scanAllWorkspaceChests = function()
         end
 
         local map = workspace:FindFirstChild("Map")
-
         if map then
-            -- Keep the existing static cache for known chest-location folders.
+            -- Retain static chest anchors for cached/unloaded island locations.
             scanStaticChestLocations(map)
+        end
 
-            for index, object in ipairs(map:GetDescendants()) do
-                if index % 500 == 0 then
-                    task.wait()
-                end
+        -- Scan all live Workspace roots, not only Map. Sealed chests can be on
+        -- defeated NPC ships and in underwater structures outside the Map tree.
+        -- This is a one-shot, yielding discovery pass; later updates are event-driven.
+        for index, object in ipairs(workspace:GetDescendants()) do
+            if index % 500 == 0 then
+                task.wait()
+            end
 
-                -- Strongest generic discovery path. This catches chests that:
-                --   * have a generic/non-chest model name
-                --   * are hidden inside another model/folder
-                --   * are not covered by the known chest tags
-                if object:IsA("ProximityPrompt")
-                    or object:IsA("ClickDetector") then
-                    inspectInteraction(object)
+            if object:IsA("ProximityPrompt")
+                or object:IsA("ClickDetector") then
+                inspectInteraction(object)
 
-                elseif object:IsA("Model") then
-                    -- Keep named-model discovery as a fallback for chest models
-                    -- that do not expose their interaction immediately.
-                    local normalized = normalizeName(object.Name)
-
-                    if normalized:find("chest", 1, true)
-                        or normalized:find("treasure", 1, true)
-                        or normalized:find("sealed", 1, true)
-                        or normalized == "rare"
-                        or normalized == "uncommon"
-                        or normalized == "legendary"
-                        or normalized == "mystic" then
-                        inspectOnce(object)
-                    end
+            elseif object:IsA("Model") then
+                local normalized = normalizeName(object.Name)
+                if normalized:find("chest", 1, true)
+                    or normalized:find("buriedtreasure", 1, true)
+                    or normalized:find("sealed", 1, true)
+                    or normalized == "rare"
+                    or normalized == "uncommon"
+                    or normalized == "legendary"
+                    or normalized == "mystic" then
+                    inspectOnce(object)
                 end
             end
         end
