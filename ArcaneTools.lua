@@ -261,69 +261,217 @@ function ArcaneTools.Init(Shared, UI, Context)
         retryCount = 0
     end
 
-    local sealedSection = UI.createSection(misc, "Sealed Chest ESP", 292)
+    -------------------------------------------------
+    -- SEALED CHEST ESP: CONSISTENT CARD-BASED CONTROLS
+    -------------------------------------------------
+    local sealedSection = UI.createSection(misc, "Sealed Chest ESP", 300)
     local toggleRefreshers = {}
-    local function makeToggle(parent, title, key, y, desc)
-        local button = Instance.new("TextButton")
-        button.Size = UDim2.new(1, -20, 0, 36)
-        button.Position = UDim2.fromOffset(10, y)
-        button.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
-        button.BorderSizePixel = 0
-        button.Text = ""
-        button.Parent = parent
-        Instance.new("UICorner", button).CornerRadius = UDim.new(0, 8)
-        local label = Instance.new("TextLabel")
-        label.BackgroundTransparency = 1
-        label.Position = UDim2.fromOffset(9, 0)
-        label.Size = UDim2.new(1, -52, 1, 0)
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 10
-        label.TextColor3 = Color3.fromRGB(235, 235, 240)
-        label.Text = title .. (desc and " — " .. desc or "")
-        label.Parent = button
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.fromOffset(18, 18)
-        indicator.Position = UDim2.new(1, -28, 0.5, -9)
-        indicator.BackgroundColor3 = Config[key] and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(50, 50, 60)
-        indicator.Parent = button
-        Instance.new("UICorner", indicator).CornerRadius = UDim.new(0, 4)
+
+    local sealedRows = Instance.new("Frame")
+    sealedRows.Name = "SealedChestOptions"
+    sealedRows.Position = UDim2.fromOffset(10, 39)
+    sealedRows.Size = UDim2.new(1, -20, 0, 162)
+    sealedRows.BackgroundTransparency = 1
+    sealedRows.Parent = sealedSection
+
+    local rowsLayout = Instance.new("UIListLayout")
+    rowsLayout.FillDirection = Enum.FillDirection.Vertical
+    rowsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    rowsLayout.Padding = UDim.new(0, 6)
+    rowsLayout.Parent = sealedRows
+
+    local function makeToggle(parent, title, key, order, desc)
+        local row = Instance.new("Frame")
+        row.Name = key .. "Row"
+        row.LayoutOrder = order
+        row.Size = UDim2.new(1, 0, 0, 36)
+        row.BackgroundColor3 = Color3.fromRGB(29, 32, 42)
+        row.BorderSizePixel = 0
+        row.Parent = parent
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(63, 67, 82)
+        stroke.Transparency = 0.72
+        stroke.Thickness = 1
+        stroke.Parent = row
+
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Name = "Title"
+        titleLabel.Position = UDim2.fromOffset(11, 3)
+        titleLabel.Size = UDim2.new(1, -100, 0, 15)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Font = Enum.Font.GothamSemibold
+        titleLabel.Text = title
+        titleLabel.TextColor3 = Color3.fromRGB(239, 241, 247)
+        titleLabel.TextSize = 10
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.Parent = row
+
+        local descLabel = Instance.new("TextLabel")
+        descLabel.Position = UDim2.fromOffset(11, 18)
+        descLabel.Size = UDim2.new(1, -100, 0, 13)
+        descLabel.BackgroundTransparency = 1
+        descLabel.Font = Enum.Font.Gotham
+        descLabel.Text = desc or "Enable or disable this option."
+        descLabel.TextColor3 = Color3.fromRGB(151, 158, 174)
+        descLabel.TextSize = 8
+        descLabel.TextXAlignment = Enum.TextXAlignment.Left
+        descLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        descLabel.Parent = row
+
+        local switch = Instance.new("TextButton")
+        switch.Name = "State"
+        switch.AnchorPoint = Vector2.new(1, 0.5)
+        switch.Position = UDim2.new(1, -9, 0.5, 0)
+        switch.Size = UDim2.fromOffset(62, 23)
+        switch.BorderSizePixel = 0
+        switch.AutoButtonColor = true
+        switch.Font = Enum.Font.GothamBold
+        switch.TextSize = 9
+        switch.Parent = row
+        Instance.new("UICorner", switch).CornerRadius = UDim.new(0, 7)
+
         local function refresh()
-            indicator.BackgroundColor3 = Config[key] and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(50, 50, 60)
+            local enabled = Config[key] == true
+            switch.Text = enabled and "ON" or "OFF"
+            switch.TextColor3 = enabled and Color3.fromRGB(255, 248, 231) or Color3.fromRGB(176, 182, 195)
+            switch.BackgroundColor3 = enabled and Color3.fromRGB(183, 111, 31) or Color3.fromRGB(48, 52, 65)
+            stroke.Color = enabled and Color3.fromRGB(202, 139, 62) or Color3.fromRGB(63, 67, 82)
+            stroke.Transparency = enabled and 0.4 or 0.72
         end
+
         toggleRefreshers[key] = refresh
-        button.Activated:Connect(function()
-            Config[key] = not Config[key]
+        refresh()
+
+        switch.Activated:Connect(function()
+            Config[key] = not (Config[key] == true)
             refresh()
-            if key == "ArcaneSealedChestESP" and not Config[key] then clearMarkers() end
+
+            if key == "ArcaneSealedChestESP" and not Config[key] then
+                clearMarkers()
+            elseif key ~= "ArcaneSealedChestESP" and not Config[key] then
+                for target, data in pairs(markers) do
+                    if (key == "ArcaneSealedBronze" and data.kind == "Bronze")
+                        or (key == "ArcaneSealedNimbus" and data.kind == "Nimbus")
+                        or (key == "ArcaneSealedDark" and data.kind == "Dark") then
+                        destroyMarker(target)
+                    end
+                end
+            end
+
             log(title .. " = " .. tostring(Config[key]))
             task.defer(function() pcall(scan) end)
         end)
     end
-    makeToggle(sealedSection, "Sealed Chest ESP", "ArcaneSealedChestESP", 34, "Independent from Treasure Chest ESP")
-    makeToggle(sealedSection, "Bronze Sealed", "ArcaneSealedBronze", 76)
-    makeToggle(sealedSection, "Nimbus Sealed", "ArcaneSealedNimbus", 118)
-    makeToggle(sealedSection, "Dark Sealed", "ArcaneSealedDark", 160)
 
-    local info = Instance.new("TextLabel")
-    info.Size = UDim2.new(1, -20, 0, 72)
-    info.Position = UDim2.fromOffset(10, 204)
-    info.BackgroundTransparency = 1
-    info.Text = "Sealed chests must be carried to a shipwright to open. Bronze/Nimbus: defeated NPC ship decks, treasure-chart spots, diving spots and underwater structures. Dark: Atlantean ships after sinking them and defeating the crew, Dark Sea structures/islands (including Siren Rocks), Conquest fleet tasks and some daily quests. Inventory-only reward chests do not have a world location to ESP."
-    info.TextWrapped = true
-    info.TextXAlignment = Enum.TextXAlignment.Left
-    info.TextYAlignment = Enum.TextYAlignment.Top
-    info.Font = Enum.Font.Gotham
-    info.TextSize = 8
-    info.TextColor3 = Color3.fromRGB(145, 145, 155)
-    info.Parent = sealedSection
+    makeToggle(sealedRows, "Sealed Chest ESP", "ArcaneSealedChestESP", 1, "Independent from regular Treasure Chest ESP")
+    makeToggle(sealedRows, "Bronze Sealed", "ArcaneSealedBronze", 2, "Bronze Sea sealed chests")
+    makeToggle(sealedRows, "Nimbus Sealed", "ArcaneSealedNimbus", 3, "Nimbus Sea sealed chests")
+    makeToggle(sealedRows, "Dark Sealed", "ArcaneSealedDark", 4, "Dark Sea sealed chests")
 
-    local diagSection = UI.createSection(misc, "SolarHub Diagnostics", 330)
+    local sourceCard = Instance.new("Frame")
+    sourceCard.Name = "SealedChestGuide"
+    sourceCard.Position = UDim2.fromOffset(10, 209)
+    sourceCard.Size = UDim2.new(1, -20, 0, 76)
+    sourceCard.BackgroundColor3 = Color3.fromRGB(24, 27, 36)
+    sourceCard.BorderSizePixel = 0
+    sourceCard.Parent = sealedSection
+    Instance.new("UICorner", sourceCard).CornerRadius = UDim.new(0, 8)
+
+    local sourceStroke = Instance.new("UIStroke")
+    sourceStroke.Color = Color3.fromRGB(69, 72, 86)
+    sourceStroke.Transparency = 0.72
+    sourceStroke.Parent = sourceCard
+
+    local sourceTitle = Instance.new("TextLabel")
+    sourceTitle.Position = UDim2.fromOffset(10, 6)
+    sourceTitle.Size = UDim2.new(1, -20, 0, 14)
+    sourceTitle.BackgroundTransparency = 1
+    sourceTitle.Font = Enum.Font.GothamBold
+    sourceTitle.Text = "WHERE TO FIND THEM"
+    sourceTitle.TextColor3 = Color3.fromRGB(221, 157, 72)
+    sourceTitle.TextSize = 9
+    sourceTitle.TextXAlignment = Enum.TextXAlignment.Left
+    sourceTitle.Parent = sourceCard
+
+    local sourceText = Instance.new("TextLabel")
+    sourceText.Position = UDim2.fromOffset(10, 22)
+    sourceText.Size = UDim2.new(1, -20, 1, -27)
+    sourceText.BackgroundTransparency = 1
+    sourceText.Font = Enum.Font.Gotham
+    sourceText.Text = "Bronze/Nimbus: NPC ship decks, treasure-chart sites, diving spots and underwater structures. Dark: Atlantean ships, Dark Sea structures/Siren Rocks, some fleet and daily-quest rewards. Carry to a Shipwright to open."
+    sourceText.TextColor3 = Color3.fromRGB(176, 182, 195)
+    sourceText.TextSize = 8
+    sourceText.TextWrapped = true
+    sourceText.TextXAlignment = Enum.TextXAlignment.Left
+    sourceText.TextYAlignment = Enum.TextYAlignment.Top
+    sourceText.Parent = sourceCard
+
+    -------------------------------------------------
+    -- DIAGNOSTICS CENTER: STATUS, STATISTICS AND ACTION GRID
+    -------------------------------------------------
+    local diagSection = UI.createSection(misc, "Diagnostics Center", 334)
+
+    local statsPanel = Instance.new("Frame")
+    statsPanel.Name = "SessionStats"
+    statsPanel.Position = UDim2.fromOffset(10, 38)
+    statsPanel.Size = UDim2.new(1, -20, 0, 44)
+    statsPanel.BackgroundTransparency = 1
+    statsPanel.Parent = diagSection
+
+    local statsGrid = Instance.new("UIGridLayout")
+    statsGrid.CellSize = UDim2.new(0.25, -5, 1, 0)
+    statsGrid.CellPadding = UDim2.fromOffset(6, 0)
+    statsGrid.FillDirectionMaxCells = 4
+    statsGrid.SortOrder = Enum.SortOrder.LayoutOrder
+    statsGrid.Parent = statsPanel
+
+    local statValues = {}
+    local function makeStatCard(key, title, order)
+        local card = Instance.new("Frame")
+        card.Name = key .. "Card"
+        card.LayoutOrder = order
+        card.BackgroundColor3 = Color3.fromRGB(29, 32, 42)
+        card.BorderSizePixel = 0
+        card.Parent = statsPanel
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
+
+        local value = Instance.new("TextLabel")
+        value.Name = "Value"
+        value.Position = UDim2.fromOffset(9, 3)
+        value.Size = UDim2.new(1, -18, 0, 19)
+        value.BackgroundTransparency = 1
+        value.Font = Enum.Font.GothamBold
+        value.Text = "0"
+        value.TextColor3 = Color3.fromRGB(239, 168, 77)
+        value.TextSize = 14
+        value.TextXAlignment = Enum.TextXAlignment.Left
+        value.Parent = card
+        statValues[key] = value
+
+        local caption = Instance.new("TextLabel")
+        caption.Position = UDim2.fromOffset(9, 24)
+        caption.Size = UDim2.new(1, -18, 0, 14)
+        caption.BackgroundTransparency = 1
+        caption.Font = Enum.Font.Gotham
+        caption.Text = title
+        caption.TextColor3 = Color3.fromRGB(158, 165, 180)
+        caption.TextSize = 8
+        caption.TextXAlignment = Enum.TextXAlignment.Left
+        caption.Parent = card
+    end
+
+    makeStatCard("Scans", "Scans", 1)
+    makeStatCard("Detected", "Detected", 2)
+    makeStatCard("Errors", "Errors", 3)
+    makeStatCard("Recoveries", "Recoveries", 4)
+
     local statusBox = Instance.new("TextBox")
     statusBox.Name = "SolarHubDiagnostics"
-    statusBox.Position = UDim2.fromOffset(10, 34)
-    statusBox.Size = UDim2.new(1, -20, 0, 156)
-    statusBox.BackgroundColor3 = Color3.fromRGB(8, 8, 11)
+    statusBox.Position = UDim2.fromOffset(10, 90)
+    statusBox.Size = UDim2.new(1, -20, 0, 104)
+    statusBox.BackgroundColor3 = Color3.fromRGB(12, 15, 21)
     statusBox.BorderSizePixel = 0
     statusBox.ClearTextOnFocus = false
     statusBox.MultiLine = true
@@ -333,23 +481,33 @@ function ArcaneTools.Init(Shared, UI, Context)
     statusBox.TextYAlignment = Enum.TextYAlignment.Top
     statusBox.Font = Enum.Font.Code
     statusBox.TextSize = 9
-    statusBox.TextColor3 = Color3.fromRGB(220, 220, 225)
+    statusBox.TextColor3 = Color3.fromRGB(208, 215, 228)
     statusBox.Parent = diagSection
+    Instance.new("UICorner", statusBox).CornerRadius = UDim.new(0, 8)
+    local reportPadding = Instance.new("UIPadding")
+    reportPadding.PaddingTop = UDim.new(0, 7)
+    reportPadding.PaddingBottom = UDim.new(0, 7)
+    reportPadding.PaddingLeft = UDim.new(0, 8)
+    reportPadding.PaddingRight = UDim.new(0, 8)
+    reportPadding.Parent = statusBox
 
     local function buildReport()
         local lines = {
             "SOLARHUB DIAGNOSTICS",
-            "Game=" .. tostring(game.PlaceId) .. " / Universe=" .. tostring(game.GameId),
-            "SessionSeconds=" .. tostring(math.floor(os.clock() - startedAt)),
-            "SealedESP=" .. tostring(Config.ArcaneSealedChestESP),
-            "Bronze=" .. tostring(Config.ArcaneSealedBronze) .. " Nimbus=" .. tostring(Config.ArcaneSealedNimbus) .. " Dark=" .. tostring(Config.ArcaneSealedDark),
-            "ScanStatus=" .. tostring(scanStatus),
-            "PerformanceMode=" .. tostring(Config.SolarPerformanceMode),
-            "RecoveryEnabled=" .. tostring(Config.SolarRecoveryEnabled),
-            "Stats: scans=" .. stats.scans .. " detected=" .. stats.detected .. " markersCreated=" .. stats.created .. " errors=" .. stats.errors .. " recoveries=" .. stats.recovered,
+            "PlaceId=" .. tostring(game.PlaceId) .. " | UniverseId=" .. tostring(game.GameId),
+            "Session=" .. tostring(math.floor(os.clock() - startedAt)) .. "s | ScanStatus=" .. tostring(scanStatus),
+            "SealedESP=" .. tostring(Config.ArcaneSealedChestESP)
+                .. " | Bronze=" .. tostring(Config.ArcaneSealedBronze)
+                .. " | Nimbus=" .. tostring(Config.ArcaneSealedNimbus)
+                .. " | Dark=" .. tostring(Config.ArcaneSealedDark),
+            "PerformanceMode=" .. tostring(Config.SolarPerformanceMode)
+                .. " | RecoveryEnabled=" .. tostring(Config.SolarRecoveryEnabled),
+            "Scans=" .. stats.scans .. " | Detected=" .. stats.detected
+                .. " | Markers=" .. stats.created .. " | Errors=" .. stats.errors
+                .. " | Recoveries=" .. stats.recovered,
             "LastError=" .. tostring(lastError),
             "",
-            "FEATURE STATUS (based on current client config; not server-confirmed):",
+            "FEATURE STATUS (client-side state, not server-confirmed):",
             "Boss ESP=" .. tostring(Config.ArcaneBossESP),
             "Wanted Criminal ESP=" .. tostring(Config.ArcaneWantedCriminalESP),
             "Treasure Chest ESP=" .. tostring(Config.ArcaneChestESP),
@@ -357,38 +515,69 @@ function ArcaneTools.Init(Shared, UI, Context)
             "",
             "RECENT LOGS:"
         }
-        for i = math.max(1, #logLines - 60), #logLines do lines[#lines + 1] = logLines[i] end
+        for i = math.max(1, #logLines - 60), #logLines do
+            lines[#lines + 1] = logLines[i]
+        end
         return table.concat(lines, "\n")
     end
 
     local function refreshReport()
         statusBox.Text = buildReport()
+        statValues.Scans.Text = tostring(stats.scans)
+        statValues.Detected.Text = tostring(stats.detected)
+        statValues.Errors.Text = tostring(stats.errors)
+        statValues.Recoveries.Text = tostring(stats.recovered)
     end
 
-    local function button(parent, title, x, y, width, callback)
+    local actionsPanel = Instance.new("Frame")
+    actionsPanel.Name = "DiagnosticActions"
+    actionsPanel.Position = UDim2.fromOffset(10, 202)
+    actionsPanel.Size = UDim2.new(1, -20, 0, 96)
+    actionsPanel.BackgroundTransparency = 1
+    actionsPanel.Parent = diagSection
+
+    local actionsGrid = Instance.new("UIGridLayout")
+    actionsGrid.CellSize = UDim2.new(1/3, -6, 0, 28)
+    actionsGrid.CellPadding = UDim2.fromOffset(6, 6)
+    actionsGrid.FillDirectionMaxCells = 3
+    actionsGrid.SortOrder = Enum.SortOrder.LayoutOrder
+    actionsGrid.Parent = actionsPanel
+
+    local function button(title, order, callback)
         local b = Instance.new("TextButton")
-        b.Size = UDim2.fromOffset(width, 28)
-        b.Position = UDim2.fromOffset(x, y)
-        b.BackgroundColor3 = Color3.fromRGB(43, 43, 54)
+        b.Name = title:gsub("[^%w]+", "") .. "Button"
+        b.LayoutOrder = order
+        b.BackgroundColor3 = Color3.fromRGB(42, 47, 61)
         b.BorderSizePixel = 0
         b.Text = title
-        b.TextColor3 = Color3.fromRGB(235, 235, 240)
-        b.Font = Enum.Font.GothamBold
-        b.TextSize = 8
-        b.Parent = parent
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+        b.TextColor3 = Color3.fromRGB(228, 233, 243)
+        b.Font = Enum.Font.GothamSemibold
+        b.TextSize = 9
+        b.AutoButtonColor = true
+        b.Parent = actionsPanel
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(73, 79, 96)
+        stroke.Transparency = 0.65
+        stroke.Parent = b
         b.Activated:Connect(callback)
         return b
     end
 
-    button(diagSection, "REFRESH REPORT", 10, 200, 105, refreshReport)
-    button(diagSection, "COPY / EXPORT", 122, 200, 105, function()
+    button("Refresh report", 1, function()
         refreshReport()
-        local ok = safeClipboard(statusBox.Text)
-        log(ok and "Diagnostics copied to clipboard" or "Clipboard unavailable; report remains selectable in the text box")
+        log("Diagnostics report refreshed")
         refreshReport()
     end)
-    button(diagSection, "SAVE PROFILE", 234, 200, 95, function()
+
+    button("Copy / export", 2, function()
+        refreshReport()
+        local ok = safeClipboard(statusBox.Text)
+        log(ok and "Diagnostics copied to clipboard" or "Clipboard API unavailable; use the report text box")
+        refreshReport()
+    end)
+
+    button("Save profile", 3, function()
         local profile = {
             ArcaneSealedChestESP = Config.ArcaneSealedChestESP,
             ArcaneSealedBronze = Config.ArcaneSealedBronze,
@@ -406,7 +595,6 @@ function ArcaneTools.Init(Shared, UI, Context)
             getgenv().SolarHubArcaneProfile = profile
             saved = true
         end
-        -- Persist across restarts when executor file APIs are available.
         if type(writefile) == "function" then
             pcall(function()
                 if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder("SolarHub") then
@@ -416,10 +604,11 @@ function ArcaneTools.Init(Shared, UI, Context)
                 saved = true
             end)
         end
-        log(saved and "Profile saved (persistent file when supported, otherwise session environment)" or "Profile saved for this session only")
+        log(saved and "Profile saved (file persistence depends on executor support)" or "Profile saved for this session only")
         refreshReport()
     end)
-    button(diagSection, "LOAD PROFILE", 10, 234, 105, function()
+
+    button("Load profile", 4, function()
         local profile = nil
         if type(readfile) == "function" and type(isfile) == "function" then
             pcall(function()
@@ -443,16 +632,36 @@ function ArcaneTools.Init(Shared, UI, Context)
         end
         refreshReport()
     end)
-    button(diagSection, "CLEAR LOGS", 122, 234, 105, function()
+
+    button("Clear logs", 5, function()
         table.clear(logLines)
         log("Logs cleared")
         refreshReport()
     end)
-    button(diagSection, "PERFORMANCE MODE", 234, 234, 95, function()
+
+    button("Performance mode", 6, function()
         Config.SolarPerformanceMode = not Config.SolarPerformanceMode
         log("Performance mode = " .. tostring(Config.SolarPerformanceMode))
         refreshReport()
     end)
+
+    button("Auto recovery", 7, function()
+        Config.SolarRecoveryEnabled = not Config.SolarRecoveryEnabled
+        log("Recovery enabled = " .. tostring(Config.SolarRecoveryEnabled))
+        refreshReport()
+    end)
+
+    local footer = Instance.new("TextLabel")
+    footer.Position = UDim2.fromOffset(10, 303)
+    footer.Size = UDim2.new(1, -20, 0, 19)
+    footer.BackgroundTransparency = 1
+    footer.Font = Enum.Font.Gotham
+    footer.Text = "Status is client-observed; some game objects may be hidden until streamed in."
+    footer.TextColor3 = Color3.fromRGB(142, 149, 165)
+    footer.TextSize = 8
+    footer.TextXAlignment = Enum.TextXAlignment.Left
+    footer.TextTruncate = Enum.TextTruncate.AtEnd
+    footer.Parent = diagSection
 
     local function tryScan()
         local ok, err = xpcall(scan, debug.traceback)
