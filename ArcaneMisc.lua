@@ -536,6 +536,17 @@ local function collectChestTextSources(target)
 
     table.insert(sources, target.Name)
 
+    -- Some chest variants expose their name on a nearby parent/container.
+    -- Check a few ancestor names individually; don't combine the whole island
+    -- path, since that can misclassify every chest on an island named "Sky...".
+    local ancestor = target.Parent
+    local ancestorDepth = 0
+    while ancestor and ancestor ~= workspace and ancestorDepth < 5 do
+        table.insert(sources, ancestor.Name)
+        ancestor = ancestor.Parent
+        ancestorDepth += 1
+    end
+
     local function addValue(value)
         local valueType = typeof(value)
 
