@@ -4264,8 +4264,6 @@ local function createChestESP(target)
             return
         end
 
-        staticChestLocationsScanned = true
-
         local function scanRoot(scanRoot)
             if not scanRoot then
                 return
@@ -4300,12 +4298,19 @@ local function createChestESP(target)
         -- Workspace contains the currently loaded chests. ReplicatedStorage
         -- contains Arcane Odyssey's unloaded-island chest locations, allowing
         -- the ESP to remain visible even after the game removes the live model.
-        scanRoot(root or workspace:FindFirstChild("Map"))
-
+        local mapRoot = root or workspace:FindFirstChild("Map")
         local rs = game:GetService("ReplicatedStorage")
         local unloadIslands = rs:FindFirstChild("RS")
             and rs.RS:FindFirstChild("UnloadIslands")
 
+        -- Don't permanently cache an empty scan if the game hasn't finished
+        -- creating Map/UnloadIslands yet. A later toggle/scan can try again.
+        if not mapRoot and not unloadIslands then
+            return
+        end
+
+        staticChestLocationsScanned = true
+        scanRoot(mapRoot)
         scanRoot(unloadIslands)
 
         refreshStaticChestESP()
