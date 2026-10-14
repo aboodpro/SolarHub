@@ -24,11 +24,19 @@ function UI.Init(Shared)
     Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 8)
 
     local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainWindow"
+    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
     mainFrame.Size = UDim2.fromOffset(720, 430)
-    mainFrame.Position = UDim2.new(0.5, -360, 0.5, -215)
+    mainFrame.Position = UDim2.fromScale(0.5, 0.5)
     mainFrame.BackgroundColor3 = Color3.fromRGB(17, 17, 22)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
+
+    -- Keep the content area wide enough for the existing feature controls.
+    local windowSizeConstraint = Instance.new("UISizeConstraint")
+    windowSizeConstraint.MinSize = Vector2.new(560, 330)
+    windowSizeConstraint.MaxSize = Vector2.new(1400, 900)
+    windowSizeConstraint.Parent = mainFrame
 
     local mainCorner = Instance.new("UICorner")
     mainCorner.CornerRadius = UDim.new(0, 14)
@@ -84,7 +92,7 @@ function UI.Init(Shared)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             resizing = true
             resizeStart = input.Position
-            startSize = mainFrame.AbsoluteSize
+            startSize = Vector2.new(mainFrame.Size.X.Offset, mainFrame.Size.Y.Offset)
         end
     end)
     UserInputService.InputEnded:Connect(function(input)
@@ -93,8 +101,13 @@ function UI.Init(Shared)
     UserInputService.InputChanged:Connect(function(input)
         if resizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - resizeStart
-            local newWidth = math.clamp(startSize.X + delta.X, 400, 1400)
-            local newHeight = math.clamp(startSize.Y + delta.Y, 250, 900)
+            local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+                or Vector2.new(1920, 1080)
+            local maxWidth = math.max(560, math.min(1400, viewport.X - 24))
+            local maxHeight = math.max(330, math.min(900, viewport.Y - 24))
+            -- startSize is the unscaled layout size; AbsoluteSize includes UIScale.
+            local newWidth = math.clamp(startSize.X + delta.X, 560, maxWidth)
+            local newHeight = math.clamp(startSize.Y + delta.Y, 330, maxHeight)
             mainFrame.Size = UDim2.fromOffset(newWidth, newHeight)
         end
     end)
@@ -764,7 +777,7 @@ function UI.Init(Shared)
 
         resetButton.Activated:Connect(function()
             mainFrame.Size = UDim2.fromOffset(720, 430)
-            mainFrame.Position = UDim2.new(0.5, -360, 0.5, -215)
+            mainFrame.Position = UDim2.fromScale(0.5, 0.5)
             uiScaleSlider.setValue(100)
         end)
     end
