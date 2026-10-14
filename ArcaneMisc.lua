@@ -640,7 +640,6 @@ local function getChestType(target)
         hasSkyType = hasSkyType
             or normalized == "sky"
             or normalized:find("skychest", 1, true) ~= nil
-            or normalized:find("skyhall", 1, true) ~= nil
         hasChestIdentity = hasChestIdentity
             or normalized:find("chest", 1, true) ~= nil
             or normalized:find("buriedtreasure", 1, true) ~= nil
@@ -686,7 +685,7 @@ local function getChestType(target)
     -- Sky Chests are tied to Skyhall and nearby sky islands. The game may
     -- name those objects generically, so use the location only when the chest
     -- itself has no more specific exposed type.
-    if genericCommon and hasSkyhall then return "SKY" end
+    if hasSkyhall and hasChestIdentity then return "SKY" end
     if genericCommon then return "COMMON" end
     return "OTHER"
 end
