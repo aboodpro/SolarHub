@@ -611,6 +611,13 @@ local function getChestType(target)
         return nil
     end
 
+    -- Some exact variants are exposed as a short model name without "Chest".
+    if target:IsA("Model") then
+        local targetName = normalizeChestText(target.Name)
+        if targetName == "sky" then return "SKY" end
+        if targetName == "privatestorage" then return "PRIVATE_STORAGE" end
+    end
+
     -- Buried treasure found through Treasure Charts is not a separate chest type;
     -- classify it by its actual rarity (or as Sealed if the object is sealed).
 
