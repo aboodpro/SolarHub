@@ -373,6 +373,7 @@ end
 -- ARCANE CHEST TYPES / FILTER REGISTRY
 -------------------------------------------------
 
+-- Selectable groups: Treasure Chests by variant, plus one combined Sealed Chest filter.
 local CHEST_TYPE_ORDER = {
     "COMMON",
     "UNCOMMON",
@@ -381,12 +382,7 @@ local CHEST_TYPE_ORDER = {
     "LEGENDARY",
     "PRIVATE_STORAGE",
     "SKY",
-    "STEEL",
-    "BRONZE_SEALED",
-    "NIMBUS_SEALED",
-    "DARK_SEALED",
-    "TREASURE_MAP",
-    "OTHER",
+    "SEALED",
 }
 
 local CHEST_DISPLAY_NAMES = {
@@ -397,6 +393,7 @@ local CHEST_DISPLAY_NAMES = {
     LEGENDARY = "Legendary Chest",
     PRIVATE_STORAGE = "Private Storage Chest",
     SKY = "Sky Chest",
+    SEALED = "Sealed Chests (Bronze / Nimbus / Dark)",
     STEEL = "Steel Chest",
     BRONZE_SEALED = "Bronze Sealed Chest",
     NIMBUS_SEALED = "Nimbus Sealed Chest",
@@ -413,10 +410,11 @@ local CHEST_COLORS = {
     LEGENDARY = Color3.fromRGB(70, 220, 105),
     PRIVATE_STORAGE = Color3.fromRGB(175, 175, 185),
     SKY = Color3.fromRGB(175, 175, 185),
+    SEALED = Color3.fromRGB(80, 205, 190),
     STEEL = Color3.fromRGB(175, 175, 185),
-    BRONZE_SEALED = Color3.fromRGB(175, 175, 185),
-    NIMBUS_SEALED = Color3.fromRGB(175, 175, 185),
-    DARK_SEALED = Color3.fromRGB(175, 175, 185),
+    BRONZE_SEALED = Color3.fromRGB(220, 150, 75),
+    NIMBUS_SEALED = Color3.fromRGB(75, 190, 255),
+    DARK_SEALED = Color3.fromRGB(185, 85, 255),
     TREASURE_MAP = Color3.fromRGB(255, 200, 70),
     OTHER = Color3.fromRGB(175, 175, 185),
 }
@@ -432,16 +430,18 @@ local function classifyChestText(value)
         return nil
     end
 
-    if text:find("darksealed", 1, true) then
-        return "DARK_SEALED"
-    end
-
-    if text:find("nimbussealed", 1, true) then
-        return "NIMBUS_SEALED"
-    end
-
-    if text:find("bronze", 1, true) and text:find("sealed", 1, true) then
-        return "BRONZE_SEALED"
+    -- One toggle controls all sealed types; keep the specific type as metadata for labels.
+    if text:find("sealed", 1, true) then
+        if text:find("dark", 1, true) or text:find("atlantean", 1, true) then
+            return "DARK_SEALED"
+        end
+        if text:find("nimbus", 1, true) then
+            return "NIMBUS_SEALED"
+        end
+        if text:find("bronze", 1, true) then
+            return "BRONZE_SEALED"
+        end
+        return "SEALED"
     end
 
     if text:find("privatestorage", 1, true) then
@@ -584,31 +584,52 @@ local function getChestType(target)
         return nil
     end
 
-    if isTreasureMapChest(target) then
-        return "TREASURE_MAP"
-    end
+    -- Buried treasure found through Treasure Charts is not a separate chest type;
+    -- classify it by its actual rarity (or as Sealed if the object is sealed).
 
     -- Prefer specific rarity/type data over the generic "Treasure Chest"
     -- name. A live Rare Chest can still be named Treasure Chest while its
     -- actual rarity is exposed by a value, attribute, prompt, or child.
     local genericCommon = false
+    local genericSealed = false
+    local sources = collectChestTextSources(target)
 
-    for _, source in ipairs(collectChestTextSources(target)) do
+    for _, source in ipairs(sources) do
         local chestType = classifyChestText(source)
-
-        if chestType then
-            if chestType == "COMMON" then
-                genericCommon = true
-            else
-                return chestType
-            end
+        if chestType == "COMMON" then
+            genericCommon = true
+        elseif chestType == "SEALED" then
+            genericSealed = true
+        elseif chestType then
+            return chestType
         end
     end
 
+    -- Resolve subtype identifiers which the game splits between a chest
+    -- model and its nearby parent/container names.
+    local hasSealed, hasBronze, hasNimbus, hasDark = false, false, false, false
+    for _, source in ipairs(sources) do
+        local normalized = normalizeChestText(source)
+        hasSealed = hasSealed or normalized:find("sealed", 1, true) ~= nil
+        hasBronze = hasBronze or normalized:find("bronze", 1, true) ~= nil
+        hasNimbus = hasNimbus or normalized:find("nimbus", 1, true) ~= nil
+        hasDark = hasDark or normalized:find("dark", 1, true) ~= nil
+            or normalized:find("atlantean", 1, true) ~= nil
+    end
+
+    if hasSealed then
+        if hasDark then return "DARK_SEALED" end
+        if hasNimbus then return "NIMBUS_SEALED" end
+        if hasBronze then return "BRONZE_SEALED" end
+        return "SEALED"
+    end
+
+    if genericSealed then
+        return "SEALED"
+    end
     if genericCommon then
         return "COMMON"
     end
-
     return "OTHER"
 end
 
@@ -661,6 +682,17 @@ local function isChestFilterEnabled(Config, chestType)
 
     if type(filter) ~= "table" then
         return true
+    end
+
+    if chestType == "SEALED"
+        or chestType == "BRONZE_SEALED"
+        or chestType == "NIMBUS_SEALED"
+        or chestType == "DARK_SEALED" then
+        -- Accept old saved per-variant keys, but only one Sealed toggle is shown now.
+        return filter.SEALED == true
+            or filter.BRONZE_SEALED == true
+            or filter.NIMBUS_SEALED == true
+            or filter.DARK_SEALED == true
     end
 
     return filter[chestType] == true
@@ -2829,7 +2861,9 @@ function ArcaneMisc.Init(Shared, UI, Context)
     end
 
     for _, chestType in ipairs(CHEST_TYPE_ORDER) do
-        Config.ArcaneChestFilter[chestType] = false
+        if Config.ArcaneChestFilter[chestType] == nil then
+            Config.ArcaneChestFilter[chestType] = false
+        end
     end
 
     -- Chest scanning:
