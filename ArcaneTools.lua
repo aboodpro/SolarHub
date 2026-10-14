@@ -96,7 +96,9 @@ function ArcaneTools.Init(Shared, UI, Context)
             LEGENDARY = "Legendary",
             PRIVATE_STORAGE = "Private Storage",
             SKY = "Sky",
-            SEALED = "Sealed Chests (Bronze/Nimbus/Dark)",
+            BRONZE_SEALED = "Bronze Sealed",
+            NIMBUS_SEALED = "Nimbus Sealed",
+            DARK_SEALED = "Dark Sealed",
         }
         local result = {}
         local filters = Config.ArcaneChestFilter
