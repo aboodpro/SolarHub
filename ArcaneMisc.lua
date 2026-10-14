@@ -1491,7 +1491,7 @@ local function runDebugScan(setText)
             local normalized = normalizeName(model.Name)
 
             return normalized:find("chest", 1, true) ~= nil
-                or normalized:find("treasure", 1, true) ~= nil
+                or normalized:find("buriedtreasure", 1, true) ~= nil
                 or normalized:find("sealed", 1, true) ~= nil
                 or normalized == "common"
                 or normalized == "uncommon"
@@ -2020,7 +2020,7 @@ local function runChestDebug(setText, Config)
                 local normalized = normalizeName(value)
 
                 return normalized:find("chest", 1, true) ~= nil
-                    or normalized:find("treasure", 1, true) ~= nil
+                    or normalized:find("buriedtreasure", 1, true) ~= nil
                     or normalized:find("sealed", 1, true) ~= nil
                     or normalized == "common"
                     or normalized == "uncommon"
@@ -4859,7 +4859,7 @@ scanAllWorkspaceChests = function()
             local normalized = normalizeName(instance.Name)
 
             if normalized:find("chest", 1, true)
-                or normalized:find("treasure", 1, true)
+                or normalized:find("buriedtreasure", 1, true)
                 or normalized:find("sealed", 1, true)
                 or normalized == "rare"
                 or normalized == "uncommon"
