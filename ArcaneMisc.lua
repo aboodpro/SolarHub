@@ -382,7 +382,9 @@ local CHEST_TYPE_ORDER = {
     "LEGENDARY",
     "PRIVATE_STORAGE",
     "SKY",
-    "SEALED",
+    "BRONZE_SEALED",
+    "NIMBUS_SEALED",
+    "DARK_SEALED",
 }
 
 local CHEST_DISPLAY_NAMES = {
@@ -393,7 +395,7 @@ local CHEST_DISPLAY_NAMES = {
     LEGENDARY = "Legendary Chest",
     PRIVATE_STORAGE = "Private Storage Chest",
     SKY = "Sky Chest",
-    SEALED = "Sealed Chests (Bronze / Nimbus / Dark)",
+    SEALED = "Sealed Chest (Type Unknown)",
     STEEL = "Steel Chest",
     BRONZE_SEALED = "Bronze Sealed Chest",
     NIMBUS_SEALED = "Nimbus Sealed Chest",
@@ -748,15 +750,18 @@ local function isChestFilterEnabled(Config, chestType)
         return true
     end
 
-    if chestType == "SEALED"
-        or chestType == "BRONZE_SEALED"
-        or chestType == "NIMBUS_SEALED"
-        or chestType == "DARK_SEALED" then
-        -- Accept old saved per-variant keys, but only one Sealed toggle is shown now.
-        return filter.SEALED == true
-            or filter.BRONZE_SEALED == true
+    if chestType == "SEALED" then
+        -- If the game hides the subtype in its instance data, show a generic
+        -- sealed marker whenever the user has selected at least one sealed type.
+        return filter.BRONZE_SEALED == true
             or filter.NIMBUS_SEALED == true
             or filter.DARK_SEALED == true
+    end
+
+    if chestType == "BRONZE_SEALED"
+        or chestType == "NIMBUS_SEALED"
+        or chestType == "DARK_SEALED" then
+        return filter[chestType] == true
     end
 
     return filter[chestType] == true
@@ -2932,12 +2937,14 @@ function ArcaneMisc.Init(Shared, UI, Context)
     if type(Config.ArcaneChestFilter) ~= "table" then
         Config.ArcaneChestFilter = {}
     end
-    if Config.ArcaneChestFilter.SEALED == nil then
-        Config.ArcaneChestFilter.SEALED =
-            Config.ArcaneChestFilter.BRONZE_SEALED == true
-            or Config.ArcaneChestFilter.NIMBUS_SEALED == true
-            or Config.ArcaneChestFilter.DARK_SEALED == true
+    if Config.ArcaneChestFilter.SEALED == true then
+        Config.ArcaneChestFilter.BRONZE_SEALED = true
+        Config.ArcaneChestFilter.NIMBUS_SEALED = true
+        Config.ArcaneChestFilter.DARK_SEALED = true
     end
+    -- Remove the legacy single filter after migration so it cannot override
+    -- the three independent subtype switches.
+    Config.ArcaneChestFilter.SEALED = nil
 
     for _, chestType in ipairs(CHEST_TYPE_ORDER) do
         if Config.ArcaneChestFilter[chestType] == nil then
@@ -3222,7 +3229,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local chestSection = UI.createSection(
         miscTab,
         "Chest ESP",
-        650
+        680
     )
 
     UI.createToggle(
@@ -3356,14 +3363,30 @@ function ArcaneMisc.Init(Shared, UI, Context)
     sealedHeader.TextXAlignment = Enum.TextXAlignment.Left
     sealedHeader.Parent = chestSection
 
-    -- One option covers Bronze, Nimbus, and Dark sealed chests.
-    createChestFilterButton(
-        "SEALED",
-        UDim2.fromOffset(8, 322),
-        UDim2.new(1, -16, 0, 40)
-    )
+    -- Three subtype filters live under this single Sealed Chests group;
+    -- the main Chest ESP toggle above is the only master ESP switch.
+    local SEALED_CHEST_FILTERS = {
+        "BRONZE_SEALED",
+        "NIMBUS_SEALED",
+        "DARK_SEALED",
+    }
+    local sealedGridStartY = 322
+    for index, chestType in ipairs(SEALED_CHEST_FILTERS) do
+        local column = (index - 1) % 2
+        local row = math.floor((index - 1) / 2)
+        createChestFilterButton(
+            chestType,
+            UDim2.new(
+                column * 0.5,
+                column == 0 and 8 or 5,
+                0,
+                sealedGridStartY + row * (cardHeight + cardGap)
+            ),
+            UDim2.new(0.5, -13, 0, cardHeight)
+        )
+    end
 
-    local controlsY = 370
+    local controlsY = 416
 
     local selectAllButton = Instance.new("TextButton")
     selectAllButton.Size = UDim2.new(0.5, -13, 0, 28)
