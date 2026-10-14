@@ -5,6 +5,7 @@ function UI.Init(Shared)
     local playerGui = Shared.playerGui
     local Config = Shared.Config
     local UserInputService = Shared.UserInputService
+    Shared.configRefreshers = Shared.configRefreshers or {}
 
     if playerGui:FindFirstChild("SolarHub") then playerGui.SolarHub:Destroy() end
 
@@ -315,9 +316,15 @@ function UI.Init(Shared)
         indicator.Parent = toggleBtnItem
         Instance.new("UICorner", indicator).CornerRadius = UDim.new(0, 4)
 
+        local function refreshToggle()
+            indicator.BackgroundColor3 = Config[configKey] and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(50, 50, 60)
+        end
+        Shared.configRefreshers[configKey] = refreshToggle
+        refreshToggle()
+
         toggleBtnItem.Activated:Connect(function()
             Config[configKey] = not Config[configKey]
-            indicator.BackgroundColor3 = Config[configKey] and Color3.fromRGB(220, 140, 40) or Color3.fromRGB(50, 50, 60)
+            refreshToggle()
 
             if Config.MacroDebug == true and type(Shared.logLine) == "function" then
                 Shared.logLine(
@@ -397,6 +404,12 @@ function UI.Init(Shared)
         local listLayout = Instance.new("UIListLayout")
         listLayout.Parent = listFrame
 
+        local function refreshDropdown()
+            valueLbl.Text = tostring(Config[configKey])
+        end
+        Shared.configRefreshers[configKey] = refreshDropdown
+        refreshDropdown()
+
         for _, opt in ipairs(options) do
             local optBtn = Instance.new("TextButton")
             optBtn.Size = UDim2.new(1, 0, 0, 22)
@@ -412,7 +425,7 @@ function UI.Init(Shared)
 
             optBtn.Activated:Connect(function()
                 Config[configKey] = opt
-                valueLbl.Text = tostring(opt)
+                refreshDropdown()
                 listFrame.Visible = false
 
                 if Config.MacroDebug == true and type(Shared.logLine) == "function" then
@@ -603,6 +616,9 @@ function UI.Init(Shared)
         end
 
         setValue(value)
+        Shared.configRefreshers[configKey] = function()
+            setValue(Config[configKey])
+        end
 
         local function beginDrag(input)
             dragging = true
