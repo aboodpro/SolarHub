@@ -2849,7 +2849,6 @@ function ArcaneMisc.Init(Shared, UI, Context)
         chestRecoveries = 0,
     }
     local chestStats = Shared.SolarHubStats
-    Config = Shared.Config
 
     local function markSolarHubVisual(instance)
         if not instance then
