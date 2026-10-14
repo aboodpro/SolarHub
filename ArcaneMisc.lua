@@ -605,19 +605,9 @@ local function getChestType(target)
     local genericSealed = false
     local sources = collectChestTextSources(target)
 
-    for _, source in ipairs(sources) do
-        local chestType = classifyChestText(source)
-        if chestType == "COMMON" then
-            genericCommon = true
-        elseif chestType == "SEALED" then
-            genericSealed = true
-        elseif chestType then
-            return chestType
-        end
-    end
-
-    -- Resolve subtype identifiers which the game splits between a chest
-    -- model and its nearby parent/container names.
+    -- First determine whether this object is sealed at all. Some games expose
+    -- "SealedChest" on the model and "Bronze"/"Nimbus"/"Dark" on a parent or
+    -- metadata value; sealed classification must take priority over rarity words.
     local hasSealed, hasBronze, hasNimbus, hasDark = false, false, false, false
     for _, source in ipairs(sources) do
         local normalized = normalizeChestText(source)
@@ -626,6 +616,13 @@ local function getChestType(target)
         hasNimbus = hasNimbus or normalized:find("nimbus", 1, true) ~= nil
         hasDark = hasDark or normalized:find("dark", 1, true) ~= nil
             or normalized:find("atlantean", 1, true) ~= nil
+
+        local chestType = classifyChestText(source)
+        if chestType == "COMMON" then
+            genericCommon = true
+        elseif chestType == "SEALED" then
+            genericSealed = true
+        end
     end
 
     if hasSealed then
@@ -633,14 +630,23 @@ local function getChestType(target)
         if hasNimbus then return "NIMBUS_SEALED" end
         if hasBronze then return "BRONZE_SEALED" end
         return "SEALED"
-    end
-
-    if genericSealed then
+    elseif genericSealed then
         return "SEALED"
     end
-    if genericCommon then
-        return "COMMON"
+
+    -- No sealed chest found: prefer a specific Treasure Chest type (rare,
+    -- mystic, legendary, private storage, sky) before generic Common.
+    for _, source in ipairs(sources) do
+        local chestType = classifyChestText(source)
+        if chestType and chestType ~= "COMMON" and chestType ~= "SEALED"
+            and chestType ~= "BRONZE_SEALED"
+            and chestType ~= "NIMBUS_SEALED"
+            and chestType ~= "DARK_SEALED" then
+            return chestType
+        end
     end
+
+    if genericCommon then return "COMMON" end
     return "OTHER"
 end
 
@@ -670,7 +676,7 @@ local function getChestTypeFast(target)
     -- Generic Treasure Chest is deliberately deferred to getChestType(),
     -- because its real live rarity may be stored in metadata/prompt values.
     local chestType = classifyChestText(text)
-    if chestType and chestType ~= "COMMON" then
+    if chestType and chestType ~= "COMMON" and chestType ~= "SEALED" then
         return chestType
     end
 
@@ -680,7 +686,7 @@ local function getChestTypeFast(target)
 
     if model then
         chestType = classifyChestText(model.Name)
-        if chestType and chestType ~= "COMMON" then
+        if chestType and chestType ~= "COMMON" and chestType ~= "SEALED" then
             return chestType
         end
     end
