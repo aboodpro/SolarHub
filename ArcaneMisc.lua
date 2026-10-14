@@ -3154,13 +3154,13 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local chestSection = UI.createSection(
         miscTab,
         "Chest ESP",
-        620
+        650
     )
 
     UI.createToggle(
         chestSection,
         "Chest ESP",
-        "Shows selected chest types with name, rarity and distance.",
+        "Highlights the selected chest types and shows their distance.",
         "ArcaneChestESP",
         34
     )
@@ -3169,7 +3169,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     chestHeader.Size = UDim2.new(1, -20, 0, 28)
     chestHeader.Position = UDim2.fromOffset(10, 80)
     chestHeader.BackgroundTransparency = 1
-    chestHeader.Text = "CHEST TYPES"
+    chestHeader.Text = "TREASURE CHESTS"
     chestHeader.TextColor3 = Color3.fromRGB(220, 220, 230)
     chestHeader.Font = Enum.Font.GothamBold
     chestHeader.TextSize = 10
@@ -3186,48 +3186,26 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local chestFilterButtons = {}
 
     local function updateChestFilterButton(chestType)
-        local buttonData = chestFilterButtons[chestType]
-        if not buttonData then
-            return
-        end
-
+        local data = chestFilterButtons[chestType]
+        if not data then return end
         local enabled = Config.ArcaneChestFilter[chestType] == true
 
-        buttonData.indicator.BackgroundColor3 = enabled
+        data.indicator.BackgroundColor3 = enabled
             and CHEST_COLORS[chestType]
             or Color3.fromRGB(48, 48, 58)
-
-        buttonData.text.TextColor3 = enabled
+        data.check.Text = enabled and "✓" or ""
+        data.text.TextColor3 = enabled
             and Color3.fromRGB(245, 245, 248)
             or Color3.fromRGB(135, 135, 145)
-
-        buttonData.check.Text = enabled and "✓" or ""
+        data.button.BackgroundColor3 = enabled
+            and Color3.fromRGB(39, 38, 39)
+            or Color3.fromRGB(31, 31, 40)
     end
 
-    -- Compact 2-column filter grid: much easier to scan visually than a
-    -- separate slider for every chest rarity.
-    local gridStartY = 114
-    local cardWidth = 0.5
-    local cardHeight = 40
-    local cardGap = 6
-
-    for index, chestType in ipairs(CHEST_TYPE_ORDER) do
-        local column = (index - 1) % 2
-        local row = math.floor((index - 1) / 2)
-
+    local function createChestFilterButton(chestType, position, size)
         local card = Instance.new("TextButton")
-        card.Size = UDim2.new(
-            cardWidth,
-            -13,
-            0,
-            cardHeight
-        )
-        card.Position = UDim2.new(
-            column * 0.5,
-            column == 0 and 8 or 5,
-            0,
-            gridStartY + row * (cardHeight + cardGap)
-        )
+        card.Size = size
+        card.Position = position
         card.BackgroundColor3 = Color3.fromRGB(31, 31, 40)
         card.BorderSizePixel = 0
         card.Text = ""
@@ -3266,21 +3244,58 @@ function ArcaneMisc.Init(Shared, UI, Context)
             check = check,
             text = textLabel,
         }
-
         updateChestFilterButton(chestType)
 
         card.Activated:Connect(function()
-            Config.ArcaneChestFilter[chestType] = not (
-                Config.ArcaneChestFilter[chestType] == true
-            )
-
+            Config.ArcaneChestFilter[chestType] = not (Config.ArcaneChestFilter[chestType] == true)
             updateChestFilterButton(chestType)
             scanSelectedChests()
         end)
     end
 
-    local filterRows = math.ceil(#CHEST_TYPE_ORDER / 2)
-    local controlsY = gridStartY + filterRows * (cardHeight + cardGap) + 12
+    -- Treasure Chests use independent rarity/type filters.
+    local TREASURE_CHEST_FILTERS = {
+        "COMMON", "UNCOMMON", "RARE", "MYSTIC",
+        "LEGENDARY", "PRIVATE_STORAGE", "SKY",
+    }
+    local gridStartY = 114
+    local cardHeight = 40
+    local cardGap = 6
+
+    for index, chestType in ipairs(TREASURE_CHEST_FILTERS) do
+        local column = (index - 1) % 2
+        local row = math.floor((index - 1) / 2)
+        createChestFilterButton(
+            chestType,
+            UDim2.new(
+                column * 0.5,
+                column == 0 and 8 or 5,
+                0,
+                gridStartY + row * (cardHeight + cardGap)
+            ),
+            UDim2.new(0.5, -13, 0, cardHeight)
+        )
+    end
+
+    local sealedHeader = Instance.new("TextLabel")
+    sealedHeader.Size = UDim2.new(1, -20, 0, 18)
+    sealedHeader.Position = UDim2.fromOffset(10, 302)
+    sealedHeader.BackgroundTransparency = 1
+    sealedHeader.Text = "SEALED CHESTS"
+    sealedHeader.TextColor3 = Color3.fromRGB(220, 220, 230)
+    sealedHeader.Font = Enum.Font.GothamBold
+    sealedHeader.TextSize = 10
+    sealedHeader.TextXAlignment = Enum.TextXAlignment.Left
+    sealedHeader.Parent = chestSection
+
+    -- One option covers Bronze, Nimbus, and Dark sealed chests.
+    createChestFilterButton(
+        "SEALED",
+        UDim2.fromOffset(8, 322),
+        UDim2.new(1, -16, 0, 40)
+    )
+
+    local controlsY = 370
 
     local selectAllButton = Instance.new("TextButton")
     selectAllButton.Size = UDim2.new(0.5, -13, 0, 28)
@@ -3322,9 +3337,17 @@ function ArcaneMisc.Init(Shared, UI, Context)
         scanSelectedChests()
     end)
 
+    -- Let the diagnostics/profile module restore saved category toggles and repaint this UI.
+    Shared.refreshArcaneChestFilters = function()
+        for _, chestType in ipairs(CHEST_TYPE_ORDER) do
+            updateChestFilterButton(chestType)
+        end
+        scanSelectedChests()
+    end
+
     local scanControlsTitle = Instance.new("TextLabel")
     scanControlsTitle.Size = UDim2.new(1, -20, 0, 24)
-    scanControlsTitle.Position = UDim2.fromOffset(10, controlsY + 40)
+    scanControlsTitle.Position = UDim2.fromOffset(10, controlsY + 38)
     scanControlsTitle.BackgroundTransparency = 1
     scanControlsTitle.Text = "SCAN RANGE"
     scanControlsTitle.TextColor3 = Color3.fromRGB(220, 220, 230)
@@ -3338,7 +3361,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         "Infinite Distance Scan",
         "OFF = use a bounded scan. ON = scan every cached chest location regardless of distance.",
         "ArcaneInfiniteDistanceScan",
-        controlsY + 66
+        controlsY + 68
     )
 
     UI.createToggle(
@@ -3346,7 +3369,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         "Scan Distance Limit",
         "When enabled, only chest locations inside the selected radius are processed/displayed.",
         "ArcaneChestScanDistanceLimitEnabled",
-        controlsY + 108
+        controlsY + 114
     )
 
     local scanSlider = UI.createSlider(
@@ -3356,7 +3379,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
         1,
         100000,
         10,
-        controlsY + 151,
+        controlsY + 160,
         330,
         function(value)
             Config.ArcaneChestScanDistance = math.clamp(
@@ -3372,7 +3395,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local scanHint = Instance.new("TextLabel")
     scanHint.Size = UDim2.new(1, -20, 0, 32)
-    scanHint.Position = UDim2.fromOffset(10, controlsY + 200)
+    scanHint.Position = UDim2.fromOffset(10, controlsY + 207)
     scanHint.BackgroundTransparency = 1
     scanHint.Text = "Tip: type a number in the slider box (example: 30000) instead of dragging."
     scanHint.TextColor3 = Color3.fromRGB(130, 130, 140)
