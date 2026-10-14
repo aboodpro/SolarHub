@@ -384,6 +384,19 @@ function ArcaneTools.Init(Shared, UI, Context)
                 Config[key] = cloneSerializable(profile[key])
             end
         end
+
+        -- Migrate profiles saved before Sealed Chest types had their own
+        -- switches. A legacy single SEALED=true meant all three variants.
+        if type(Config.ArcaneChestFilter) == "table"
+            and Config.ArcaneChestFilter.SEALED == true then
+            Config.ArcaneChestFilter.BRONZE_SEALED = true
+            Config.ArcaneChestFilter.NIMBUS_SEALED = true
+            Config.ArcaneChestFilter.DARK_SEALED = true
+        end
+        if type(Config.ArcaneChestFilter) == "table" then
+            Config.ArcaneChestFilter.SEALED = nil
+        end
+
         if type(Shared.refreshArcaneChestFilters) == "function" then
             pcall(Shared.refreshArcaneChestFilters)
         end
