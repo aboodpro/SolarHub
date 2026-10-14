@@ -608,7 +608,8 @@ local function getChestType(target)
     -- First determine whether this object is sealed at all. Some games expose
     -- "SealedChest" on the model and "Bronze"/"Nimbus"/"Dark" on a parent or
     -- metadata value; sealed classification must take priority over rarity words.
-    local hasSealed, hasBronze, hasNimbus, hasDark = false, false, false, false
+    local hasSealed, hasBronze, hasNimbus, hasDark, hasSkyhall =
+        false, false, false, false, false
     for _, source in ipairs(sources) do
         local normalized = normalizeChestText(source)
         hasSealed = hasSealed or normalized:find("sealed", 1, true) ~= nil
@@ -616,6 +617,7 @@ local function getChestType(target)
         hasNimbus = hasNimbus or normalized:find("nimbus", 1, true) ~= nil
         hasDark = hasDark or normalized:find("dark", 1, true) ~= nil
             or normalized:find("atlantean", 1, true) ~= nil
+        hasSkyhall = hasSkyhall or normalized:find("skyhall", 1, true) ~= nil
 
         local chestType = classifyChestText(source)
         if chestType == "COMMON" then
@@ -646,6 +648,10 @@ local function getChestType(target)
         end
     end
 
+    -- Sky Chests are tied to Skyhall and nearby sky islands. The game may
+    -- name those objects generically, so use the location only when the chest
+    -- itself has no more specific exposed type.
+    if genericCommon and hasSkyhall then return "SKY" end
     if genericCommon then return "COMMON" end
     return "OTHER"
 end
