@@ -2841,6 +2841,16 @@ end
 -------------------------------------------------
 
 function ArcaneMisc.Init(Shared, UI, Context)
+    Shared.SolarHubStats = Shared.SolarHubStats or {
+        chestScans = 0,
+        chestsDetected = 0,
+        chestMarkersCreated = 0,
+        chestScanErrors = 0,
+        chestRecoveries = 0,
+    }
+    local chestStats = Shared.SolarHubStats
+    Config = Shared.Config
+
     local function markSolarHubVisual(instance)
         if not instance then
             return
@@ -2869,6 +2879,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
     -- Chest filters start OFF. The user selects the chest types they want.
     if type(Config.ArcaneChestFilter) ~= "table" then
         Config.ArcaneChestFilter = {}
+    end
+    if Config.ArcaneChestFilter.SEALED == nil then
+        Config.ArcaneChestFilter.SEALED =
+            Config.ArcaneChestFilter.BRONZE_SEALED == true
+            or Config.ArcaneChestFilter.NIMBUS_SEALED == true
+            or Config.ArcaneChestFilter.DARK_SEALED == true
     end
 
     for _, chestType in ipairs(CHEST_TYPE_ORDER) do
@@ -3939,6 +3955,7 @@ local function createChestESP(target)
             label = label,
             chestType = chestType,
         }
+        chestStats.chestMarkersCreated = (chestStats.chestMarkersCreated or 0) + 1
     end
 
     local localChestTagObjects = {}
@@ -4107,6 +4124,7 @@ local function createChestESP(target)
             position = position,
             chestType = chestType,
         }
+        chestStats.chestMarkersCreated = (chestStats.chestMarkersCreated or 0) + 1
     end
 
     local function getStaticChestLocationKey(position, chestType)
@@ -4624,6 +4642,9 @@ local proximityPromptService = game:GetService("ProximityPromptService")
     end
 
     localChestTagObjects[chest] = true
+    if not chestCandidates[chest] then
+        chestStats.chestsDetected = (chestStats.chestsDetected or 0) + 1
+    end
     chestCandidates[chest] = true
 
     createChestESP(chest)
@@ -4638,6 +4659,7 @@ local proximityPromptService = game:GetService("ProximityPromptService")
 end
 
 scanAllWorkspaceChests = function()
+        chestStats.chestScans = (chestStats.chestScans or 0) + 1
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
@@ -4766,11 +4788,32 @@ scanAllWorkspaceChests = function()
             and not workspaceChestScanRunning then
             workspaceChestScanRunning = true
             task.spawn(function()
-                local ok, err = xpcall(scanAllWorkspaceChests, debug.traceback)
-                workspaceChestScanRunning = false
-                if not ok then
-                    warn("[SolarHub] Chest ESP scan failed: " .. tostring(err))
+                local function attemptScan(attempt)
+                    if not isArcaneSessionActive() then
+                        workspaceChestScanRunning = false
+                        return
+                    end
+
+                    local ok, err = xpcall(scanAllWorkspaceChests, debug.traceback)
+                    if ok then
+                        workspaceChestScanRunning = false
+                        return
+                    end
+
+                    chestStats.chestScanErrors = (chestStats.chestScanErrors or 0) + 1
+                    warn("[SolarHub] Chest ESP scan failed (attempt "
+                        .. tostring(attempt) .. "): " .. tostring(err))
+
+                    if Config.SolarRecoveryEnabled ~= false and attempt < 3 then
+                        chestStats.chestRecoveries = (chestStats.chestRecoveries or 0) + 1
+                        task.delay(0.35 * attempt, function()
+                            attemptScan(attempt + 1)
+                        end)
+                    else
+                        workspaceChestScanRunning = false
+                    end
                 end
+                attemptScan(1)
             end)
         end
     end
@@ -5778,7 +5821,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
     task.spawn(function()
         while isArcaneSessionActive() do
-            task.wait(0.25)
+            local loopStep = Config.SolarPerformanceMode == true and 0.75 or 0.25
+            task.wait(loopStep)
 
             local wantedCriminalEnabled = Config.ArcaneWantedCriminalESP == true
             if wantedCriminalEnabled and not lastWantedCriminalESPEnabled then
@@ -5844,10 +5888,11 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 end
             end
 
-            targetedScanAccumulator += 0.25
-            chestScanAccumulator += 0.25
+            targetedScanAccumulator += loopStep
+            chestScanAccumulator += loopStep
 
-            if targetedScanAccumulator >= 1.5 then
+            local targetedScanInterval = Config.SolarPerformanceMode == true and 3 or 1.5
+            if targetedScanAccumulator >= targetedScanInterval then
                 targetedScanAccumulator = 0
 
                 if Config.ArcaneBossESP
