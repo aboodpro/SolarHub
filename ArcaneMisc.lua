@@ -3145,7 +3145,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     statusLabel.Parent = section
 
     
-    local scanSelectedChests
+    local scanSelectedChests, scanAllWorkspaceChests
 
     -------------------------------------------------
     -- CHEST ESP / SCAN CONTROL UI
@@ -4177,13 +4177,12 @@ local function createChestESP(target)
     end
 
     local function refreshStaticChestESP()
-        if not Config.ArcaneChestESP
-            or not hasAnyChestFilterEnabled(Config) then
-            return
-        end
-
         for key, data in pairs(staticChestLocationCache) do
-            if isChestWithinScanDistance(data.position) then
+            if not Config.ArcaneChestESP
+                or not hasAnyChestFilterEnabled(Config)
+                or not isChestFilterEnabled(Config, data.chestType) then
+                destroyStaticChestESP(key)
+            elseif isChestWithinScanDistance(data.position) then
                 createStaticChestESP(
                     data.source,
                     data.chestType,
@@ -4638,7 +4637,7 @@ local proximityPromptService = game:GetService("ProximityPromptService")
     end
 end
 
-local function scanAllWorkspaceChests()
+scanAllWorkspaceChests = function()
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
@@ -4742,12 +4741,37 @@ local function scanAllWorkspaceChests()
         end
     end
 
-    -- Filter changes use the location cache instead of rescanning the map.
+    -- Filter changes refresh cached locations and re-inspect live chests.
+    -- Guard against overlapping yielding workspace scans when users click quickly.
+    local workspaceChestScanRunning = false
     scanSelectedChests = function()
         if not staticChestLocationsScanned then
             scanStaticChestLocations()
         else
             refreshStaticChestESP()
+        end
+
+        -- Remove live markers whose category has just been turned off.
+        for target, data in pairs(chestESPObjects) do
+            local chestType = data.chestType or chestTypeCache[target] or getChestType(target)
+            if not Config.ArcaneChestESP
+                or not isChestFilterEnabled(Config, chestType) then
+                destroyChestESP(target)
+            end
+        end
+
+        if Config.ArcaneChestESP
+            and hasAnyChestFilterEnabled(Config)
+            and type(scanAllWorkspaceChests) == "function"
+            and not workspaceChestScanRunning then
+            workspaceChestScanRunning = true
+            task.spawn(function()
+                local ok, err = xpcall(scanAllWorkspaceChests, debug.traceback)
+                workspaceChestScanRunning = false
+                if not ok then
+                    warn("[SolarHub] Chest ESP scan failed: " .. tostring(err))
+                end
+            end)
         end
     end
     local collectionService = game:GetService("CollectionService")
