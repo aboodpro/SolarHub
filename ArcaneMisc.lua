@@ -574,6 +574,22 @@ local function collectChestTextSources(target)
         end
 
         for _, child in ipairs(model:GetDescendants()) do
+            local childName = normalizeChestText(child.Name)
+            if childName:find("sealed", 1, true)
+                or childName:find("privatestorage", 1, true)
+                or childName:find("skychest", 1, true)
+                or childName:find("skyhall", 1, true)
+                or childName:find("bronze", 1, true)
+                or childName:find("nimbus", 1, true)
+                or childName:find("dark", 1, true)
+                or childName:find("legendary", 1, true)
+                or childName:find("mystic", 1, true)
+                or childName:find("uncommon", 1, true)
+                or childName:find("rare", 1, true)
+                or childName:find("common", 1, true) then
+                table.insert(sources, child.Name)
+            end
+
             if child:IsA("StringValue")
                 or child:IsA("IntValue")
                 or child:IsA("NumberValue") then
@@ -610,6 +626,7 @@ local function getChestType(target)
     -- metadata value; sealed classification must take priority over rarity words.
     local hasSealed, hasBronze, hasNimbus, hasDark, hasSkyhall =
         false, false, false, false, false
+    local hasPrivateStorage, hasSkyType, hasChestIdentity = false, false, false
     for _, source in ipairs(sources) do
         local normalized = normalizeChestText(source)
         hasSealed = hasSealed or normalized:find("sealed", 1, true) ~= nil
@@ -618,6 +635,15 @@ local function getChestType(target)
         hasDark = hasDark or normalized:find("dark", 1, true) ~= nil
             or normalized:find("atlantean", 1, true) ~= nil
         hasSkyhall = hasSkyhall or normalized:find("skyhall", 1, true) ~= nil
+        hasPrivateStorage = hasPrivateStorage
+            or normalized:find("privatestorage", 1, true) ~= nil
+        hasSkyType = hasSkyType
+            or normalized == "sky"
+            or normalized:find("skychest", 1, true) ~= nil
+            or normalized:find("skyhall", 1, true) ~= nil
+        hasChestIdentity = hasChestIdentity
+            or normalized:find("chest", 1, true) ~= nil
+            or normalized:find("buriedtreasure", 1, true) ~= nil
 
         local chestType = classifyChestText(source)
         if chestType == "COMMON" then
@@ -636,8 +662,17 @@ local function getChestType(target)
         return "SEALED"
     end
 
+    -- These are chest variants, not separate ESP systems. Give explicit
+    -- Private Storage metadata priority over generic common/rarity text.
+    if hasPrivateStorage and hasChestIdentity then
+        return "PRIVATE_STORAGE"
+    end
+    if hasSkyType and hasChestIdentity and not hasPrivateStorage then
+        return "SKY"
+    end
+
     -- No sealed chest found: prefer a specific Treasure Chest type (rare,
-    -- mystic, legendary, private storage, sky) before generic Common.
+    -- mystic, legendary) before falling back to generic Common.
     for _, source in ipairs(sources) do
         local chestType = classifyChestText(source)
         if chestType and chestType ~= "COMMON" and chestType ~= "SEALED"
