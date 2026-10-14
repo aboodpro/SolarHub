@@ -373,7 +373,7 @@ end
 -- ARCANE CHEST TYPES / FILTER REGISTRY
 -------------------------------------------------
 
--- Selectable groups: Treasure Chests by variant, plus one combined Sealed Chest filter.
+-- Selectable filters: seven Treasure Chest variants and three Sealed Chest variants.
 local CHEST_TYPE_ORDER = {
     "COMMON",
     "UNCOMMON",
