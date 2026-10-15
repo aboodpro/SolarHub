@@ -818,27 +818,49 @@ local function looksLikeChestModel(model)
 
     local normalized = normalizeName(model.Name)
 
-    -- Strong identity from the model name. A named chest is enough to identify
-    -- it; the actual root can be any BasePart when the model has no direct Base.
+    -- Ground Notes/player notes can mention a rarity (for example "Legendary")
+    -- and also have a BasePart + ProximityPrompt. They are not chest targets.
+    -- Exclude note-like object names before checking their parts/interactions.
+    local isNoteLike = normalized:find("note", 1, true) ~= nil
+        or normalized:find("letter", 1, true) ~= nil
+        or normalized:find("message", 1, true) ~= nil
+    if isNoteLike and not normalized:find("chest", 1, true) then
+        return false
+    end
+
+    local hasStandardChestShell = base and base:IsA("BasePart")
+        and lid and lid:IsA("BasePart")
+
+    -- Strong identity from a model name that explicitly says chest/sealed.
     if normalized:find("chest", 1, true)
         or normalized:find("buriedtreasure", 1, true)
-        or normalized:find("sealed", 1, true)
-        or normalized == "common"
+        or normalized:find("sealed", 1, true) then
+        return anyBasePart ~= nil
+    end
+
+    -- Short rarity names like "Legendary" are ambiguous: notes and other
+    -- pickups can have the same name. Accept them only with a chest shell or
+    -- an explicit game chest tag, not merely because they contain a BasePart.
+    local isRarityOnlyName = normalized == "common"
         or normalized == "uncommon"
         or normalized == "rare"
         or normalized == "mystic"
         or normalized == "legendary"
-        or normalized == "privatestorage"
+
+    if isRarityOnlyName then
+        return hasStandardChestShell == true or getChestTagState(model)
+    end
+
+    -- Explicit chest variants which may omit the word "Chest" from their name.
+    if normalized == "privatestorage"
         or normalized == "sky"
         or normalized == "steel" then
-
         return anyBasePart ~= nil
     end
 
     -- Some streamed/sealed chest variants use a generic Model name and expose
     -- their identity mainly through the standard Base + Lid part structure.
-    if base and base:IsA("BasePart")
-        and lid and lid:IsA("BasePart") then
+    if hasStandardChestShell then
         return true
     end
 
@@ -847,10 +869,9 @@ local function looksLikeChestModel(model)
         return true
     end
 
-    -- Generic chests: look for an interaction attached to THIS chest's Base,
-    -- not a prompt somewhere inside an outer underwater structure.
+    -- Generic interaction fallback must be attached under the named chest Base.
+    -- Do not treat an arbitrary prompted part (like a ground Note) as a chest.
     local interactionRoot = base
-        or anyBasePart
 
     if interactionRoot
         and interactionRoot:FindFirstChildWhichIsA("ProximityPrompt", true) then
