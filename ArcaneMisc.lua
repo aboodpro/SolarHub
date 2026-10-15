@@ -3452,10 +3452,19 @@ function ArcaneMisc.Init(Shared, UI, Context)
             or normalizedName:find("sailboat", 1, true) ~= nil
             or normalizedName:find("rowboat", 1, true) ~= nil
 
-        if hasVesselWord and normalizedName ~= ""
+        if normalizedName ~= ""
             and userIdText ~= ""
-            and normalizedName:find(userIdText, 1, true) ~= nil then
+            and normalizedName:find(userIdText, 1, true) ~= nil
+            and (hasVesselWord or normalizedName == userIdText) then
             return 70
+        end
+
+        -- A few builds name a player's ship with just the owner's username.
+        -- This fallback is only reached for a model already identified as boat-like.
+        if normalizedName ~= ""
+            and #normalizedPlayerName >= 3
+            and normalizedName == normalizedPlayerName then
+            return 60
         end
 
         if hasVesselWord and #normalizedPlayerName >= 3 then
