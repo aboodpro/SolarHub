@@ -3211,6 +3211,523 @@ function ArcaneMisc.Init(Shared, UI, Context)
     miscTab.CanvasPosition = Vector2.zero
 
     -------------------------------------------------
+    -- BOAT CONTROLS / OWNERSHIP-SAFE
+    -------------------------------------------------
+
+    Config.ArcaneBoatSpeedControl = Config.ArcaneBoatSpeedControl == true
+    Config.ArcaneBoatSpeed = math.clamp(
+        math.floor(tonumber(Config.ArcaneBoatSpeed) or 160),
+        30,
+        350
+    )
+
+    local boatPlayer = Shared.player
+    local ownedBoatCache = nil
+    local boatNextScanAt = 0
+    local boatSpeedConnection = nil
+    local boatSpeedStatus = ""
+
+    local boatSection = UI.createSection(
+        miscTab,
+        "Boat Controls",
+        216
+    )
+
+    local tpToBoatButton = Instance.new("TextButton")
+    tpToBoatButton.Name = "TPToOwnedBoatButton"
+    tpToBoatButton.Size = UDim2.new(1, -20, 0, 34)
+    tpToBoatButton.Position = UDim2.fromOffset(10, 40)
+    tpToBoatButton.BackgroundColor3 = Color3.fromRGB(54, 48, 35)
+    tpToBoatButton.BorderSizePixel = 0
+    tpToBoatButton.Text = "TP TO MY BOAT"
+    tpToBoatButton.TextColor3 = Color3.fromRGB(255, 220, 150)
+    tpToBoatButton.Font = Enum.Font.GothamBold
+    tpToBoatButton.TextSize = 10
+    tpToBoatButton.AutoButtonColor = true
+    tpToBoatButton.Parent = boatSection
+    Instance.new("UICorner", tpToBoatButton).CornerRadius = UDim.new(0, 8)
+
+    UI.createToggle(
+        boatSection,
+        "Boat Speed Control",
+        "Adjusts your verified boat's horizontal speed while it is moving.",
+        "ArcaneBoatSpeedControl",
+        80
+    )
+
+    local boatSpeedSlider = UI.createSlider(
+        boatSection,
+        "Boat Speed (studs/s)",
+        "ArcaneBoatSpeed",
+        30,
+        350,
+        10,
+        134,
+        330,
+        function(value)
+            Config.ArcaneBoatSpeed = math.clamp(
+                math.floor(tonumber(value) or 160),
+                30,
+                350
+            )
+        end
+    )
+    boatSpeedSlider.setValue(Config.ArcaneBoatSpeed)
+
+    local boatStatusLabel = Instance.new("TextLabel")
+    boatStatusLabel.Name = "BoatControlStatus"
+    boatStatusLabel.Size = UDim2.new(1, -20, 0, 28)
+    boatStatusLabel.Position = UDim2.fromOffset(10, 180)
+    boatStatusLabel.BackgroundTransparency = 1
+    boatStatusLabel.Text = "TP only targets a boat with ownership evidence."
+    boatStatusLabel.TextColor3 = Color3.fromRGB(145, 145, 155)
+    boatStatusLabel.Font = Enum.Font.Gotham
+    boatStatusLabel.TextSize = 8
+    boatStatusLabel.TextWrapped = true
+    boatStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    boatStatusLabel.Parent = boatSection
+
+    local function setBoatStatus(message, isError)
+        boatSpeedStatus = tostring(message or "")
+        if boatStatusLabel and boatStatusLabel.Parent then
+            boatStatusLabel.Text = boatSpeedStatus
+            boatStatusLabel.TextColor3 = isError
+                and Color3.fromRGB(255, 115, 105)
+                or Color3.fromRGB(220, 175, 95)
+        end
+    end
+
+    local function boatNormalize(value)
+        return tostring(value or ""):lower():gsub("[^%w]+", "")
+    end
+
+    local function isOwnerFieldName(value)
+        local key = boatNormalize(value)
+        return key == "owner"
+            or key == "ownerid"
+            or key == "owneruserid"
+            or key == "ownername"
+            or key == "boatowner"
+            or key == "shipowner"
+            or key == "player"
+            or key == "playerid"
+            or key == "playeruserid"
+            or key == "playername"
+            or key == "userid"
+            or key == "username"
+            or key == "creator"
+            or key == "creatorid"
+            or key == "creatoruserid"
+            or key == "pilot"
+            or key == "captain"
+    end
+
+    local function valueMatchesBoatPlayer(value)
+        if not boatPlayer then
+            return false
+        end
+
+        if typeof(value) == "Instance" then
+            if value == boatPlayer or value == boatPlayer.Character then
+                return true
+            end
+
+            local isPlayerObject = false
+            pcall(function()
+                isPlayerObject = value:IsA("Player")
+            end)
+            if isPlayerObject then
+                return value.UserId == boatPlayer.UserId
+            end
+
+            local objectName = boatNormalize(value.Name)
+            return objectName ~= ""
+                and objectName == boatNormalize(boatPlayer.Name)
+        end
+
+        if type(value) == "number" then
+            return value == boatPlayer.UserId
+        end
+
+        if type(value) == "string" then
+            local normalized = boatNormalize(value)
+            local playerName = boatNormalize(boatPlayer.Name)
+            local displayName = boatNormalize(boatPlayer.DisplayName)
+            local userIdText = tostring(boatPlayer.UserId)
+
+            return normalized == playerName
+                or normalized == displayName
+                or normalized == userIdText
+                or (#userIdText >= 5 and normalized:find(userIdText, 1, true) ~= nil)
+        end
+
+        return false
+    end
+
+    local function inspectBoatOwnerNode(node)
+        if not node then
+            return false
+        end
+
+        local okAttributes, attributes = pcall(function()
+            return node:GetAttributes()
+        end)
+        if okAttributes and type(attributes) == "table" then
+            for key, value in pairs(attributes) do
+                if isOwnerFieldName(key) and valueMatchesBoatPlayer(value) then
+                    return true
+                end
+            end
+        end
+
+        for _, child in ipairs(node:GetChildren()) do
+            if isOwnerFieldName(child.Name) then
+                local canReadValue = false
+                local childValue = nil
+                pcall(function()
+                    if child:IsA("ObjectValue")
+                        or child:IsA("StringValue")
+                        or child:IsA("IntValue")
+                        or child:IsA("NumberValue") then
+                        childValue = child.Value
+                        canReadValue = true
+                    end
+                end)
+
+                if canReadValue and valueMatchesBoatPlayer(childValue) then
+                    return true
+                end
+            end
+        end
+
+        return false
+    end
+
+    local function getBoatOwnerEvidenceScore(model)
+        if not model or not model:IsA("Model") then
+            return 0
+        end
+
+        -- Direct owner metadata is strongest. Descendant metadata is accepted
+        -- only when its field name explicitly describes an owner/player/creator.
+        if inspectBoatOwnerNode(model) then
+            return 120
+        end
+
+        for _, descendant in ipairs(model:GetDescendants()) do
+            if inspectBoatOwnerNode(descendant) then
+                return 90
+            end
+        end
+
+        -- Some builds encode the owner in a boat/ship model name instead of a
+        -- ValueObject. Only accept clear username/UID naming patterns as fallback.
+        local normalizedName = boatNormalize(model.Name)
+        local normalizedPlayerName = boatNormalize(boatPlayer and boatPlayer.Name)
+        local userIdText = tostring(boatPlayer and boatPlayer.UserId or "")
+        local hasVesselWord = normalizedName:find("boat", 1, true) ~= nil
+            or normalizedName:find("ship", 1, true) ~= nil
+            or normalizedName:find("brig", 1, true) ~= nil
+            or normalizedName:find("caravel", 1, true) ~= nil
+            or normalizedName:find("ketch", 1, true) ~= nil
+            or normalizedName:find("sailboat", 1, true) ~= nil
+            or normalizedName:find("rowboat", 1, true) ~= nil
+
+        if hasVesselWord and normalizedName ~= ""
+            and userIdText ~= ""
+            and normalizedName:find(userIdText, 1, true) ~= nil then
+            return 70
+        end
+
+        if hasVesselWord and #normalizedPlayerName >= 3
+            and normalizedName:find(normalizedPlayerName, 1, true) ~= nil then
+            return 60
+        end
+
+        return 0
+    end
+
+    local function isBoatLikeModel(model)
+        if not model or not model:IsA("Model") then
+            return false
+        end
+
+        local name = boatNormalize(model.Name)
+        if name == "boats" or name == "ships" or name == "playerboats"
+            or name == "playerships" or name:find("fleet", 1, true) then
+            return false
+        end
+
+        if name:find("boat", 1, true)
+            or name:find("ship", 1, true)
+            or name == "brig"
+            or name:find("brig", 1, true)
+            or name:find("caravel", 1, true)
+            or name == "ketch"
+            or name:find("ketch", 1, true)
+            or name:find("vessel", 1, true) then
+            return true
+        end
+
+        for _, markerName in ipairs({
+            "Hull",
+            "Sails",
+            "Mast",
+            "Helm",
+            "ShipStats",
+            "ShipHealth",
+            "ShipRoot",
+            "BoatRoot",
+            "VehicleSeat",
+        }) do
+            if model:FindFirstChild(markerName, true) then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function getOwnedBoatRoot(model)
+        if not model or not model:IsA("Model") then
+            return nil
+        end
+
+        local preferredNames = {
+            "ShipRoot",
+            "BoatRoot",
+            "PrimaryPart",
+            "Root",
+            "RootPart",
+            "Hull",
+            "Base",
+            "Main",
+            "Body",
+            "VehicleSeat",
+        }
+
+        if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then
+            return model.PrimaryPart
+        end
+
+        for _, preferredName in ipairs(preferredNames) do
+            local part = model:FindFirstChild(preferredName, true)
+            if part and part:IsA("BasePart") then
+                return part
+            end
+        end
+
+        local bestPart = nil
+        local bestVolume = -1
+        for _, descendant in ipairs(model:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                local volume = descendant.Size.X * descendant.Size.Y * descendant.Size.Z
+                if volume > bestVolume then
+                    bestPart = descendant
+                    bestVolume = volume
+                end
+            end
+        end
+
+        return bestPart
+    end
+
+    local function findMyBoat()
+        if not boatPlayer then
+            return nil, nil
+        end
+
+        local character = boatPlayer.Character
+        local characterRoot = character and character:FindFirstChild("HumanoidRootPart")
+        local bestModel = nil
+        local bestRoot = nil
+        local bestOwnerScore = 0
+        local bestDistance = math.huge
+
+        for _, object in ipairs(workspace:GetDescendants()) do
+            if object:IsA("Model") and isBoatLikeModel(object) then
+                local ownerScore = getBoatOwnerEvidenceScore(object)
+                if ownerScore > 0 then
+                    local root = getOwnedBoatRoot(object)
+                    if root and root:IsDescendantOf(workspace) then
+                        local distance = characterRoot
+                            and (characterRoot.Position - root.Position).Magnitude
+                            or math.huge
+
+                        local replace = ownerScore > bestOwnerScore
+                            or (ownerScore == bestOwnerScore and distance < bestDistance)
+
+                        -- Prefer the outer ship model if both it and a nested
+                        -- ship-like model carry matching owner metadata.
+                        if bestModel and object:IsDescendantOf(bestModel)
+                            and ownerScore <= bestOwnerScore then
+                            replace = false
+                        elseif bestModel and bestModel:IsDescendantOf(object)
+                            and ownerScore >= bestOwnerScore then
+                            replace = true
+                        end
+
+                        if replace then
+                            bestModel = object
+                            bestRoot = root
+                            bestOwnerScore = ownerScore
+                            bestDistance = distance
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestModel, bestRoot
+    end
+
+    tpToBoatButton.Activated:Connect(function()
+        if not isArcaneSessionActive() then
+            return
+        end
+
+        tpToBoatButton.Text = "FINDING YOUR BOAT..."
+        local ok, boat, boatRoot = pcall(findMyBoat)
+        if not ok or not boat or not boatRoot then
+            ownedBoatCache = nil
+            tpToBoatButton.Text = "TP TO MY BOAT"
+            setBoatStatus(
+                "TP cancelled: no boat with verified ownership data was found.",
+                true
+            )
+            return
+        end
+
+        local character = boatPlayer and boatPlayer.Character
+        if not character or not character.Parent then
+            tpToBoatButton.Text = "TP TO MY BOAT"
+            setBoatStatus("TP cancelled: your character is not available.", true)
+            return
+        end
+
+        local targetPosition = boatRoot.Position
+            + Vector3.new(0, math.max(boatRoot.Size.Y * 0.5 + 5, 8), 0)
+
+        local didTeleport = pcall(function()
+            character:PivotTo(CFrame.new(targetPosition))
+            local characterRoot = character:FindFirstChild("HumanoidRootPart")
+            if characterRoot then
+                characterRoot.AssemblyLinearVelocity = Vector3.zero
+            end
+        end)
+
+        if didTeleport then
+            ownedBoatCache = boat
+            boatNextScanAt = os.clock() + 1
+            tpToBoatButton.Text = "TP TO MY BOAT"
+            setBoatStatus("Teleported to ownership-verified boat: " .. boat.Name, false)
+        else
+            tpToBoatButton.Text = "TP TO MY BOAT"
+            setBoatStatus("TP failed: Roblox rejected the character movement.", true)
+        end
+    end)
+
+    -- Speed is applied to the locally simulated assembly of the verified boat.
+    -- It only changes horizontal velocity while the boat is already moving, so
+    -- it won't force a stationary boat to sail or choose a direction for the user.
+    local boatSpeedAccumulator = 0
+    local boatValidationAccumulator = 0
+    local runServiceForBoat = Shared.RunService or game:GetService("RunService")
+
+    boatSpeedConnection = runServiceForBoat.Heartbeat:Connect(function(deltaTime)
+        if not isArcaneSessionActive() or not Config.ArcaneBoatSpeedControl then
+            boatSpeedAccumulator = 0
+            return
+        end
+
+        boatValidationAccumulator += deltaTime
+        boatSpeedAccumulator += deltaTime
+
+        if boatValidationAccumulator >= 1.25 then
+            boatValidationAccumulator = 0
+
+            if not ownedBoatCache
+                or not ownedBoatCache.Parent
+                or not ownedBoatCache:IsDescendantOf(workspace)
+                or getBoatOwnerEvidenceScore(ownedBoatCache) == 0 then
+                ownedBoatCache = nil
+            end
+
+            if not ownedBoatCache and os.clock() >= boatNextScanAt then
+                boatNextScanAt = os.clock() + 1.5
+                local ok, boat = pcall(function()
+                    local found = findMyBoat()
+                    return found
+                end)
+
+                if ok and boat then
+                    ownedBoatCache = boat
+                    setBoatStatus("Speed control found your boat: " .. boat.Name, false)
+                else
+                    setBoatStatus(
+                        "Speed control ON, but no ownership-verified boat is available.",
+                        true
+                    )
+                end
+            end
+        end
+
+        if boatSpeedAccumulator < 1 / 30 then
+            return
+        end
+        boatSpeedAccumulator = 0
+
+        local boat = ownedBoatCache
+        if not boat or not boat.Parent or not boat:IsDescendantOf(workspace) then
+            return
+        end
+
+        local ownerScore = 0
+        pcall(function()
+            ownerScore = getBoatOwnerEvidenceScore(boat)
+        end)
+        if ownerScore == 0 then
+            ownedBoatCache = nil
+            return
+        end
+
+        local root = getOwnedBoatRoot(boat)
+        local assembly = root and (root.AssemblyRootPart or root)
+        if not assembly or not assembly:IsA("BasePart") or assembly.Anchored then
+            return
+        end
+
+        local currentVelocity = assembly.AssemblyLinearVelocity
+        local horizontalVelocity = Vector3.new(currentVelocity.X, 0, currentVelocity.Z)
+        local currentSpeed = horizontalVelocity.Magnitude
+        local targetSpeed = math.clamp(
+            tonumber(Config.ArcaneBoatSpeed) or 160,
+            30,
+            350
+        )
+
+        if currentSpeed > 2 and math.abs(currentSpeed - targetSpeed) > 1.5 then
+            local boostedVelocity = horizontalVelocity.Unit * targetSpeed
+            assembly.AssemblyLinearVelocity = Vector3.new(
+                boostedVelocity.X,
+                currentVelocity.Y,
+                boostedVelocity.Z
+            )
+        end
+    end)
+
+    Context.registerCleanup(function()
+        if boatSpeedConnection then
+            pcall(function()
+                boatSpeedConnection:Disconnect()
+            end)
+            boatSpeedConnection = nil
+        end
+        ownedBoatCache = nil
+    end)
+
+
+    -------------------------------------------------
     -- BOSS RESPAWN NOTIFICATIONS
     -------------------------------------------------
 
