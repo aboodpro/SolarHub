@@ -3421,6 +3421,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return 120
         end
 
+        -- A direct Owner/UserId field is authoritative. A mismatch must not be
+        -- overridden by a matching-looking model name or nested decoration.
+        if hasOwnerMetadata then
+            return 0
+        end
+
         for _, descendant in ipairs(model:GetDescendants()) do
             local descendantMatched, descendantHasMetadata = inspectBoatOwnerNode(descendant)
             if descendantMatched then
@@ -3452,9 +3458,26 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return 70
         end
 
-        if hasVesselWord and #normalizedPlayerName >= 3
-            and normalizedName:find(normalizedPlayerName, 1, true) ~= nil then
-            return 60
+        if hasVesselWord and #normalizedPlayerName >= 3 then
+            local acceptedNamePatterns = {
+                "boat" .. normalizedPlayerName,
+                "ship" .. normalizedPlayerName,
+                "brig" .. normalizedPlayerName,
+                "caravel" .. normalizedPlayerName,
+                "ketch" .. normalizedPlayerName,
+                normalizedPlayerName .. "boat",
+                normalizedPlayerName .. "ship",
+                normalizedPlayerName .. "brig",
+                normalizedPlayerName .. "caravel",
+                normalizedPlayerName .. "ketch",
+            }
+
+            for _, pattern in ipairs(acceptedNamePatterns) do
+                if normalizedName == pattern
+                    or normalizedName:find(pattern, 1, true) ~= nil then
+                    return 60
+                end
+            end
         end
 
         return 0
@@ -3482,9 +3505,15 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return true
         end
 
-        -- Only inspect parts/markers deeply if the model itself already carries
-        -- an explicit owner field; this keeps scans lightweight on large maps.
-        if inspectBoatOwnerNode(model) then
+        -- Generic model names are considered only when the name itself contains
+        -- this player's username/UID; this avoids deep-searching every map model.
+        local playerName = boatNormalize(boatPlayer and boatPlayer.Name)
+        local userIdText = tostring(boatPlayer and boatPlayer.UserId or "")
+        local nameMayIdentifyOwner = (#playerName >= 3
+                and name:find(playerName, 1, true) ~= nil)
+            or (userIdText ~= "" and name:find(userIdText, 1, true) ~= nil)
+
+        if nameMayIdentifyOwner then
             for _, markerName in ipairs({
                 "Hull",
                 "Sails",
