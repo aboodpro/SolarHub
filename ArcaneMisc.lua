@@ -2045,7 +2045,7 @@ local function runChestDebug(setText, Config)
             local WorkspaceService = game:GetService("Workspace")
             local ReplicatedStorageService = game:GetService("ReplicatedStorage")
 
-            setText("CHEST DEBUG v6 | GLOBAL + INFINITE RANGE | SCANNING...")
+            setText("CHEST DEBUG v7 | GLOBAL + INFINITE RANGE | SCANNING...")
 
             local player = Players.LocalPlayer
             local character = player and player.Character
@@ -2283,7 +2283,7 @@ local function runChestDebug(setText, Config)
             end
 
             local out = {
-                "SOLARHUB CHEST DEBUG v6",
+                "SOLARHUB CHEST DEBUG v7",
                 "BUILD: GLOBAL + INFINITE-RANGE CHEST DISCOVERY",
                 "==============================",
                 "PlaceId: " .. safeString(game.PlaceId),
@@ -2871,6 +2871,166 @@ local function runChestDebug(setText, Config)
             appendLine("5) If templates are high but LIVE is low, the game stores future chest locations in ReplicatedStorage and the ESP should use those static positions.")
             appendLine("6) ATTR/VALUES entries show extra position/location data when the game exposes it.")
 
+            appendLine("")
+            appendLine("UNLOADED ISLAND / SEA CHEST TREE:")
+            appendLine("Lists every island folder plus all Chests/TempChests/SealedChests containers and their direct entries.")
+
+            local rsFolder = rs and rs:FindFirstChild("RS")
+            local unloadDarkSea = rsFolder and rsFolder:FindFirstChild("UnloadDarkSea")
+            local storageRoots = {
+                {label = "UnloadIslands", root = unloadIslands},
+                {label = "UnloadDarkSea", root = unloadDarkSea},
+            }
+            local treeLines = 0
+            local treeLimit = 3000
+            local treeContainerCount = 0
+            local treeEntryCount = 0
+
+            local function isChestContainerName(value)
+                local normalized = normalizeChestText(value)
+                return normalized == "chests"
+                    or normalized == "tempchests"
+                    or normalized == "sealedchests"
+                    or normalized == "treasurechests"
+                    or normalized:find("chestcontainer", 1, true) ~= nil
+            end
+
+            local function appendTreeLine(value)
+                if treeLines >= treeLimit then
+                    return false
+                end
+                appendLine(value)
+                treeLines += 1
+                return true
+            end
+
+            for _, storage in ipairs(storageRoots) do
+                appendTreeLine("")
+                appendTreeLine("ROOT " .. storage.label .. ": " .. safeString(storage.root))
+
+                if not storage.root then
+                    appendTreeLine("<missing>")
+                else
+                    local islandChildren = storage.root:GetChildren()
+                    appendTreeLine(("DIRECT CHILDREN: %d | DESCENDANTS: %d"):format(
+                        #islandChildren,
+                        #storage.root:GetDescendants()
+                    ))
+
+                    for islandIndex, island in ipairs(islandChildren) do
+                        if islandIndex % 50 == 0 then
+                            task.wait()
+                        end
+
+                        appendTreeLine(("ISLAND/REGION %s [%s] | CHILDREN=%d"):format(
+                            island:GetFullName(),
+                            island.ClassName,
+                            #island:GetChildren()
+                        ))
+
+                        local nodes = {island}
+                        for _, descendant in ipairs(island:GetDescendants()) do
+                            nodes[#nodes + 1] = descendant
+                        end
+
+                        local containers = {}
+                        for _, node in ipairs(nodes) do
+                            if (node:IsA("Folder") or node:IsA("Model"))
+                                and isChestContainerName(node.Name) then
+                                containers[#containers + 1] = node
+                            end
+                        end
+
+                        table.sort(containers, function(a, b)
+                            return a:GetFullName() < b:GetFullName()
+                        end)
+
+                        if #containers == 0 then
+                            local immediate = {}
+                            for childIndex, child in ipairs(island:GetChildren()) do
+                                if childIndex > 12 then
+                                    immediate[#immediate + 1] = "..."
+                                    break
+                                end
+                                immediate[#immediate + 1] = child.Name .. "[" .. child.ClassName .. "]"
+                            end
+                            appendTreeLine("  NO CHEST CONTAINER FOUND; DIRECT CHILDREN: "
+                                .. (#immediate > 0 and table.concat(immediate, ", ") or "<none>"))
+                        end
+
+                        for _, container in ipairs(containers) do
+                            treeContainerCount += 1
+                            local entries = container:GetChildren()
+                            appendTreeLine(("  CONTAINER %s | CHILDREN=%d"):format(
+                                container:GetFullName(),
+                                #entries
+                            ))
+
+                            for entryIndex, entry in ipairs(entries) do
+                                if treeLines >= treeLimit then
+                                    break
+                                end
+                                if entryIndex % 100 == 0 then
+                                    task.wait()
+                                end
+
+                                treeEntryCount += 1
+                                local chestType = getType(entry)
+                                local rootPart = getAnyRoot(entry)
+                                local positionText = "POS=?"
+                                if rootPart then
+                                    local position = rootPart.Position
+                                    positionText = ("POS=%.1f,%.1f,%.1f"):format(
+                                        position.X, position.Y, position.Z
+                                    )
+                                else
+                                    pcall(function()
+                                        local pivot = entry:GetPivot()
+                                        positionText = ("PIVOT=%.1f,%.1f,%.1f"):format(
+                                            pivot.Position.X,
+                                            pivot.Position.Y,
+                                            pivot.Position.Z
+                                        )
+                                    end)
+                                end
+
+                                local childNames = {}
+                                if entry:IsA("Model") or entry:IsA("Folder") then
+                                    for childIndex, child in ipairs(entry:GetDescendants()) do
+                                        if childIndex > 10 then
+                                            childNames[#childNames + 1] = "..."
+                                            break
+                                        end
+                                        childNames[#childNames + 1] =
+                                            child.Name .. "[" .. child.ClassName .. "]"
+                                    end
+                                end
+
+                                appendTreeLine(("    ENTRY %s [%s] | TYPE=%s | %s | ATTR={%s} | VALUES={%s}"):format(
+                                    entry:GetFullName(),
+                                    entry.ClassName,
+                                    chestType,
+                                    positionText,
+                                    getAttributeSummary(entry),
+                                    getValueObjectSummary(entry)
+                                ))
+                                if #childNames > 0 then
+                                    appendTreeLine("      CHILDREN: " .. table.concat(childNames, ", "))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            appendLine(("TREE SUMMARY: containers=%d | direct entries=%d | printed lines=%d%s"):format(
+                treeContainerCount,
+                treeEntryCount,
+                treeLines,
+                treeLines >= treeLimit and " | OUTPUT TRUNCATED AT LIMIT" or ""
+            ))
+            appendLine("If UnloadDarkSea exists but reports no containers, send this tree section anyway; its folder layout matters.")
+
             local finalText = table.concat(out, "\n")
             setText(finalText)
 
@@ -2889,7 +3049,7 @@ local function runChestDebug(setText, Config)
         end, debug.traceback)
 
         if not ok then
-            setText("CHEST DEBUG v6 ERROR\n" .. tostring(err))
+            setText("CHEST DEBUG v7 ERROR\n" .. tostring(err))
             warn("[SolarHub] Chest DEBUG v6 error:", err)
         end
     end)
@@ -3275,7 +3435,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     scanButton.Position = UDim2.fromOffset(8, 176)
     scanButton.BackgroundColor3 = Color3.fromRGB(38, 38, 48)
     scanButton.BorderSizePixel = 0
-    scanButton.Text = "CHEST DEBUG v6"
+    scanButton.Text = "CHEST DEBUG v7"
     scanButton.TextColor3 = Color3.fromRGB(235, 235, 240)
     scanButton.Font = Enum.Font.GothamBold
     scanButton.TextSize = 10
