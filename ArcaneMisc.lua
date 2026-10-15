@@ -6227,10 +6227,6 @@ local proximityPromptService = game:GetService("ProximityPromptService")
 
     local chestType = getChestType(chest)
 
-    if not isChestFilterEnabled(Config, chestType) then
-        return
-    end
-
     if openedChests[chest] then
         markChestOpened(chest)
         return
@@ -6249,16 +6245,15 @@ local proximityPromptService = game:GetService("ProximityPromptService")
         return
     end
 
-    watchChestLifecycle(chest)
-
     if not isChestWithinScanDistance(chest, chestType) then
         chestCandidates[chest] = nil
         destroyChestESP(chest)
         return
     end
 
-    -- Only notify for live, classified Mystic/Legendary chests. Static cached
-    -- island entries are deliberately excluded because they may be unloaded.
+    -- Rare-chest TP notifications are independent from the individual ESP
+    -- category switches: selecting Legendary ESP should not suppress Mystic TP.
+    -- Static cached island entries are still excluded because this is live scan only.
     if chestType == "MYSTIC" or chestType == "LEGENDARY" then
         showRareChestNotification(
             chest,
@@ -6266,6 +6261,13 @@ local proximityPromptService = game:GetService("ProximityPromptService")
             chestRoot and chestRoot.Position or nil
         )
     end
+
+    -- Keep the actual ESP markers filtered to the user's selected chest types.
+    if not isChestFilterEnabled(Config, chestType) then
+        return
+    end
+
+    watchChestLifecycle(chest)
 
     localChestTagObjects[chest] = true
     if not chestCandidates[chest] then
