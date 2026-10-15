@@ -870,14 +870,83 @@ end
 -- helper resolve a nil/global cache and spam "attempt to index nil".
 local chestRootCache = setmetatable({}, {__mode = "k"})
 
+local function findSealedChestTarget(container)
+    if not container
+        or not (container:IsA("Folder") or container:IsA("Model")) then
+        return nil
+    end
+
+    local normalizedName = normalizeChestText(container.Name)
+    if not normalizedName:find("sealed", 1, true)
+        or normalizedName == "sealedchests"
+        or normalizedName:find("chestcontainer", 1, true) then
+        return nil
+    end
+
+    -- Some sealed chest objects are folders instead of Models. Resolve a
+    -- renderable descendant, preferring a real chest model with a Base/prompt.
+    local bestModel = nil
+    local bestScore = -1
+
+    for _, descendant in ipairs(container:GetDescendants()) do
+        if descendant:IsA("Model") and looksLikeChestModel(descendant) then
+            local descendantName = normalizeChestText(descendant.Name)
+            local score = 0
+
+            if descendantName:find("sealed", 1, true) then
+                score += 100
+            end
+            if descendantName:find("chest", 1, true) then
+                score += 80
+            end
+            if descendant:FindFirstChild("Base", true) then
+                score += 20
+            end
+            if descendant:FindFirstChildWhichIsA("ProximityPrompt", true)
+                or descendant:FindFirstChildWhichIsA("ClickDetector", true) then
+                score += 15
+            end
+
+            if score > bestScore then
+                bestModel = descendant
+                bestScore = score
+            end
+        end
+    end
+
+    if bestModel then
+        return bestModel
+    end
+
+    local fallbackPart = nil
+    for _, descendant in ipairs(container:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            if normalizeChestText(descendant.Name) == "base" then
+                return descendant
+            end
+
+            if not fallbackPart then
+                fallbackPart = descendant
+            end
+
+            if descendant:FindFirstChildWhichIsA("ProximityPrompt", true)
+                or descendant:FindFirstChildWhichIsA("ClickDetector", true) then
+                return descendant
+            end
+        end
+    end
+
+    return fallbackPart
+end
+
 local function getChestTarget(object)
     if not object or not object.Parent then
         return nil
     end
 
     -- Resolve the nearest actual chest model above the scanned object.
-    -- Outer structures are intentionally ignored because they do not satisfy
-    -- looksLikeChestModel unless they are themselves a real chest.
+    -- Sealed chest folders are a special case in Arcane: use their contained
+    -- Model/BasePart so ESP APIs receive a renderable target, not a Folder.
     local current = object
 
     while current and current ~= workspace do
@@ -885,12 +954,20 @@ local function getChestTarget(object)
             return current
         end
 
+        if (current:IsA("Folder") or current:IsA("Model"))
+            and normalizeChestText(current.Name):find("sealed", 1, true) then
+            local sealedTarget = findSealedChestTarget(current)
+            if sealedTarget then
+                return sealedTarget
+            end
+        end
+
         current = current.Parent
     end
 
     -- Tagged/container objects may be the thing reported by CollectionService.
     -- Find a concrete chest model inside rather than targeting the container.
-    if object:IsA("Model") then
+    if object:IsA("Model") or object:IsA("Folder") then
         local best = nil
         local bestDepth = -1
 
@@ -3854,6 +3931,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local staticChestESPObjects = {}
     local staticChestLocationCache = {}
     local staticChestLocationsScanned = false
+    local staticChestRootsScanned = setmetatable({}, {__mode = "k"})
     local chestCandidates = {}
     local openedChests = {}
     local openedChestLocations = {}
@@ -4619,13 +4697,8 @@ local function createChestESP(target)
     end
 
     local function scanStaticChestLocations(root)
-        if staticChestLocationsScanned then
-            refreshStaticChestESP()
-            return
-        end
-
         local function scanRoot(scanRoot)
-            if not scanRoot then
+            if not scanRoot or staticChestRootsScanned[scanRoot] then
                 return
             end
 
@@ -4636,12 +4709,18 @@ local function createChestESP(target)
                     task.wait()
                 end
 
-                if (object:IsA("Folder") or object:IsA("Model"))
+                local normalizedObjectName = normalizeChestText(object.Name)
+                local normalizedObjectShortName = normalizeName(object.Name)
+                local isChestContainer = (object:IsA("Folder") or object:IsA("Model"))
                     and (
-                        normalizeName(object.Name) == "chests"
-                        or normalizeName(object.Name) == "tempchests"
-                    ) then
+                        normalizedObjectShortName == "chests"
+                        or normalizedObjectShortName == "tempchests"
+                        or normalizedObjectShortName == "sealedchests"
+                        or normalizedObjectShortName == "treasurechests"
+                        or normalizedObjectShortName:find("chestcontainer", 1, true) ~= nil
+                    )
 
+                if isChestContainer then
                     for _, entry in ipairs(object:GetChildren()) do
                         if entry:IsA("Model") or entry:IsA("BasePart") then
                             local chestType = getChestTypeFast(entry)
@@ -4651,27 +4730,50 @@ local function createChestESP(target)
                             cacheStaticChestLocation(entry, chestType)
                         end
                     end
+                elseif (object:IsA("Model") or object:IsA("BasePart"))
+                    and normalizedObjectName:find("sealed", 1, true) then
+                    -- Cache named sealed models even when they are not inside
+                    -- a conventional Chests/TempChests folder.
+                    local chestType = getChestType(object)
+                        or getChestTypeFast(object)
+                        or "SEALED"
+                    cacheStaticChestLocation(object, chestType)
+                elseif object:IsA("Folder")
+                    and normalizedObjectName:find("sealed", 1, true)
+                    and normalizedObjectShortName ~= "sealedchests"
+                    and not normalizedObjectShortName:find("chestcontainer", 1, true) then
+                    -- Folder-backed sealed chests do not themselves provide a
+                    -- world position; cache a concrete descendant instead.
+                    local sealedTarget = getChestTarget(object)
+                    if sealedTarget and (sealedTarget:IsA("Model") or sealedTarget:IsA("BasePart")) then
+                        local chestType = getChestType(object)
+                            or getChestType(sealedTarget)
+                            or getChestTypeFast(sealedTarget)
+                            or "SEALED"
+                        cacheStaticChestLocation(sealedTarget, chestType)
+                    end
                 end
             end
+
+            staticChestRootsScanned[scanRoot] = true
         end
 
-        -- Workspace contains the currently loaded chests. ReplicatedStorage
-        -- contains Arcane Odyssey's unloaded-island chest locations, allowing
-        -- the ESP to remain visible even after the game removes the live model.
+        -- Workspace contains live chests. UnloadIslands and UnloadDarkSea can
+        -- retain world-space chest placements for regions that are not loaded.
         local mapRoot = root or workspace:FindFirstChild("Map")
         local rs = game:GetService("ReplicatedStorage")
-        local unloadIslands = rs:FindFirstChild("RS")
-            and rs.RS:FindFirstChild("UnloadIslands")
+        local rsRoot = rs:FindFirstChild("RS")
+        local unloadIslands = rsRoot and rsRoot:FindFirstChild("UnloadIslands")
+        local unloadDarkSea = rsRoot and rsRoot:FindFirstChild("UnloadDarkSea")
 
-        -- Don't permanently cache an empty scan if the game hasn't finished
-        -- creating Map/UnloadIslands yet. A later toggle/scan can try again.
-        if not mapRoot and not unloadIslands then
+        if not mapRoot and not unloadIslands and not unloadDarkSea then
             return
         end
 
-        staticChestLocationsScanned = true
         scanRoot(mapRoot)
         scanRoot(unloadIslands)
+        scanRoot(unloadDarkSea)
+        staticChestLocationsScanned = next(staticChestRootsScanned) ~= nil
 
         refreshStaticChestESP()
     end
