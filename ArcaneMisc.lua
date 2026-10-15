@@ -3473,10 +3473,27 @@ function ArcaneMisc.Init(Shared, UI, Context)
     Instance.new("UICorner", debugBox).CornerRadius = UDim.new(0, 7)
 
     local lastScanText = debugBox.Text
+    local DEBUG_BOX_MAX_CHARS = 180000
+    local DEBUG_BOX_HEAD_CHARS = 24000
 
     local function setDebugText(text)
+        -- Keep the full report for the Copy button, but never assign more than
+        -- Roblox TextBox's supported text length to the visible Text property.
         lastScanText = tostring(text)
-        debugBox.Text = lastScanText
+
+        if #lastScanText <= DEBUG_BOX_MAX_CHARS then
+            debugBox.Text = lastScanText
+            return
+        end
+
+        local tailChars = DEBUG_BOX_MAX_CHARS - DEBUG_BOX_HEAD_CHARS - 180
+        local head = string.sub(lastScanText, 1, DEBUG_BOX_HEAD_CHARS)
+        local tail = string.sub(lastScanText, -tailChars)
+
+        debugBox.Text = head
+            .. "\\n\\n[DISPLAY SHORTENED: full report remains available with COPY]\\n"
+            .. "[Showing report start and end so the unloaded-island tree stays visible.]\\n\\n"
+            .. tail
     end
 
     scanButton.Activated:Connect(function()
