@@ -3287,10 +3287,16 @@ function ArcaneMisc.Init(Shared, UI, Context)
             setTextureProperty(instance, "Transparency", 1)
         end
 
-        if instance:IsA("MeshPart") then
+        if instance:IsA("MeshPart") or instance:IsA("UnionOperation") then
             setTextureProperty(instance, "TextureID", "")
         elseif instance:IsA("SpecialMesh") then
             setTextureProperty(instance, "TextureId", "")
+        elseif instance:IsA("ImageLabel") or instance:IsA("ImageButton") then
+            setTextureProperty(instance, "Image", "")
+        elseif instance:IsA("ImageHandleAdornment") then
+            setTextureProperty(instance, "Image", "")
+        elseif instance:IsA("VideoFrame") then
+            setTextureProperty(instance, "Video", "")
         elseif instance:IsA("SurfaceAppearance") then
             setTextureProperty(instance, "ColorMap", "")
             setTextureProperty(instance, "MetalnessMap", "")
