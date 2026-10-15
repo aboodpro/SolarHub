@@ -440,7 +440,12 @@ function ArcaneTools.Init(Shared, UI, Context)
         log("Log history cleared.")
     end)
     makeButton("Performance mode", 6, function()
-        Config.SolarPerformanceMode = not (Config.SolarPerformanceMode == true)
+        local enabled = not (Config.SolarPerformanceMode == true)
+        if type(Shared.setSolarPerformanceMode) == "function" then
+            Shared.setSolarPerformanceMode(enabled)
+        else
+            Config.SolarPerformanceMode = enabled
+        end
         log("Performance mode = " .. tostring(Config.SolarPerformanceMode))
     end)
     makeButton("Auto recovery", 7, function()
