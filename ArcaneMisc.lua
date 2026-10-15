@@ -3087,6 +3087,159 @@ function ArcaneMisc.Init(Shared, UI, Context)
     end
 
 
+    -------------------------------------------------
+    -- RARE CHEST NOTIFICATIONS
+    -------------------------------------------------
+
+    -- Weak keys make the alert state disappear with the chest model. This
+    -- prevents duplicate toasts from repeated ESP scans of the same object.
+    local rareChestNotified = setmetatable({}, {__mode = "k"})
+
+    local function showRareChestNotification(chest, chestType, detectedPosition)
+        if not chest
+            or rareChestNotified[chest]
+            or (chestType ~= "MYSTIC" and chestType ~= "LEGENDARY") then
+            return
+        end
+
+        rareChestNotified[chest] = true
+
+        local chestColor = CHEST_COLORS[chestType]
+            or Color3.fromRGB(255, 190, 70)
+        local chestTitle = chestType == "LEGENDARY"
+            and "LEGENDARY CHEST DETECTED"
+            or "MYSTIC CHEST DETECTED"
+
+        local frame = Instance.new("Frame")
+        frame.Name = "SolarRareChestNotification"
+        frame.Size = UDim2.fromOffset(320, 80)
+        frame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+        frame.BackgroundTransparency = 0.04
+        frame.BorderSizePixel = 0
+        frame.Parent = notificationHolder
+        markSolarHubVisual(frame)
+        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = chestColor
+        stroke.Thickness = 1.3
+        stroke.Transparency = 0.12
+        stroke.Parent = frame
+
+        local logo = Instance.new("TextLabel")
+        logo.Name = "SolarLogo"
+        logo.Position = UDim2.fromOffset(10, 20)
+        logo.Size = UDim2.fromOffset(36, 36)
+        logo.BackgroundColor3 = Color3.fromRGB(35, 35, 44)
+        logo.BorderSizePixel = 0
+        logo.Font = Enum.Font.GothamBlack
+        logo.Text = "☀"
+        logo.TextColor3 = Color3.fromRGB(255, 194, 70)
+        logo.TextSize = 27
+        logo.Parent = frame
+        Instance.new("UICorner", logo).CornerRadius = UDim.new(1, 0)
+
+        local title = Instance.new("TextLabel")
+        title.Name = "ChestTitle"
+        title.Position = UDim2.fromOffset(54, 12)
+        title.Size = UDim2.new(1, -132, 0, 21)
+        title.BackgroundTransparency = 1
+        title.Font = Enum.Font.GothamBold
+        title.Text = chestTitle
+        title.TextColor3 = chestColor
+        title.TextSize = 10
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.TextTruncate = Enum.TextTruncate.AtEnd
+        title.Parent = frame
+
+        local detail = Instance.new("TextLabel")
+        detail.Name = "ChestDetail"
+        detail.Position = UDim2.fromOffset(54, 34)
+        detail.Size = UDim2.new(1, -136, 0, 19)
+        detail.BackgroundTransparency = 1
+        detail.Font = Enum.Font.Gotham
+        detail.Text = "Rare chest found by Chest ESP"
+        detail.TextColor3 = Color3.fromRGB(175, 178, 190)
+        detail.TextSize = 9
+        detail.TextXAlignment = Enum.TextXAlignment.Left
+        detail.Parent = frame
+
+        local timerLabel = Instance.new("TextLabel")
+        timerLabel.Name = "ExpiresIn"
+        timerLabel.Position = UDim2.new(1, -45, 0, 7)
+        timerLabel.Size = UDim2.fromOffset(36, 14)
+        timerLabel.BackgroundTransparency = 1
+        timerLabel.Font = Enum.Font.GothamBold
+        timerLabel.Text = "20s"
+        timerLabel.TextColor3 = Color3.fromRGB(175, 178, 190)
+        timerLabel.TextSize = 9
+        timerLabel.TextXAlignment = Enum.TextXAlignment.Right
+        timerLabel.Parent = frame
+
+        local tpButton = Instance.new("TextButton")
+        tpButton.Name = "TeleportButton"
+        tpButton.Position = UDim2.new(1, -72, 0, 34)
+        tpButton.Size = UDim2.fromOffset(60, 30)
+        tpButton.BackgroundColor3 = chestColor
+        tpButton.BorderSizePixel = 0
+        tpButton.Font = Enum.Font.GothamBlack
+        tpButton.Text = "TP"
+        tpButton.TextColor3 = Color3.fromRGB(18, 18, 22)
+        tpButton.TextSize = 12
+        tpButton.AutoButtonColor = true
+        tpButton.Parent = frame
+        Instance.new("UICorner", tpButton).CornerRadius = UDim.new(0, 7)
+
+        local teleporting = false
+        tpButton.Activated:Connect(function()
+            if teleporting or not frame.Parent or not isArcaneSessionActive() then
+                return
+            end
+            teleporting = true
+
+            local character = Shared.player and Shared.player.Character
+            local targetPosition = detectedPosition
+
+            -- Use the chest's live position if it still exists; otherwise use
+            -- the position captured at discovery so the toast can still TP.
+            if chest and chest.Parent then
+                local liveRoot = getChestRoot(chest)
+                if liveRoot and liveRoot:IsDescendantOf(workspace) then
+                    targetPosition = liveRoot.Position
+                end
+            end
+
+            local ok = pcall(function()
+                if not character or not character.Parent
+                    or typeof(targetPosition) ~= "Vector3" then
+                    error("Character or chest position is unavailable")
+                end
+
+                character:PivotTo(CFrame.new(targetPosition + Vector3.new(0, 5, 0)))
+            end)
+
+            tpButton.Text = ok and "TP ✓" or "NO TARGET"
+            if not ok then
+                tpButton.BackgroundColor3 = Color3.fromRGB(95, 95, 105)
+            end
+            teleporting = false
+        end)
+
+        task.spawn(function()
+            for remaining = 20, 1, -1 do
+                if not frame.Parent then
+                    return
+                end
+                timerLabel.Text = tostring(remaining) .. "s"
+                task.wait(1)
+            end
+
+            if frame and frame.Parent then
+                frame:Destroy()
+            end
+        end)
+    end
+
     local section = UI.createSection(
         miscTab,
         "Arcane Odyssey",
@@ -4719,6 +4872,16 @@ local proximityPromptService = game:GetService("ProximityPromptService")
         chestCandidates[chest] = nil
         destroyChestESP(chest)
         return
+    end
+
+    -- Only notify for live, classified Mystic/Legendary chests. Static cached
+    -- island entries are deliberately excluded because they may be unloaded.
+    if chestType == "MYSTIC" or chestType == "LEGENDARY" then
+        showRareChestNotification(
+            chest,
+            chestType,
+            chestRoot and chestRoot.Position or nil
+        )
     end
 
     localChestTagObjects[chest] = true
@@ -6498,6 +6661,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
                 bossNotificationGui:Destroy()
             end)
         end
+
+        table.clear(rareChestNotified)
 
     end
 
