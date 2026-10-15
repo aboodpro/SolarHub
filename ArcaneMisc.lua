@@ -7987,6 +7987,8 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
 
     local function cleanupArcaneSession()
+        stopAntiAFK()
+
         -- Always restore original client visuals before this session is torn down.
         performanceModeGeneration += 1
         disconnectPerformanceModeListeners()
