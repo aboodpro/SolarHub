@@ -3366,22 +3366,27 @@ function ArcaneMisc.Init(Shared, UI, Context)
 
     local function inspectBoatOwnerNode(node)
         if not node then
-            return false
+            return false, false
         end
 
+        local hasOwnerMetadata = false
         local okAttributes, attributes = pcall(function()
             return node:GetAttributes()
         end)
         if okAttributes and type(attributes) == "table" then
             for key, value in pairs(attributes) do
-                if isOwnerFieldName(key) and valueMatchesBoatPlayer(value) then
-                    return true
+                if isOwnerFieldName(key) then
+                    hasOwnerMetadata = true
+                    if valueMatchesBoatPlayer(value) then
+                        return true, true
+                    end
                 end
             end
         end
 
         for _, child in ipairs(node:GetChildren()) do
             if isOwnerFieldName(child.Name) then
+                hasOwnerMetadata = true
                 local canReadValue = false
                 local childValue = nil
                 pcall(function()
@@ -3395,12 +3400,12 @@ function ArcaneMisc.Init(Shared, UI, Context)
                 end)
 
                 if canReadValue and valueMatchesBoatPlayer(childValue) then
-                    return true
+                    return true, true
                 end
             end
         end
 
-        return false
+        return false, hasOwnerMetadata
     end
 
     local function getBoatOwnerEvidenceScore(model)
@@ -3408,16 +3413,24 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return 0
         end
 
-        -- Direct owner metadata is strongest. Descendant metadata is accepted
-        -- only when its field name explicitly describes an owner/player/creator.
-        if inspectBoatOwnerNode(model) then
+        -- Explicit ownership metadata takes precedence over model-name guesses.
+        -- If a model explicitly names another owner, never TP to it just because
+        -- its display name happens to contain the local player's username.
+        local matchedOwner, hasOwnerMetadata = inspectBoatOwnerNode(model)
+        if matchedOwner then
             return 120
         end
 
         for _, descendant in ipairs(model:GetDescendants()) do
-            if inspectBoatOwnerNode(descendant) then
+            local descendantMatched, descendantHasMetadata = inspectBoatOwnerNode(descendant)
+            if descendantMatched then
                 return 90
             end
+            hasOwnerMetadata = hasOwnerMetadata or descendantHasMetadata
+        end
+
+        if hasOwnerMetadata then
+            return 0
         end
 
         -- Some builds encode the owner in a boat/ship model name instead of a
