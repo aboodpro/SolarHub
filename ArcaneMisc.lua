@@ -7855,6 +7855,12 @@ local replicatedStorage = game:GetService("ReplicatedStorage")
 
 
     local function cleanupArcaneSession()
+        -- Always restore original client visuals before this session is torn down.
+        performanceModeGeneration += 1
+        disconnectPerformanceModeListeners()
+        restoreInstanceTextures()
+        performanceModeApplied = nil
+
         for chest in pairs(chestLifecycleWatchers) do
             cleanupChestLifecycleWatcher(chest)
         end
