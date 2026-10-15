@@ -3491,8 +3491,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
         local tail = string.sub(lastScanText, -tailChars)
 
         debugBox.Text = head
-            .. "\\n\\n[DISPLAY SHORTENED: full report remains available with COPY]\\n"
-            .. "[Showing report start and end so the unloaded-island tree stays visible.]\\n\\n"
+            .. "\n\n[DISPLAY SHORTENED: full report remains available with COPY]\n"
+            .. "[Showing report start and end so the unloaded-island tree stays visible.]\n\n"
             .. tail
     end
 
