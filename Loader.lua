@@ -5,7 +5,7 @@
 -- initializes Shared/UI/Joiner/Macro/Webhook.
 
 local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
-local ARCANE_SOURCE_REF = "a37ce384e359891fcf7529a2112ba297c7a94541"
+local ARCANE_SOURCE_REF = "b3c6969faef346d43084d137e2b7e75d249d0bfd"
 local MURDER_MYSTERY_2_SOURCE_REF = "c65a04c6440740ff0cc6d79e8981ca0be1843dda"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
 local LOADER_VERSION = "2026-10-10-SOLARHUB-MM2-ROLE-GUN-ESP-1"
