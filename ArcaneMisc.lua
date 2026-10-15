@@ -3496,6 +3496,132 @@ function ArcaneMisc.Init(Shared, UI, Context)
     setSolarPerformanceMode(Config.SolarPerformanceMode)
 
     -------------------------------------------------
+    -- ANTI-AFK / LOCAL IDLE-TIMEOUT PREVENTION
+    -------------------------------------------------
+
+    -- Default ON unless the user/profile explicitly saved false.
+    Config.ArcaneAntiAFK = Config.ArcaneAntiAFK ~= false
+
+    local antiAFKConnection = nil
+    local antiAFKVirtualUser = game:GetService("VirtualUser")
+
+    local function stopAntiAFK()
+        if antiAFKConnection then
+            pcall(function()
+                antiAFKConnection:Disconnect()
+            end)
+            antiAFKConnection = nil
+        end
+    end
+
+    local function onLocalPlayerIdled()
+        if not Config.ArcaneAntiAFK
+            or not isArcaneSessionActive() then
+            return
+        end
+
+        -- Roblox's client idle timer can be reset by simulated local input.
+        -- Some game-specific, server-side inactivity rules may still apply.
+        local ok = pcall(function()
+            antiAFKVirtualUser:CaptureController()
+            antiAFKVirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+
+        if not ok then
+            -- Compatibility fallback for executor environments where ClickButton2
+            -- is unavailable but Button2Down/Button2Up are exposed.
+            pcall(function()
+                local camera = workspace.CurrentCamera
+                local cameraCFrame = camera and camera.CFrame or CFrame.new()
+                local point = Vector2.new(0, 0)
+
+                antiAFKVirtualUser:CaptureController()
+                antiAFKVirtualUser:Button2Down(point, cameraCFrame)
+                task.wait(0.1)
+                antiAFKVirtualUser:Button2Up(point, cameraCFrame)
+            end)
+        end
+    end
+
+    local function refreshAntiAFKButton(button, indicator, description)
+        local enabled = Config.ArcaneAntiAFK == true
+        button.Text = enabled and "ANTI-AFK  •  ON" or "ANTI-AFK  •  OFF"
+        button.TextColor3 = enabled
+            and Color3.fromRGB(190, 245, 205)
+            or Color3.fromRGB(230, 230, 236)
+        button.BackgroundColor3 = enabled
+            and Color3.fromRGB(34, 53, 42)
+            or Color3.fromRGB(32, 32, 40)
+        indicator.BackgroundColor3 = enabled
+            and Color3.fromRGB(75, 210, 115)
+            or Color3.fromRGB(50, 50, 60)
+        description.Text = enabled
+            and "Resets the local idle timer when Roblox reports you idle."
+            or "OFF. The game may kick you after being inactive."
+    end
+
+    local antiAFKSection = UI.createSection(
+        miscTab,
+        "Anti-AFK",
+        112
+    )
+
+    local antiAFKToggleButton = Instance.new("TextButton")
+    antiAFKToggleButton.Name = "SolarAntiAFKToggle"
+    antiAFKToggleButton.Size = UDim2.new(1, -20, 0, 42)
+    antiAFKToggleButton.Position = UDim2.fromOffset(10, 38)
+    antiAFKToggleButton.BackgroundColor3 = Color3.fromRGB(34, 53, 42)
+    antiAFKToggleButton.BorderSizePixel = 0
+    antiAFKToggleButton.Font = Enum.Font.GothamBold
+    antiAFKToggleButton.Text = ""
+    antiAFKToggleButton.TextSize = 10
+    antiAFKToggleButton.TextXAlignment = Enum.TextXAlignment.Left
+    antiAFKToggleButton.Parent = antiAFKSection
+    Instance.new("UICorner", antiAFKToggleButton).CornerRadius = UDim.new(0, 8)
+
+    local antiAFKIndicator = Instance.new("Frame")
+    antiAFKIndicator.Name = "StateIndicator"
+    antiAFKIndicator.Size = UDim2.fromOffset(18, 18)
+    antiAFKIndicator.Position = UDim2.new(1, -29, 0.5, -9)
+    antiAFKIndicator.BorderSizePixel = 0
+    antiAFKIndicator.Parent = antiAFKToggleButton
+    Instance.new("UICorner", antiAFKIndicator).CornerRadius = UDim.new(0, 4)
+
+    local antiAFKDescription = Instance.new("TextLabel")
+    antiAFKDescription.Name = "Description"
+    antiAFKDescription.Size = UDim2.new(1, -20, 0, 16)
+    antiAFKDescription.Position = UDim2.fromOffset(10, 84)
+    antiAFKDescription.BackgroundTransparency = 1
+    antiAFKDescription.Font = Enum.Font.Gotham
+    antiAFKDescription.TextColor3 = Color3.fromRGB(130, 130, 140)
+    antiAFKDescription.TextSize = 9
+    antiAFKDescription.TextXAlignment = Enum.TextXAlignment.Left
+    antiAFKDescription.Parent = antiAFKSection
+
+    local function setAntiAFKEnabled(enabled)
+        Config.ArcaneAntiAFK = enabled == true
+        if Config.ArcaneAntiAFK then
+            if not antiAFKConnection then
+                antiAFKConnection = Shared.player.Idled:Connect(onLocalPlayerIdled)
+            end
+        else
+            stopAntiAFK()
+        end
+
+        refreshAntiAFKButton(
+            antiAFKToggleButton,
+            antiAFKIndicator,
+            antiAFKDescription
+        )
+    end
+
+    antiAFKToggleButton.Activated:Connect(function()
+        setAntiAFKEnabled(not (Config.ArcaneAntiAFK == true))
+    end)
+
+    setAntiAFKEnabled(Config.ArcaneAntiAFK)
+
+    -------------------------------------------------
     -- BOAT CONTROLS / OWNERSHIP-SAFE
     -------------------------------------------------
 
