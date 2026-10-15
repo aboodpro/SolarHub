@@ -446,6 +446,15 @@ local function classifyChestText(value)
         return "SEALED"
     end
 
+    -- Some live Dark Sea chest instances expose the shortened name "Dark Chest"
+    -- instead of "Dark Sealed Chest". Match that chest-specific text, but not
+    -- a generic chest whose only contextual ancestor is named "Dark Sea".
+    if text:find("dark", 1, true)
+        and text:find("chest", 1, true)
+        and not text:find("darksea", 1, true) then
+        return "DARK_SEALED"
+    end
+
     if text:find("privatestorage", 1, true) then
         return "PRIVATE_STORAGE"
     end
@@ -543,7 +552,10 @@ local function collectChestTextSources(target)
     -- path, since that can misclassify every chest on an island named "Sky...".
     local ancestor = target.Parent
     local ancestorDepth = 0
-    while ancestor and ancestor ~= workspace and ancestorDepth < 5 do
+    -- Dark Sea chests may be nested in generated structure/container models.
+    -- Walk farther up for chest metadata names, without treating "Dark Sea"
+    -- alone as evidence that an ordinary chest is a Dark Sealed Chest.
+    while ancestor and ancestor ~= workspace and ancestorDepth < 10 do
         table.insert(sources, ancestor.Name)
         ancestor = ancestor.Parent
         ancestorDepth += 1
@@ -800,7 +812,8 @@ local function looksLikeChestModel(model)
         return false
     end
 
-    local base = model:FindFirstChild("Base")
+    local base = model:FindFirstChild("Base", true)
+    local lid = model:FindFirstChild("Lid", true)
     local anyBasePart = model:FindFirstChildWhichIsA("BasePart", true)
 
     local normalized = normalizeName(model.Name)
@@ -820,6 +833,13 @@ local function looksLikeChestModel(model)
         or normalized == "steel" then
 
         return anyBasePart ~= nil
+    end
+
+    -- Some streamed/sealed chest variants use a generic Model name and expose
+    -- their identity mainly through the standard Base + Lid part structure.
+    if base and base:IsA("BasePart")
+        and lid and lid:IsA("BasePart") then
+        return true
     end
 
     -- Strong identity from the game's exact tag.
@@ -6036,14 +6056,25 @@ scanAllWorkspaceChests = function()
             return
         end
 
+        local function queueChestInspect(candidate)
+            local function tryInspect()
+                if candidate and candidate.Parent
+                    and candidate:IsDescendantOf(workspace) then
+                    inspectChest(candidate)
+                end
+            end
+
+            -- Generated Dark Sea structures can parent the shell before every
+            -- part/metadata child is replicated. Retry after the model settles.
+            task.defer(tryInspect)
+            task.delay(0.15, tryInspect)
+            task.delay(0.55, tryInspect)
+        end
+
         if instance:IsA("ProximityPrompt")
             or instance:IsA("ClickDetector") then
-            task.defer(function()
-                if instance.Parent and instance:IsDescendantOf(workspace) then
-                    inspectChest(instance)
-                end
-            end)
-        elseif instance:IsA("Model") then
+            queueChestInspect(instance)
+        elseif instance:IsA("Model") or instance:IsA("Folder") then
             local normalized = normalizeName(instance.Name)
 
             if normalized:find("chest", 1, true)
@@ -6053,11 +6084,7 @@ scanAllWorkspaceChests = function()
                 or normalized == "uncommon"
                 or normalized == "legendary"
                 or normalized == "mystic" then
-                task.defer(function()
-                    if instance.Parent and instance:IsDescendantOf(workspace) then
-                        inspectChest(instance)
-                    end
-                end)
+                queueChestInspect(instance)
             end
         end
     end)
