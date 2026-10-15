@@ -3458,30 +3458,34 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return false
         end
 
+        -- Fast path: ship-type names are common in Arcane Odyssey and avoid
+        -- repeatedly walking every map model's descendants during discovery.
         if name:find("boat", 1, true)
             or name:find("ship", 1, true)
-            or name == "brig"
             or name:find("brig", 1, true)
             or name:find("caravel", 1, true)
-            or name == "ketch"
             or name:find("ketch", 1, true)
             or name:find("vessel", 1, true) then
             return true
         end
 
-        for _, markerName in ipairs({
-            "Hull",
-            "Sails",
-            "Mast",
-            "Helm",
-            "ShipStats",
-            "ShipHealth",
-            "ShipRoot",
-            "BoatRoot",
-            "VehicleSeat",
-        }) do
-            if model:FindFirstChild(markerName, true) then
-                return true
+        -- Only inspect parts/markers deeply if the model itself already carries
+        -- an explicit owner field; this keeps scans lightweight on large maps.
+        if inspectBoatOwnerNode(model) then
+            for _, markerName in ipairs({
+                "Hull",
+                "Sails",
+                "Mast",
+                "Helm",
+                "ShipStats",
+                "ShipHealth",
+                "ShipRoot",
+                "BoatRoot",
+                "VehicleSeat",
+            }) do
+                if model:FindFirstChild(markerName, true) then
+                    return true
+                end
             end
         end
 
@@ -3654,7 +3658,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
             end
 
             if not ownedBoatCache and os.clock() >= boatNextScanAt then
-                boatNextScanAt = os.clock() + 1.5
+                boatNextScanAt = os.clock() + 4.5
                 local ok, boat = pcall(function()
                     local found = findMyBoat()
                     return found
@@ -3682,15 +3686,8 @@ function ArcaneMisc.Init(Shared, UI, Context)
             return
         end
 
-        local ownerScore = 0
-        pcall(function()
-            ownerScore = getBoatOwnerEvidenceScore(boat)
-        end)
-        if ownerScore == 0 then
-            ownedBoatCache = nil
-            return
-        end
-
+        -- Ownership is revalidated on the slower scan timer above; avoid
+        -- walking every descendant of the boat 30 times per second.
         local root = getOwnedBoatRoot(boat)
         local assembly = root and (root.AssemblyRootPart or root)
         if not assembly or not assembly:IsA("BasePart") or assembly.Anchored then
