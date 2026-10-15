@@ -6043,6 +6043,21 @@ scanAllWorkspaceChests = function()
         end)
     end
 
+    local function queueChestInspect(candidate)
+        local function tryInspect()
+            if candidate and candidate.Parent
+                and candidate:IsDescendantOf(workspace) then
+                inspectChest(candidate)
+            end
+        end
+
+        -- Generated Dark Sea structures can parent the shell before every
+        -- part/metadata child is replicated. Retry after the model settles.
+        task.defer(tryInspect)
+        task.delay(0.15, tryInspect)
+        task.delay(0.55, tryInspect)
+    end
+
     -- Arcane can stream/create chest models after the initial scan. Do not
     -- depend on model names or tags in that case: an interaction appearing
     -- inside a generic hidden chest is enough to discover its real parent.
@@ -6054,21 +6069,6 @@ scanAllWorkspaceChests = function()
         if not Config.ArcaneChestESP
             or not hasAnyChestFilterEnabled(Config) then
             return
-        end
-
-        local function queueChestInspect(candidate)
-            local function tryInspect()
-                if candidate and candidate.Parent
-                    and candidate:IsDescendantOf(workspace) then
-                    inspectChest(candidate)
-                end
-            end
-
-            -- Generated Dark Sea structures can parent the shell before every
-            -- part/metadata child is replicated. Retry after the model settles.
-            task.defer(tryInspect)
-            task.delay(0.15, tryInspect)
-            task.delay(0.55, tryInspect)
         end
 
         if instance:IsA("ProximityPrompt")
