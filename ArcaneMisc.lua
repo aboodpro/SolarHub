@@ -4773,10 +4773,117 @@ local function createChestESP(target)
         scanRoot(mapRoot)
         scanRoot(unloadIslands)
         scanRoot(unloadDarkSea)
-        staticChestLocationsScanned = next(staticChestRootsScanned) ~= nil
+        local function rootWasScannedOrMissing(scanRoot)
+            return scanRoot == nil or staticChestRootsScanned[scanRoot] == true
+        end
+        staticChestLocationsScanned = rootWasScannedOrMissing(mapRoot)
+            and rootWasScannedOrMissing(unloadIslands)
+            and rootWasScannedOrMissing(unloadDarkSea)
 
         refreshStaticChestESP()
     end
+
+    -- ReplicatedStorage can finish populating unloaded-island templates after
+    -- the initial scan. Keep their static chest cache incremental instead of
+    -- assuming each root is permanently complete after one GetDescendants pass.
+    local function isStaticChestContainerName(value)
+        local normalized = normalizeName(value)
+        return normalized == "chests"
+            or normalized == "tempchests"
+            or normalized == "sealedchests"
+            or normalized == "treasurechests"
+            or normalized:find("chestcontainer", 1, true) ~= nil
+    end
+
+    local function findStaticChestEntry(instance, sourceRoot)
+        local current = instance
+
+        -- Most island templates place actual chest models directly under a
+        -- Chests/TempChests/SealedChests folder or model. Walk up from the
+        -- added descendant so late-added parts also resolve to their chest.
+        while current and current ~= sourceRoot do
+            local parent = current.Parent
+            if (current:IsA("Model") or current:IsA("BasePart"))
+                and parent
+                and isStaticChestContainerName(parent.Name) then
+                return current, parent
+            end
+            current = parent
+        end
+
+        -- Some sealed chests are stored outside the regular container folders.
+        current = instance
+        while current and current ~= sourceRoot do
+            if (current:IsA("Model") or current:IsA("BasePart"))
+                and normalizeChestText(current.Name):find("sealed", 1, true) then
+                return current, nil
+            end
+            current = current.Parent
+        end
+
+        return nil, nil
+    end
+
+    local staticChestRefreshPending = false
+    local function queueStaticChestESPRefresh()
+        if staticChestRefreshPending then
+            return
+        end
+
+        staticChestRefreshPending = true
+        task.delay(0.2, function()
+            staticChestRefreshPending = false
+            if type(isArcaneSessionActive) == "function"
+                and not isArcaneSessionActive() then
+                return
+            end
+            refreshStaticChestESP()
+        end)
+    end
+
+    local replicatedStorageForStaticChests = game:GetService("ReplicatedStorage")
+    replicatedStorageForStaticChests.DescendantAdded:Connect(function(instance)
+        task.defer(function()
+            if not instance or not instance.Parent then
+                return
+            end
+
+            local rsRoot = replicatedStorageForStaticChests:FindFirstChild("RS")
+            local unloadIslands = rsRoot and rsRoot:FindFirstChild("UnloadIslands")
+            local unloadDarkSea = rsRoot and rsRoot:FindFirstChild("UnloadDarkSea")
+
+            local sourceRoot = nil
+            if unloadIslands and instance:IsDescendantOf(unloadIslands) then
+                sourceRoot = unloadIslands
+            elseif unloadDarkSea and instance:IsDescendantOf(unloadDarkSea) then
+                sourceRoot = unloadDarkSea
+            else
+                return
+            end
+
+            local entry, container = findStaticChestEntry(instance, sourceRoot)
+            if not entry then
+                return
+            end
+
+            -- A chest model may be parented before all its BaseParts arrive.
+            -- Re-run position/type resolution on each relevant descendant
+            -- addition; the position-keyed cache safely deduplicates repeats.
+            local chestType = getChestTypeFast(entry) or getChestType(entry)
+            if not chestType and container
+                and normalizeName(container.Name) == "chests"
+                and normalizeChestText(entry.Name):find("chest", 1, true) then
+                chestType = "COMMON"
+            end
+            if not chestType
+                and normalizeChestText(entry.Name):find("sealed", 1, true) then
+                chestType = "SEALED"
+            end
+
+            cacheStaticChestLocation(entry, chestType or "OTHER")
+            queueStaticChestESPRefresh()
+        end)
+    end)
 
     local function destroyStaticChestESPNearPosition(position, chestType, radius)
         if not position then
@@ -5284,11 +5391,10 @@ scanAllWorkspaceChests = function()
     -- Guard against overlapping yielding workspace scans when users click quickly.
     local workspaceChestScanRunning = false
     scanSelectedChests = function()
-        if not staticChestLocationsScanned then
-            scanStaticChestLocations()
-        else
-            refreshStaticChestESP()
-        end
+        -- scanStaticChestLocations skips roots it has already scanned, but
+        -- still discovers roots that appeared later (e.g. UnloadIslands).
+        -- DescendantAdded above handles new entries inside previously seen roots.
+        scanStaticChestLocations()
 
         -- Remove live markers whose category has just been turned off.
         for target, data in pairs(chestESPObjects) do
