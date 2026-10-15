@@ -3231,6 +3231,265 @@ function ArcaneMisc.Init(Shared, UI, Context)
     miscTab.CanvasPosition = Vector2.zero
 
     -------------------------------------------------
+    -- PERFORMANCE MODE / REVERSIBLE TEXTURE STRIPPING
+    -------------------------------------------------
+
+    -- Nil defaults to OFF. Performance Mode only changes this client's visuals.
+    Config.SolarPerformanceMode = Config.SolarPerformanceMode == true
+
+    local texturePropertyOriginals = setmetatable({}, {__mode = "k"})
+    local performanceModeConnections = {}
+    local performanceModeApplied = nil
+    local performanceModeGeneration = 0
+
+    local function setTextureProperty(instance, propertyName, replacementValue)
+        if not instance then
+            return
+        end
+
+        local okRead, originalValue = pcall(function()
+            return instance[propertyName]
+        end)
+
+        if not okRead or originalValue == replacementValue then
+            return
+        end
+
+        local originals = texturePropertyOriginals[instance]
+        if not originals then
+            originals = {}
+            texturePropertyOriginals[instance] = originals
+        end
+
+        if originals[propertyName] == nil then
+            originals[propertyName] = originalValue
+        end
+
+        local okWrite = pcall(function()
+            instance[propertyName] = replacementValue
+        end)
+
+        if not okWrite then
+            originals[propertyName] = nil
+            if next(originals) == nil then
+                texturePropertyOriginals[instance] = nil
+            end
+        end
+    end
+
+    local function removeInstanceTextures(instance)
+        if not Config.SolarPerformanceMode or not instance then
+            return
+        end
+
+        if instance:IsA("Decal") or instance:IsA("Texture") then
+            setTextureProperty(instance, "Texture", "")
+            setTextureProperty(instance, "Transparency", 1)
+        end
+
+        if instance:IsA("MeshPart") then
+            setTextureProperty(instance, "TextureID", "")
+        elseif instance:IsA("SpecialMesh") then
+            setTextureProperty(instance, "TextureId", "")
+        elseif instance:IsA("SurfaceAppearance") then
+            setTextureProperty(instance, "ColorMap", "")
+            setTextureProperty(instance, "MetalnessMap", "")
+            setTextureProperty(instance, "NormalMap", "")
+            setTextureProperty(instance, "RoughnessMap", "")
+        elseif instance:IsA("Shirt") then
+            setTextureProperty(instance, "ShirtTemplate", "")
+        elseif instance:IsA("Pants") then
+            setTextureProperty(instance, "PantsTemplate", "")
+        elseif instance:IsA("ShirtGraphic") then
+            setTextureProperty(instance, "Graphic", "")
+        elseif instance:IsA("CharacterMesh") then
+            setTextureProperty(instance, "BaseTextureId", "")
+            setTextureProperty(instance, "OverlayTextureId", "")
+        elseif instance:IsA("ParticleEmitter")
+            or instance:IsA("Beam")
+            or instance:IsA("Trail") then
+            setTextureProperty(instance, "Texture", "")
+        elseif instance:IsA("Sky") then
+            for _, propertyName in ipairs({
+                "SkyboxBk",
+                "SkyboxDn",
+                "SkyboxFt",
+                "SkyboxLf",
+                "SkyboxRt",
+                "SkyboxUp",
+                "MoonTextureId",
+                "SunTextureId",
+            }) do
+                setTextureProperty(instance, propertyName, "")
+            end
+        end
+    end
+
+    local function restoreInstanceTextures()
+        for instance, originals in pairs(texturePropertyOriginals) do
+            for propertyName, originalValue in pairs(originals) do
+                pcall(function()
+                    instance[propertyName] = originalValue
+                end)
+            end
+        end
+
+        table.clear(texturePropertyOriginals)
+    end
+
+    local function disconnectPerformanceModeListeners()
+        for _, connection in ipairs(performanceModeConnections) do
+            pcall(function()
+                connection:Disconnect()
+            end)
+        end
+        table.clear(performanceModeConnections)
+    end
+
+    local function refreshPerformanceModeButton(button, indicator, description)
+        local enabled = Config.SolarPerformanceMode == true
+        button.Text = enabled and "PERFORMANCE MODE  •  ON" or "PERFORMANCE MODE  •  OFF"
+        button.TextColor3 = enabled
+            and Color3.fromRGB(255, 225, 160)
+            or Color3.fromRGB(230, 230, 236)
+        button.BackgroundColor3 = enabled
+            and Color3.fromRGB(58, 48, 34)
+            or Color3.fromRGB(32, 32, 40)
+        indicator.BackgroundColor3 = enabled
+            and Color3.fromRGB(220, 140, 40)
+            or Color3.fromRGB(50, 50, 60)
+        description.Text = enabled
+            and "3D textures removed locally. Click to restore them."
+            or "Removes 3D textures for performance. OFF by default."
+    end
+
+    local performanceSection = UI.createSection(
+        miscTab,
+        "Performance",
+        112
+    )
+
+    local performanceToggleButton = Instance.new("TextButton")
+    performanceToggleButton.Name = "SolarPerformanceModeToggle"
+    performanceToggleButton.Size = UDim2.new(1, -20, 0, 42)
+    performanceToggleButton.Position = UDim2.fromOffset(10, 38)
+    performanceToggleButton.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+    performanceToggleButton.BorderSizePixel = 0
+    performanceToggleButton.Font = Enum.Font.GothamBold
+    performanceToggleButton.Text = ""
+    performanceToggleButton.TextSize = 10
+    performanceToggleButton.TextXAlignment = Enum.TextXAlignment.Left
+    performanceToggleButton.Parent = performanceSection
+    Instance.new("UICorner", performanceToggleButton).CornerRadius = UDim.new(0, 8)
+
+    local performanceIndicator = Instance.new("Frame")
+    performanceIndicator.Name = "StateIndicator"
+    performanceIndicator.Size = UDim2.fromOffset(18, 18)
+    performanceIndicator.Position = UDim2.new(1, -29, 0.5, -9)
+    performanceIndicator.BorderSizePixel = 0
+    performanceIndicator.Parent = performanceToggleButton
+    Instance.new("UICorner", performanceIndicator).CornerRadius = UDim.new(0, 4)
+
+    local performanceDescription = Instance.new("TextLabel")
+    performanceDescription.Name = "Description"
+    performanceDescription.Size = UDim2.new(1, -20, 0, 16)
+    performanceDescription.Position = UDim2.fromOffset(10, 84)
+    performanceDescription.BackgroundTransparency = 1
+    performanceDescription.Font = Enum.Font.Gotham
+    performanceDescription.TextColor3 = Color3.fromRGB(130, 130, 140)
+    performanceDescription.TextSize = 9
+    performanceDescription.TextXAlignment = Enum.TextXAlignment.Left
+    performanceDescription.Text = "Removes 3D textures for performance. OFF by default."
+    performanceDescription.Parent = performanceSection
+
+    local function setSolarPerformanceMode(enabled)
+        enabled = enabled == true
+        Config.SolarPerformanceMode = enabled
+        refreshPerformanceModeButton(
+            performanceToggleButton,
+            performanceIndicator,
+            performanceDescription
+        )
+
+        if performanceModeApplied == enabled then
+            return
+        end
+
+        performanceModeApplied = enabled
+        performanceModeGeneration += 1
+        local generation = performanceModeGeneration
+
+        disconnectPerformanceModeListeners()
+
+        if not enabled then
+            restoreInstanceTextures()
+            return
+        end
+
+        local function queueTextureRemoval(instance)
+            if not Config.SolarPerformanceMode or generation ~= performanceModeGeneration then
+                return
+            end
+
+            task.defer(function()
+                if Config.SolarPerformanceMode
+                    and generation == performanceModeGeneration
+                    and instance then
+                    removeInstanceTextures(instance)
+                end
+            end)
+        end
+
+        table.insert(
+            performanceModeConnections,
+            workspace.DescendantAdded:Connect(queueTextureRemoval)
+        )
+        table.insert(
+            performanceModeConnections,
+            Shared.Lighting.DescendantAdded:Connect(queueTextureRemoval)
+        )
+
+        -- Strip already-loaded textures in chunks so the scan itself does not
+        -- freeze the client. Newly streamed/created objects are handled above.
+        task.spawn(function()
+            local roots = {workspace, Shared.Lighting}
+
+            for _, root in ipairs(roots) do
+                if not root then
+                    continue
+                end
+
+                local descendants = root:GetDescendants()
+                for index, instance in ipairs(descendants) do
+                    if not Config.SolarPerformanceMode
+                        or generation ~= performanceModeGeneration
+                        or not isArcaneSessionActive() then
+                        return
+                    end
+
+                    removeInstanceTextures(instance)
+
+                    if index % 800 == 0 then
+                        task.wait()
+                    end
+                end
+            end
+        end)
+    end
+
+    performanceToggleButton.Activated:Connect(function()
+        setSolarPerformanceMode(not (Config.SolarPerformanceMode == true))
+    end)
+
+    Shared.setSolarPerformanceMode = setSolarPerformanceMode
+    Shared.configRefreshers = Shared.configRefreshers or {}
+    Shared.configRefreshers.SolarPerformanceMode = function()
+        setSolarPerformanceMode(Config.SolarPerformanceMode)
+    end
+
+    setSolarPerformanceMode(Config.SolarPerformanceMode)
+
+    -------------------------------------------------
     -- BOAT CONTROLS / OWNERSHIP-SAFE
     -------------------------------------------------
 
