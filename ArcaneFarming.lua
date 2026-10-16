@@ -328,7 +328,9 @@ function ArcaneFarming.Init(Shared, UI, Context)
             table.remove(fishingDebugLines, 1)
         end
 
-        print(line)
+        -- Keep detailed logs in the capped in-game panel instead of printing
+        -- every event/action into an executor console that may retain output
+        -- for hours. fishingDebugLines is capped at MAX_FISHING_DEBUG_LINES.
     end
 
     local function fishingDebugDumpEvent(eventName, rod, ...)
@@ -928,7 +930,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
 
         while isArcaneSessionActive() do
             if Config.ArcaneAutoFishing and os.clock() >= nextWatchdogCheck then
-                nextWatchdogCheck = os.clock() + 0.10
+                nextWatchdogCheck = os.clock() + 0.25
 
                 local selectedRod = equipFishingRod()
 
@@ -971,7 +973,9 @@ function ArcaneFarming.Init(Shared, UI, Context)
                 end
             end
 
-            task.wait(0.03)
+            -- When fishing is OFF, the watchdog only needs to wake
+            -- occasionally. While ON, keep a modest 0.1s cadence.
+            task.wait(Config.ArcaneAutoFishing and 0.1 or 0.5)
         end
     end)
 
@@ -1299,13 +1303,14 @@ function ArcaneFarming.Init(Shared, UI, Context)
         local biteDeadline = os.clock() + 90
         local nextEquipCheck = 0
 
-        while Config.ArcaneAutoFishing
+        while isArcaneSessionActive()
+            and Config.ArcaneAutoFishing
             and not biteReceived
             and not fishingRecoveryRequested
             and os.clock() < biteDeadline do
 
             if os.clock() >= nextEquipCheck then
-                nextEquipCheck = os.clock() + 0.10
+                nextEquipCheck = os.clock() + 0.25
 
                 local currentRod = equipFishingRod()
 
@@ -1325,7 +1330,14 @@ function ArcaneFarming.Init(Shared, UI, Context)
                 end
             end
 
-            task.wait(0.05)
+            task.wait(0.1)
+        end
+
+        if not isArcaneSessionActive() then
+            fishingCycleRunning = false
+            fishingLineInWater = false
+            fishingState = "OFF"
+            return false
         end
 
         if not Config.ArcaneAutoFishing then
@@ -1360,7 +1372,8 @@ function ArcaneFarming.Init(Shared, UI, Context)
         local reelDeadline = os.clock() + 30
         nextEquipCheck = 0
 
-        while Config.ArcaneAutoFishing
+        while isArcaneSessionActive()
+            and Config.ArcaneAutoFishing
             and not completeReceived
             and not fishingRecoveryRequested
             and os.clock() < reelDeadline do
@@ -1369,7 +1382,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
                 or not rod
                 or not rod.Parent then
 
-                nextEquipCheck = os.clock() + 0.10
+                nextEquipCheck = os.clock() + 0.25
 
                 local currentRod = equipFishingRod()
 
@@ -1379,7 +1392,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
                     requestFishingRecovery(
                         "Selected rod was unequipped or removed during reeling"
                     )
-                    task.wait(0.05)
+                    task.wait(0.1)
                     continue
                 end
             end
@@ -1395,7 +1408,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
                     requestFishingRecovery(
                         "Another item replaced the selected rod during reeling"
                     )
-                    task.wait(0.05)
+                    task.wait(0.1)
                     continue
                 end
             end
@@ -1412,10 +1425,18 @@ function ArcaneFarming.Init(Shared, UI, Context)
                 continue
             end
 
-            task.wait(0.08)
+            -- Reeling did not need near-frame-rate activation. Lower the
+            -- action cadence to reduce CPU/event load during long AFK sessions.
+            task.wait(0.12)
         end
 
         fishingCycleRunning = false
+
+        if not isArcaneSessionActive() then
+            fishingLineInWater = false
+            fishingState = "OFF"
+            return false
+        end
 
         if not Config.ArcaneAutoFishing then
             fishingLineInWater = false
@@ -1475,6 +1496,22 @@ function ArcaneFarming.Init(Shared, UI, Context)
 
 
     local function cleanupFarming()
+        -- Stop any in-flight cycle as well as the outer worker before cleaning
+        -- connections; the old session must not keep activating the rod.
+        Config.ArcaneAutoFishing = false
+        fishingCycleRunning = false
+        fishingLineInWater = false
+        fishingRecoveryRequested = false
+        fishingForceRemoteCast = false
+        fishingState = "OFF"
+
+        if fishingEventConnection then
+            pcall(function()
+                fishingEventConnection:Disconnect()
+            end)
+            fishingEventConnection = nil
+        end
+
         if type(disconnectFishingDebugHooks) == "function" then
             disconnectFishingDebugHooks()
         end
