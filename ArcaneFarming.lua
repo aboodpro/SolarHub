@@ -973,9 +973,9 @@ function ArcaneFarming.Init(Shared, UI, Context)
                 end
             end
 
-            -- When fishing is OFF, the watchdog only needs to wake
-            -- occasionally. While ON, keep a modest 0.1s cadence.
-            task.wait(Config.ArcaneAutoFishing and 0.1 or 0.5)
+            -- Align the watchdog sleep with its 0.25s check interval.
+            -- The fishing cycle itself checks the rod during Bite/Reel waits.
+            task.wait(Config.ArcaneAutoFishing and 0.25 or 0.75)
         end
     end)
 
@@ -1421,7 +1421,7 @@ function ArcaneFarming.Init(Shared, UI, Context)
 
             if not activated then
                 requestFishingRecovery("Selected rod activation failed")
-                task.wait(0.05)
+                task.wait(0.1)
                 continue
             end
 
