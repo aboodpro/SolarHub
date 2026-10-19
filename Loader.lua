@@ -8,7 +8,7 @@ local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "7d044ff4f39d4dfa8e0a442795f3ffe59f3af428"
 local MURDER_MYSTERY_2_SOURCE_REF = "c65a04c6440740ff0cc6d79e8981ca0be1843dda"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-19-SOLARHUB-STARTUP-OPT-1"
+local LOADER_VERSION = "2026-10-19-SOLARHUB-LOW-PEAK-2"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -82,17 +82,53 @@ local function destroyKnownSolarHubArtifacts()
     end
 
     pcall(function()
-        local descendants = game:GetDescendants()
+        -- Walk the hierarchy incrementally instead of allocating one huge
+        -- game:GetDescendants() array. Post-order processing preserves the
+        -- previous leaf-first cleanup behavior while keeping peak memory lower.
+        local stack = {}
+        local roots = game:GetChildren()
 
-        -- Delete leaf instances first; this also catches ESP objects parented
-        -- directly to chest/boss models rather than to a dedicated folder.
-        for index = #descendants, 1, -1 do
-            local instance = descendants[index]
+        for index = #roots, 1, -1 do
+            stack[#stack + 1] = {
+                instance = roots[index],
+                visited = false,
+            }
+        end
 
-            if instance and instance.Parent and isOwnedSolarVisual(instance) then
-                pcall(function()
-                    instance:Destroy()
-                end)
+        local processed = 0
+
+        while #stack > 0 do
+            local item = stack[#stack]
+            stack[#stack] = nil
+
+            local instance = item.instance
+
+            if instance and instance.Parent then
+                if item.visited then
+                    if isOwnedSolarVisual(instance) and instance.Parent then
+                        pcall(function()
+                            instance:Destroy()
+                        end)
+                    end
+
+                    processed = processed + 1
+                    if processed % 500 == 0 then
+                        task.wait()
+                    end
+                else
+                    stack[#stack + 1] = {
+                        instance = instance,
+                        visited = true,
+                    }
+
+                    local children = instance:GetChildren()
+                    for index = #children, 1, -1 do
+                        stack[#stack + 1] = {
+                            instance = children[index],
+                            visited = false,
+                        }
+                    end
+                end
             end
         end
     end)
@@ -805,9 +841,9 @@ task.spawn(function()
     print("[Loader] Preparation complete. Collecting modules...")
     
     -------------------------------------------------
-    -- COLLECT
-    -- Fetch each module directly from the public GitHub repository.
-    local moduleSources = {}
+    -- FETCH + COMPILE
+    -- Fetch and compile one module at a time to reduce peak memory usage.
+    -------------------------------------------------
 
     local function fetchModule(fileName)
         local url = BASE_URL .. fileName .. "?v=" .. CACHE_BUST
@@ -880,6 +916,8 @@ task.spawn(function()
             .. table.concat(moduleLoadOrder, ", ")
     )
 
+    local compiled = {}
+
     for _, fileName in ipairs(moduleLoadOrder) do
         setLoadingStatus("Loading " .. fileName .. "...")
         print("[Loader] Fetching " .. fileName .. "...")
@@ -899,61 +937,35 @@ task.spawn(function()
             return
         end
 
-        moduleSources[fileName] = source
-    end
+        setLoadingStatus("Compiling " .. fileName .. "...")
+        local compileOk, chunk, compileError = pcall(loadstring, source)
+        source = nil
 
-    -------------------------------------------------
-    -- COMPILE / PREPARE
-    -------------------------------------------------
-    
-    local function compile(fileName)
-        local source = moduleSources[fileName]
-        if not source then
-            return nil, "[Loader] Missing collected source: " .. fileName
+        local compileFailure = nil
+
+        if not compileOk then
+            compileFailure = "[Loader] loadstring failed for "
+                .. fileName
+                .. ": "
+                .. tostring(chunk)
+        elseif type(chunk) ~= "function" then
+            compileFailure = "[Loader] COMPILE ERROR in "
+                .. fileName
+                .. ": "
+                .. tostring(compileError)
         end
 
-        -- pcall(loadstring, source) returns (true, nil, compileError) when
-        -- the source has a syntax/compile error. Keep that third return value.
-        local ok, chunk, compileError = pcall(loadstring, source)
-        if not ok then
-            return nil, "[Loader] loadstring failed for " .. fileName .. ": " .. tostring(chunk)
-        end
-
-        if type(chunk) ~= "function" then
-            return nil, "[Loader] COMPILE ERROR in " .. fileName .. ": " .. tostring(compileError)
-        end
-
-        return chunk, nil
-    end
-
-    setLoadingStatus("Compiling Solar modules...")
-    print("[Loader] Compiling modules...")
-
-    local compiled = {}
-
-    for _, fileName in ipairs(moduleLoadOrder) do
-        local label = fileName:gsub("%.lua$", "")
-        local chunk, compileError = compile(fileName)
-
-        if not chunk then
-            setLoadingStatus(label .. " compile error")
-            warn(compileError)
-            debugLog(compileError)
-            moduleSources = nil
+        if compileFailure then
+            setLoadingStatus(fileName:gsub("%.lua$", "") .. " compile error")
+            warn(compileFailure)
+            debugLog(compileFailure)
             showDebugUI()
             return
         end
 
-        compiled[label] = chunk
-
-        -- The compiled function is now retained in the compiled table; release
-        -- its source string immediately instead of holding all sources alongside
-        -- all compiled chunks until the entire compile phase ends.
-        moduleSources[fileName] = nil
+        compiled[fileName:gsub("%.lua$", "")] = chunk
     end
 
-    moduleSources = nil
-    
     -------------------------------------------------
     -- LOAD / INIT
     -------------------------------------------------
