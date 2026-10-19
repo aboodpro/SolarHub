@@ -4633,7 +4633,7 @@ function ArcaneMisc.Init(Shared, UI, Context)
     local chestSection = UI.createSection(
         miscTab,
         "Chest ESP",
-        680
+        810
     )
 
     UI.createToggle(
@@ -6419,6 +6419,9 @@ scanAllWorkspaceChests = function()
                     local ok, err = xpcall(scanAllWorkspaceChests, debug.traceback)
                     if ok then
                         workspaceChestScanRunning = false
+                        if type(Shared.SolarRareChestTPRefresh) == "function" then
+                            task.defer(Shared.SolarRareChestTPRefresh)
+                        end
                         return
                     end
 
@@ -6439,6 +6442,230 @@ scanAllWorkspaceChests = function()
             end)
         end
     end
+
+    -------------------------------------------------
+    -- LEGENDARY / MYSTIC CHEST TELEPORT QUEUE
+    -------------------------------------------------
+    -- This persistent control complements the short-lived live-chest toast.
+    -- It includes both visible live ESP targets and visible cached island
+    -- locations, and intentionally excludes every other chest category.
+
+    local visitedRareChestLocations = {}
+
+    local rareChestTPHeader = Instance.new("TextLabel")
+    rareChestTPHeader.Name = "SolarRareChestTPHeader"
+    rareChestTPHeader.Size = UDim2.new(1, -20, 0, 18)
+    rareChestTPHeader.Position = UDim2.fromOffset(10, 660)
+    rareChestTPHeader.BackgroundTransparency = 1
+    rareChestTPHeader.Text = "LEGENDARY / MYSTIC CHEST TP"
+    rareChestTPHeader.TextColor3 = Color3.fromRGB(220, 220, 230)
+    rareChestTPHeader.Font = Enum.Font.GothamBold
+    rareChestTPHeader.TextSize = 10
+    rareChestTPHeader.TextXAlignment = Enum.TextXAlignment.Left
+    rareChestTPHeader.Parent = chestSection
+
+    local rareChestTPStatus = Instance.new("TextLabel")
+    rareChestTPStatus.Name = "SolarRareChestTPStatus"
+    rareChestTPStatus.Size = UDim2.new(1, -20, 0, 32)
+    rareChestTPStatus.Position = UDim2.fromOffset(10, 681)
+    rareChestTPStatus.BackgroundTransparency = 1
+    rareChestTPStatus.Text = "Checking visible Legendary and Mystic chest targets..."
+    rareChestTPStatus.TextColor3 = Color3.fromRGB(160, 165, 178)
+    rareChestTPStatus.Font = Enum.Font.Gotham
+    rareChestTPStatus.TextSize = 9
+    rareChestTPStatus.TextWrapped = true
+    rareChestTPStatus.TextXAlignment = Enum.TextXAlignment.Left
+    rareChestTPStatus.Parent = chestSection
+
+    local rareChestTPButton = Instance.new("TextButton")
+    rareChestTPButton.Name = "SolarRareChestTPNext"
+    rareChestTPButton.Size = UDim2.new(1, -20, 0, 34)
+    rareChestTPButton.Position = UDim2.fromOffset(10, 716)
+    rareChestTPButton.BackgroundColor3 = Color3.fromRGB(48, 76, 58)
+    rareChestTPButton.BorderSizePixel = 0
+    rareChestTPButton.Text = "TP TO NEXT LEGENDARY / MYSTIC"
+    rareChestTPButton.TextColor3 = Color3.fromRGB(238, 245, 239)
+    rareChestTPButton.Font = Enum.Font.GothamBold
+    rareChestTPButton.TextSize = 10
+    rareChestTPButton.Parent = chestSection
+    Instance.new("UICorner", rareChestTPButton).CornerRadius = UDim.new(0, 8)
+
+    local rareChestTPResetButton = Instance.new("TextButton")
+    rareChestTPResetButton.Name = "SolarRareChestTPReset"
+    rareChestTPResetButton.Size = UDim2.new(1, -20, 0, 28)
+    rareChestTPResetButton.Position = UDim2.fromOffset(10, 755)
+    rareChestTPResetButton.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
+    rareChestTPResetButton.BorderSizePixel = 0
+    rareChestTPResetButton.Text = "RESET TP QUEUE"
+    rareChestTPResetButton.TextColor3 = Color3.fromRGB(225, 225, 232)
+    rareChestTPResetButton.Font = Enum.Font.GothamBold
+    rareChestTPResetButton.TextSize = 9
+    rareChestTPResetButton.Parent = chestSection
+    Instance.new("UICorner", rareChestTPResetButton).CornerRadius = UDim.new(0, 7)
+
+    local function isRareChestTPType(chestType)
+        return chestType == "LEGENDARY" or chestType == "MYSTIC"
+    end
+
+    local function collectRareChestTPTargets()
+        local targets = {}
+        local seenLocations = {}
+        local playerRoot = getLocalPlayerRoot()
+
+        local function addTarget(chestType, position, chest, source)
+            if not isRareChestTPType(chestType)
+                or typeof(position) ~= "Vector3" then
+                return
+            end
+
+            local locationKey = getOpenedChestLocationKey(position)
+            if not locationKey or seenLocations[locationKey] then
+                return
+            end
+
+            -- Mark duplicates before filtering opened/visited live targets so a
+            -- stale static marker cannot re-add the same chest's old position.
+            seenLocations[locationKey] = true
+
+            if visitedRareChestLocations[locationKey]
+                or isOpenedChestLocation(position) then
+                return
+            end
+
+            if chest and chest.Parent then
+                if openedChests[chest] then
+                    return
+                end
+
+                local okOpened, isOpened = pcall(hasChestOpenedMarker, chest)
+                if okOpened and isOpened then
+                    return
+                end
+            end
+
+            local distance = math.huge
+            if playerRoot then
+                distance = (playerRoot.Position - position).Magnitude
+            end
+
+            targets[#targets + 1] = {
+                key = locationKey,
+                chestType = chestType,
+                position = position,
+                chest = chest,
+                source = source,
+                distance = distance,
+            }
+        end
+
+        -- Prefer real, live chest models over a duplicate static location.
+        for chest, data in pairs(chestESPObjects) do
+            if chest and chest.Parent and data then
+                local chestType = data.chestType
+                    or chestTypeCache[chest]
+                    or getChestTypeFast(chest)
+                    or getChestType(chest)
+
+                if isRareChestTPType(chestType) then
+                    local okRoot, root = pcall(getChestRoot, chest)
+                    if okRoot and root and root:IsDescendantOf(workspace) then
+                        addTarget(chestType, root.Position, chest, "LIVE")
+                    end
+                end
+            end
+        end
+
+        -- Cached island locations get a TP target only when their ESP marker
+        -- is actually displayed. Other rarities are never added to this queue.
+        for _, data in pairs(staticChestESPObjects) do
+            if data and data.anchor and data.anchor.Parent then
+                addTarget(data.chestType, data.position, nil, "STATIC")
+            end
+        end
+
+        table.sort(targets, function(a, b)
+            if a.distance == b.distance then
+                return a.key < b.key
+            end
+            return a.distance < b.distance
+        end)
+
+        return targets
+    end
+
+    local function refreshRareChestTPStatus()
+        if not rareChestTPStatus or not rareChestTPStatus.Parent then
+            return
+        end
+
+        local targets = collectRareChestTPTargets()
+        local legendaryCount = 0
+        local mysticCount = 0
+
+        for _, target in ipairs(targets) do
+            if target.chestType == "LEGENDARY" then
+                legendaryCount += 1
+            elseif target.chestType == "MYSTIC" then
+                mysticCount += 1
+            end
+        end
+
+        rareChestTPStatus.Text = ("Remaining: %d  |  Legendary: %d  |  Mystic: %d"):format(
+            #targets,
+            legendaryCount,
+            mysticCount
+        )
+    end
+
+    Shared.SolarRareChestTPRefresh = refreshRareChestTPStatus
+
+    rareChestTPButton.Activated:Connect(function()
+        if not isArcaneSessionActive() then
+            return
+        end
+
+        local targets = collectRareChestTPTargets()
+        local target = targets[1]
+
+        if not target then
+            -- Kick the normal discovery scan once; it can take a moment to
+            -- finish on servers with many streamed objects.
+            scanSelectedChests()
+            rareChestTPStatus.Text = "No unvisited targets yet. Enable Chest ESP and the Legendary + Mystic filters, then wait for the scan."
+            return
+        end
+
+        local character = Shared.player and Shared.player.Character
+        local ok, err = pcall(function()
+            if not character or not character.Parent then
+                error("Character is not ready")
+            end
+
+            character:PivotTo(CFrame.new(target.position + Vector3.new(0, 5, 0)))
+        end)
+
+        if not ok then
+            rareChestTPStatus.Text = "TP failed: " .. tostring(err)
+            return
+        end
+
+        -- One click = one target. After looting it, click again to move to the
+        -- next nearest unvisited Legendary/Mystic marker in this ESP list.
+        visitedRareChestLocations[target.key] = true
+        local remainingTargets = collectRareChestTPTargets()
+        rareChestTPStatus.Text = ("Teleported to %s Chest. Loot it, then click TP NEXT. Remaining: %d"):format(
+            target.chestType == "LEGENDARY" and "Legendary" or "Mystic",
+            #remainingTargets
+        )
+    end)
+
+    rareChestTPResetButton.Activated:Connect(function()
+        table.clear(visitedRareChestLocations)
+        refreshRareChestTPStatus()
+    end)
+
+    refreshRareChestTPStatus()
+
     local collectionService = game:GetService("CollectionService")
 
     for _, tag in ipairs({
