@@ -8,7 +8,7 @@ local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "7d044ff4f39d4dfa8e0a442795f3ffe59f3af428"
 local MURDER_MYSTERY_2_SOURCE_REF = "c65a04c6440740ff0cc6d79e8981ca0be1843dda"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-10-SOLARHUB-MM2-ROLE-GUN-ESP-1"
+local LOADER_VERSION = "2026-10-19-SOLARHUB-STARTUP-OPT-1"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -21,6 +21,18 @@ local solarHubCleanupFinished = false
 local solarHubOrphanESPConnection = nil
 
 local function destroyKnownSolarHubArtifacts()
+    -- Exact-name cleanup previously required a second Workspace:GetDescendants()
+    -- pass. Fold those names into the existing game-wide sweep to avoid walking
+    -- Workspace twice while preserving cleanup for older SolarHub builds.
+    local ownedWorkspaceObjects = {
+        SolarTreasureChartMarker = true,
+        SolarTreasureEstimatedDigArea = true,
+        SolarChestStaticAnchor = true,
+        SolarChestStaticAttachment = true,
+        SolarSideQuestVirtualAnchor = true,
+        SolarSideQuestLocationAnchor = true,
+    }
+
     -- Legacy ESP objects are parented to world models/parts, not just PlayerGui.
     -- Sweep descendants so old Highlights, BillboardGuis, anchors, and chart
     -- markers are removed even if the previous session's cleanup failed.
@@ -37,6 +49,14 @@ local function destroyKnownSolarHubArtifacts()
 
     local function isOwnedSolarVisual(instance)
         local name = tostring(instance.Name or "")
+
+        -- Preserve the legacy Workspace anchor cleanup in the same pass.
+        -- The exact-name check intentionally ignores class, matching the old
+        -- Workspace sweep; names outside Workspace still use the prefix/class rule.
+        if instance:IsDescendantOf(workspace) and ownedWorkspaceObjects[name] then
+            return true
+        end
+
         local hasOwnedPrefix = false
 
         for _, prefix in ipairs(ownedPrefixes) do
@@ -77,25 +97,6 @@ local function destroyKnownSolarHubArtifacts()
         end
     end)
 
-    -- Explicitly remove the three named workspace anchors for older builds.
-    pcall(function()
-        local ownedWorkspaceObjects = {
-            SolarTreasureChartMarker = true,
-            SolarTreasureEstimatedDigArea = true,
-            SolarChestStaticAnchor = true,
-            SolarChestStaticAttachment = true,
-            SolarSideQuestVirtualAnchor = true,
-            SolarSideQuestLocationAnchor = true,
-        }
-
-        for _, child in ipairs(workspace:GetDescendants()) do
-            if ownedWorkspaceObjects[child.Name] then
-                pcall(function()
-                    child:Destroy()
-                end)
-            end
-        end
-    end)
 end
 local function cleanupSolarHubRuntime()
     if solarHubCleanupFinished then
@@ -944,9 +945,14 @@ task.spawn(function()
         end
 
         compiled[label] = chunk
+
+        -- The compiled function is now retained in the compiled table; release
+        -- its source string immediately instead of holding all sources alongside
+        -- all compiled chunks until the entire compile phase ends.
+        moduleSources[fileName] = nil
     end
 
-        moduleSources = nil
+    moduleSources = nil
     
     -------------------------------------------------
     -- LOAD / INIT
