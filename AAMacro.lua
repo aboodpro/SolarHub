@@ -665,13 +665,22 @@ function AAMacro.Init(Shared, UI)
                 -- Preserve the original game remote invocation and its return values.
                 local result = table.pack(oldNamecall(self, ...))
 
-                -- Protect the recorder's own Instance lookups from re-entering
-                -- this hook. The guard resets even if the logger throws.
+                -- Let the game continue immediately after its original RemoteFunction
+                -- returns. Recording/UI work must not sit between InvokeServer and the
+                -- game's caller, because the AA placement/upgrade code may still be
+                -- waiting for this call to finish.
                 local logger = env.SolarHubAAMacroLogger
                 if type(logger) == "function" then
-                    hookInternalWork = true
-                    pcall(logger, self, args, beforeSet)
-                    hookInternalWork = false
+                    local remoteRef = self
+                    local argsRef = args
+                    local beforeSetRef = beforeSet
+
+                    task.defer(function()
+                        -- Keep recorder-side work from being observed as a player action.
+                        hookInternalWork = true
+                        pcall(logger, remoteRef, argsRef, beforeSetRef)
+                        hookInternalWork = false
+                    end)
                 end
 
                 return table.unpack(result, 1, result.n)
