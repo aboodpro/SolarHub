@@ -29,6 +29,16 @@ function AAMacro.Init(Shared, UI)
         error("[AAMacro] ReplicatedStorage.endpoints.client_to_server not found.")
     end
 
+    -- Cache the exact confirmed remotes once. Comparing Instance references inside
+    -- __namecall avoids nested IsA/IsDescendantOf calls while gameplay is active.
+    local watchedSpawnRemote = clientToServer:FindFirstChild("spawn_unit")
+    local watchedUpgradeRemote = clientToServer:FindFirstChild("upgrade_unit_ingame")
+    local watchedVoteRemote = clientToServer:FindFirstChild("vote_start")
+    local watchedRemotes = {}
+    if watchedSpawnRemote then watchedRemotes[watchedSpawnRemote] = "spawn_unit" end
+    if watchedUpgradeRemote then watchedRemotes[watchedUpgradeRemote] = "upgrade_unit_ingame" end
+    if watchedVoteRemote then watchedRemotes[watchedVoteRemote] = "vote_start" end
+
     local FILE_NAME = "SolarHubAAMacros.json"
     local savedMacros = {}
     local selectedMacroName = nil
