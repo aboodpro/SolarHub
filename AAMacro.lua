@@ -42,6 +42,15 @@ function AAMacro.Init(Shared, UI)
     local liveHookStatus = "not installed"
     local MAX_UNIT_WAIT = 10
 
+    -- Use shared executor state so a previously installed hook can follow the
+    -- current Macro UI after SolarHub is re-executed in the same client.
+    local macroHookEnv = _G
+    if type(getgenv) == "function" then
+        local ok, executorEnv = pcall(getgenv)
+        if ok and type(executorEnv) == "table" then macroHookEnv = executorEnv end
+    end
+    macroHookEnv.SolarHubAAMacroRecording = false
+
     local function notify(message, duration)
         if type(Shared.showTopNotification) == "function" then
             pcall(Shared.showTopNotification, tostring(message), duration or 3)
@@ -584,12 +593,7 @@ function AAMacro.Init(Shared, UI)
     end
 
     local function installRecordingHook()
-        local env = _G
-        if type(getgenv) == "function" then
-            local ok, executorEnv = pcall(getgenv)
-            if ok and type(executorEnv) == "table" then env = executorEnv end
-        end
-
+        local env = macroHookEnv
         env.SolarHubAAMacroLogger = onObservedRemote
         if env.SolarHubAAMacroHookInstalled == true then
             liveHookStatus = "existing hook reused"
@@ -609,7 +613,7 @@ function AAMacro.Init(Shared, UI)
                 -- The hook cannot be uninstalled safely, so keep its idle path extremely
                 -- cheap. The previous version called checkcaller() and packed arguments
                 -- for every __namecall in the game, even after recording had stopped.
-                if not recording then
+                if env.SolarHubAAMacroRecording ~= true then
                     return oldNamecall(self, ...)
                 end
 
@@ -865,6 +869,7 @@ function AAMacro.Init(Shared, UI)
             nextPlacementOrder = 0
             recordStartedAt = os.clock()
             recording = true
+            macroHookEnv.SolarHubAAMacroRecording = true
             Config.RecordMacro = true
             recordButton.Text = "STOP RECORDING"
             recordButton.BackgroundColor3 = Color3.fromRGB(200, 55, 55)
@@ -872,6 +877,7 @@ function AAMacro.Init(Shared, UI)
             log("Recording started: " .. selectedMacroName)
         else
             recording = false
+            macroHookEnv.SolarHubAAMacroRecording = false
             Config.RecordMacro = false
             recordButton.Text = "RECORD"
             recordButton.BackgroundColor3 = Color3.fromRGB(140, 50, 50)
@@ -895,6 +901,7 @@ function AAMacro.Init(Shared, UI)
     stopButton.Activated:Connect(function()
         if recording then
             recording = false
+            macroHookEnv.SolarHubAAMacroRecording = false
             Config.RecordMacro = false
             recordButton.Text = "RECORD"
             recordButton.BackgroundColor3 = Color3.fromRGB(140, 50, 50)
