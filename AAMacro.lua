@@ -538,6 +538,19 @@ function AAMacro.Init(Shared, UI)
         return snapshot
     end
 
+    -- Used by macro playback only, never from the recording __namecall hook.
+    local function currentFolderSet()
+        local set = {}
+        local folder = workspace:FindFirstChild("_UNITS")
+        if not folder then return set end
+        for _, model in ipairs(folder:GetChildren()) do
+            if model:IsA("Model") then
+                set[model] = true
+            end
+        end
+        return set
+    end
+
     local function findPlacementOrderByModel(model, pivot, unitTypeUuid)
         local spawnUuid = getSpawnUuid(model)
         local order = placementOrderForTarget(model, pivot, unitTypeUuid, spawnUuid)
