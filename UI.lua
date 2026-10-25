@@ -173,6 +173,8 @@ function UI.Init(Shared)
         tabNames = { "Murder Mystery 2", "UI Settings" }
     elseif Shared.IsArcaneOdyssey == true then
         tabNames = { "Farming", "Misc", "UI Settings" }
+    elseif Shared.IsAnimeAdventures == true then
+        tabNames = { "Macro", "UI Settings" }
     else
         tabNames = { "Lobby", "Joiner", "Game", "Auto Play", "Macro", "Webhook", "Misc", "UI Settings" }
     end
