@@ -8,7 +8,7 @@ local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "1f0645efa9f653f13fc9e8956de9231ad8d3f628"
 local MURDER_MYSTERY_2_SOURCE_REF = "c65a04c6440740ff0cc6d79e8981ca0be1843dda"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-25-SOLARHUB-AA-DEBUG-2"
+local LOADER_VERSION = "2026-10-25-SOLARHUB-AA-MACRO-1"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -523,7 +523,7 @@ end
 
 local ALLOWED_GAMES = {
     {
-        Name = "Anime Adventures Debug",
+        Name = "Anime Adventures",
         GameId = 3183403065,
         PlaceIds = {
             [8304191830] = true,
@@ -767,7 +767,7 @@ task.spawn(function()
     
     local lightweightGame = allowedGame.Name == "Arcane Odyssey"
         or allowedGame.Name == "Murder Mystery 2"
-        or allowedGame.Name == "Anime Adventures Debug"
+        or allowedGame.Name == "Anime Adventures"
     local PREP_MIN_SECONDS = lightweightGame and 0.5 or 4
     local PREP_TIMEOUT_SECONDS = lightweightGame and 8 or 25
 
@@ -820,7 +820,7 @@ task.spawn(function()
         -- contexts and do not need the Anime Expeditions dependencies.
         if allowedGame.Name == "Arcane Odyssey"
             or allowedGame.Name == "Murder Mystery 2"
-            or allowedGame.Name == "Anime Adventures Debug" then
+            or allowedGame.Name == "Anime Adventures" then
             return loaded
                 and player ~= nil
                 and playerGui ~= nil
@@ -898,9 +898,11 @@ task.spawn(function()
 
     local moduleLoadOrder
 
-    if allowedGame.Name == "Anime Adventures Debug" then
+    if allowedGame.Name == "Anime Adventures" then
         moduleLoadOrder = {
-            "AADebug.lua",
+            "Shared.lua",
+            "UI.lua",
+            "AAMacro.lua",
         }
     elseif allowedGame.Name == "Arcane Odyssey" then
         moduleLoadOrder = {
@@ -983,25 +985,6 @@ task.spawn(function()
     -------------------------------------------------
     -- LOAD / INIT
     -------------------------------------------------
-
-    if allowedGame.Name == "Anime Adventures Debug" then
-        setLoadingStatus("Running Anime Adventures diagnostics...")
-        local debugOk, debugResult = pcall(function()
-            local DebugModule = compiled.AADebug()
-            return DebugModule.Init()
-        end)
-        if debugOk and debugResult then
-            setLoadingStatus("Anime Adventures report ready")
-            debugLog("Anime Adventures diagnostics finished. Copy the report from the debug panel.")
-        else
-            setLoadingStatus("Anime Adventures diagnostics failed - open DEBUG")
-            debugLog("AADebug error: " .. tostring(debugResult))
-            warn("[Loader] AADebug failed: " .. tostring(debugResult))
-            showDebugUI()
-        end
-        task.spawn(finishLoadingScreen)
-        return
-    end
 
     if not isCurrentSession() then
         debugLog("Loader session superseded before initialization.")
@@ -1098,6 +1081,10 @@ task.spawn(function()
         if not Shared then
             return
         end
+
+        if allowedGame.Name == "Anime Adventures" then
+            Shared.IsAnimeAdventures = true
+        end
     end
 
     setLoadingStatus("Building interface...")
@@ -1108,6 +1095,28 @@ task.spawn(function()
     end)
 
     if not UI then
+        return
+    end
+
+    -- Anime Adventures uses an isolated Macro module. Do not initialize the
+    -- Anime Expeditions Joiner/Webhook or other game-specific systems here.
+    if allowedGame.Name == "Anime Adventures" then
+        setLoadingStatus("Starting Anime Adventures Macro...")
+        print("[Loader] Loading Anime Adventures Macro...")
+        local aaMacro = runModule("AAMacro.Init", function()
+            local AAMacroModule = compiled.AAMacro()
+            return AAMacroModule.Init(Shared, UI)
+        end)
+
+        if aaMacro then
+            setLoadingStatus("SolarHub ready")
+            print("[Loader] Anime Adventures Macro loaded.")
+        else
+            setLoadingStatus("Anime Adventures Macro failed - open DEBUG")
+            showDebugUI()
+        end
+
+        task.spawn(finishLoadingScreen)
         return
     end
 
