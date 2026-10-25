@@ -1156,7 +1156,7 @@ task.spawn(function()
             logLine = aaLog,
             showTopNotification = aaNotify,
             copySessionLogToClipboard = function()
-                local fullText = table.concat(sessionLog, "\\n")
+                local fullText = table.concat(sessionLog, "\n")
                 if type(setclipboard) == "function" then
                     return pcall(setclipboard, fullText)
                 elseif type(toclipboard) == "function" then
