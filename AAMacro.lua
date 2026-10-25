@@ -486,7 +486,6 @@ function AAMacro.Init(Shared, UI)
     -- Maintain the live unit roster outside the __namecall hook. Calling
     -- FindFirstChild/GetChildren/IsA inside a RemoteFunction hook can disturb the
     -- active namecall context before spawn_unit reaches the original implementation.
-    local trackedUnitsFolder = nil
     local trackedUnits = {}
     local trackedUnitsAddedConnection = nil
     local trackedUnitsRemovedConnection = nil
@@ -500,7 +499,6 @@ function AAMacro.Init(Shared, UI)
             trackedUnitsRemovedConnection:Disconnect()
             trackedUnitsRemovedConnection = nil
         end
-        trackedUnitsFolder = nil
         trackedUnits = {}
     end
 
@@ -512,7 +510,6 @@ function AAMacro.Init(Shared, UI)
             return
         end
 
-        trackedUnitsFolder = folder
         for _, model in ipairs(folder:GetChildren()) do
             if model:IsA("Model") then
                 trackedUnits[model] = true
