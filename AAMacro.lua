@@ -621,11 +621,15 @@ function AAMacro.Init(Shared, UI)
 
         local ok, err = pcall(function()
             local oldNamecall
+            local hookInternalWork = false
             local wrapper = function(self, ...)
+                -- Recorder-side workspace lookups call Instance methods too. Bypass
+                -- interception during those internal lookups to avoid re-entering
+                -- this recorder hook. Actual game remote calls still pass through.
                 -- The hook cannot be uninstalled safely, so keep its idle path extremely
                 -- cheap. The previous version called checkcaller() and packed arguments
                 -- for every __namecall in the game, even after recording had stopped.
-                if env.SolarHubAAMacroRecording ~= true then
+                if hookInternalWork or env.SolarHubAAMacroRecording ~= true then
                     return oldNamecall(self, ...)
                 end
 
@@ -651,17 +655,23 @@ function AAMacro.Init(Shared, UI)
                 local args = table.pack(...)
                 local beforeSet = nil
                 if self == watchedSpawnRemote then
+                    hookInternalWork = true
                     pcall(function()
                         beforeSet = currentFolderSet()
                     end)
+                    hookInternalWork = false
                 end
 
-                -- Always call the original game remote first. Logging is isolated
-                -- behind pcall so a recorder error cannot interrupt gameplay.
+                -- Preserve the original game remote invocation and its return values.
                 local result = table.pack(oldNamecall(self, ...))
+
+                -- Protect the recorder's own Instance lookups from re-entering
+                -- this hook. The guard resets even if the logger throws.
                 local logger = env.SolarHubAAMacroLogger
                 if type(logger) == "function" then
+                    hookInternalWork = true
                     pcall(logger, self, args, beforeSet)
+                    hookInternalWork = false
                 end
 
                 return table.unpack(result, 1, result.n)
