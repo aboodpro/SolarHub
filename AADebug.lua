@@ -61,7 +61,7 @@ function AADebug.Init()
         end
     end
 
-    add("SolarHub / Anime Adventures Targeted Diagnostic v2")
+    add("SolarHub / Anime Adventures Targeted Diagnostic v3")
     add("PlaceId: " .. tostring(game.PlaceId))
     add("UniverseId/GameId: " .. tostring(game.GameId))
     add("PlaceName: " .. tostring(safe(function()
@@ -184,13 +184,43 @@ function AADebug.Init()
     local title = Instance.new("TextLabel")
     title.BackgroundTransparency = 1
     title.Position = UDim2.fromOffset(12, 6)
-    title.Size = UDim2.new(1, -170, 0, 34)
+    title.Size = UDim2.new(1, -250, 0, 34)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.TextColor3 = Color3.fromRGB(245, 245, 250)
-    title.Text = "Anime Adventures Debug v2"
+    title.Text = "Anime Adventures Debug v3"
     title.Parent = panel
+
+    local minimize = Instance.new("TextButton")
+    minimize.Name = "Minimize"
+    minimize.Position = UDim2.new(1, -220, 0, 8)
+    minimize.Size = UDim2.fromOffset(62, 28)
+    minimize.Text = "MIN"
+    minimize.Font = Enum.Font.GothamBold
+    minimize.TextSize = 11
+    minimize.TextColor3 = Color3.new(1, 1, 1)
+    minimize.BackgroundColor3 = Color3.fromRGB(55, 65, 78)
+    minimize.BorderSizePixel = 0
+    minimize.Parent = panel
+    Instance.new("UICorner", minimize).CornerRadius = UDim.new(0, 6)
+
+    -- Small floating restore control stays available while the report is minimized.
+    local restore = Instance.new("TextButton")
+    restore.Name = "RestoreButton"
+    restore.AnchorPoint = Vector2.new(1, 0)
+    restore.Position = UDim2.new(1, -14, 0, 14)
+    restore.Size = UDim2.fromOffset(118, 36)
+    restore.Text = "AA DEBUG  +"
+    restore.Font = Enum.Font.GothamBold
+    restore.TextSize = 12
+    restore.TextColor3 = Color3.new(1, 1, 1)
+    restore.BackgroundColor3 = Color3.fromRGB(35, 54, 82)
+    restore.BorderSizePixel = 0
+    restore.Visible = false
+    restore.ZIndex = 20
+    restore.Parent = gui
+    Instance.new("UICorner", restore).CornerRadius = UDim.new(0, 8)
 
     local copy = Instance.new("TextButton")
     copy.Position = UDim2.new(1, -148, 0, 8)
@@ -247,6 +277,14 @@ function AADebug.Init()
         end)
     end
     copy.Activated:Connect(copyReport)
+    minimize.Activated:Connect(function()
+        panel.Visible = false
+        restore.Visible = true
+    end)
+    restore.Activated:Connect(function()
+        panel.Visible = true
+        restore.Visible = false
+    end)
     close.Activated:Connect(function() gui:Destroy() end)
     return true
 end
