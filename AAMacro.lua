@@ -403,7 +403,12 @@ function AAMacro.Init(Shared, UI)
     end
 
     local function refreshSelection()
-        local macro = selectedMacroName and savedMacros[selectedMacroName]
+        local macro
+        if recording then
+            macro = { actions = currentRecordedActions }
+        elseif selectedMacroName then
+            macro = savedMacros[selectedMacroName]
+        end
         actionsLabel.Text = actionSummary(macro)
     end
 
@@ -487,7 +492,7 @@ function AAMacro.Init(Shared, UI)
         return nil
     end
 
-    local function onObservedRemote(remote, args)
+    local function onObservedRemote(remote, args, beforeSet)
         if not recording then return end
         if not remote or not remote.Parent then return end
         local remoteName = remote.Name
@@ -520,10 +525,21 @@ function AAMacro.Init(Shared, UI)
             }
             currentRecordedActions[#currentRecordedActions + 1] = action
 
-            -- Capture this session's unit ID opportunistically; playback will
-            -- resolve by fresh Instance + unit type + position, not this old ID.
-            local model = findUnitNear(placementCFrame, unitTypeUuid, nil, 10)
-            if model then action.spawnUnitUuid = getSpawnUuid(model) end
+            -- Resolve this placement asynchronously against the pre-call snapshot,
+            -- so a nearby older copy of the same unit type cannot be mistaken for
+            -- the newly placed instance.
+            if beforeSet then
+                task.spawn(function()
+                    local model = waitForNewUnit(placementCFrame, unitTypeUuid, beforeSet, 4)
+                    if model and model.Parent then
+                        action.spawnUnitUuid = getSpawnUuid(model)
+                        refreshSelection()
+                        log(("Placement #%d session UUID resolved as %s"):format(
+                            action.placementOrder, tostring(action.spawnUnitUuid)
+                        ))
+                    end
+                end)
+            end
 
             statusLabel.Text = ("Recording: placed unit #%d (%d actions)"):format(
                 nextPlacementOrder, #currentRecordedActions
@@ -593,6 +609,12 @@ function AAMacro.Init(Shared, UI)
                 local callerOk, executorCaller = pcall(checkcaller)
                 if callerOk and not executorCaller then normalGameCall = true end
 
+                local beforeSet = nil
+                if recording and normalGameCall and method == "InvokeServer"
+                    and typeof(self) == "Instance" and self.Name == "spawn_unit" then
+                    pcall(function() beforeSet = currentFolderSet() end)
+                end
+
                 local inEndpoints = false
                 if normalGameCall and method == "InvokeServer"
                     and typeof(self) == "Instance"
@@ -611,7 +633,7 @@ function AAMacro.Init(Shared, UI)
                 if inEndpoints then
                     local logger = env.SolarHubAAMacroLogger
                     if type(logger) == "function" then
-                        pcall(logger, self, args)
+                        pcall(logger, self, args, beforeSet)
                     end
                 end
 
