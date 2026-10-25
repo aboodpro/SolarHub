@@ -606,38 +606,55 @@ function AAMacro.Init(Shared, UI)
         local ok, err = pcall(function()
             local oldNamecall
             local wrapper = function(self, ...)
+                -- The hook cannot be uninstalled safely, so keep its idle path extremely
+                -- cheap. The previous version called checkcaller() and packed arguments
+                -- for every __namecall in the game, even after recording had stopped.
+                if not recording then
+                    return oldNamecall(self, ...)
+                end
+
                 local method = getnamecallmethod()
-                local args = table.pack(...)
-                local normalGameCall = false
+                if method ~= "InvokeServer" then
+                    return oldNamecall(self, ...)
+                end
+
+                if typeof(self) ~= "Instance" or not self:IsA("RemoteFunction") then
+                    return oldNamecall(self, ...)
+                end
+
+                local remoteName = self.Name
+                if remoteName ~= "spawn_unit"
+                    and remoteName ~= "upgrade_unit_ingame"
+                    and remoteName ~= "vote_start" then
+                    return oldNamecall(self, ...)
+                end
+
                 local callerOk, executorCaller = pcall(checkcaller)
-                if callerOk and not executorCaller then normalGameCall = true end
+                if not callerOk or executorCaller then
+                    return oldNamecall(self, ...)
+                end
 
+                local okParent, inside = pcall(function()
+                    return self:IsDescendantOf(clientToServer)
+                end)
+                if not okParent or not inside then
+                    return oldNamecall(self, ...)
+                end
+
+                local args = table.pack(...)
                 local beforeSet = nil
-                if recording and normalGameCall and method == "InvokeServer"
-                    and typeof(self) == "Instance" and self.Name == "spawn_unit" then
-                    pcall(function() beforeSet = currentFolderSet() end)
-                end
-
-                local inEndpoints = false
-                if normalGameCall and method == "InvokeServer"
-                    and typeof(self) == "Instance"
-                    and self:IsA("RemoteFunction")
-                    and (self.Name == "spawn_unit"
-                        or self.Name == "upgrade_unit_ingame"
-                        or self.Name == "vote_start") then
-                    local okParent, inside = pcall(function()
-                        return self:IsDescendantOf(clientToServer)
+                if remoteName == "spawn_unit" then
+                    pcall(function()
+                        beforeSet = currentFolderSet()
                     end)
-                    inEndpoints = okParent and inside
                 end
 
+                -- Always call the original game remote first. Logging is isolated
+                -- behind pcall so a recorder error cannot interrupt gameplay.
                 local result = table.pack(oldNamecall(self, ...))
-
-                if inEndpoints then
-                    local logger = env.SolarHubAAMacroLogger
-                    if type(logger) == "function" then
-                        pcall(logger, self, args, beforeSet)
-                    end
+                local logger = env.SolarHubAAMacroLogger
+                if type(logger) == "function" then
+                    pcall(logger, self, args, beforeSet)
                 end
 
                 return table.unpack(result, 1, result.n)
