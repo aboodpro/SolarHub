@@ -985,15 +985,17 @@ task.spawn(function()
 
     if allowedGame.Name == "Anime Adventures Debug" then
         setLoadingStatus("Running Anime Adventures diagnostics...")
-        local debugOk = runModule("AADebug.Init", function()
+        local debugOk, debugResult = pcall(function()
             local DebugModule = compiled.AADebug()
             return DebugModule.Init()
         end)
-        if debugOk then
+        if debugOk and debugResult then
             setLoadingStatus("Anime Adventures report ready")
             debugLog("Anime Adventures diagnostics finished. Copy the report from the debug panel.")
         else
             setLoadingStatus("Anime Adventures diagnostics failed - open DEBUG")
+            debugLog("AADebug error: " .. tostring(debugResult))
+            warn("[Loader] AADebug failed: " .. tostring(debugResult))
             showDebugUI()
         end
         task.spawn(finishLoadingScreen)
