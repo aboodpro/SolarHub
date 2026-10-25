@@ -290,6 +290,9 @@ function AAMacro.Init(Shared, UI)
     listLayout.Padding = UDim.new(0, 3)
     listLayout.SortOrder = Enum.SortOrder.LayoutOrder
     listLayout.Parent = macroList
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        macroList.CanvasSize = UDim2.fromOffset(0, listLayout.AbsoluteContentSize.Y + 4)
+    end)
 
     local function makePanelButton(name, text, position, size, color)
         local button = Instance.new("TextButton")
