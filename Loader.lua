@@ -8,7 +8,7 @@ local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "1f0645efa9f653f13fc9e8956de9231ad8d3f628"
 local MURDER_MYSTERY_2_SOURCE_REF = "c65a04c6440740ff0cc6d79e8981ca0be1843dda"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-25-SOLARHUB-AA-MACRO-1"
+local LOADER_VERSION = "2026-10-25-SOLARHUB-AA-MACRO-2"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -909,8 +909,9 @@ task.spawn(function()
     local moduleLoadOrder
 
     if allowedGame.Name == "Anime Adventures" then
+        -- Anime Adventures has its own endpoints hierarchy and must not load
+        -- the Anime Expeditions Shared.lua (which waits for RemoteEvents.ReplicaSignal).
         moduleLoadOrder = {
-            "Shared.lua",
             "UI.lua",
             "AAMacro.lua",
         }
@@ -1081,6 +1082,96 @@ task.spawn(function()
             Config = {},
             IsMurderMystery2 = true,
         }
+    elseif allowedGame.Name == "Anime Adventures" then
+        setLoadingStatus("Preparing Anime Adventures...")
+        print("[Loader] Building lightweight Anime Adventures context...")
+
+        local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+        local playerGui = player:WaitForChild("PlayerGui")
+        local sessionLog = {}
+
+        local function aaLog(message)
+            local line = "[SolarHub AA] " .. tostring(message)
+            sessionLog[#sessionLog + 1] = line
+            if #sessionLog > 250 then
+                table.remove(sessionLog, 1)
+            end
+            print(line)
+        end
+
+        local function aaNotify(message, duration)
+            local old = playerGui:FindFirstChild("SolarHubAANotification")
+            if old then old:Destroy() end
+
+            local notificationGui = Instance.new("ScreenGui")
+            notificationGui.Name = "SolarHubAANotification"
+            notificationGui.ResetOnSpawn = false
+            notificationGui.DisplayOrder = 1000000
+            notificationGui.Parent = playerGui
+
+            local frame = Instance.new("Frame")
+            frame.AnchorPoint = Vector2.new(1, 0)
+            frame.Position = UDim2.new(1, -18, 0, 18)
+            frame.Size = UDim2.fromOffset(300, 42)
+            frame.BackgroundColor3 = Color3.fromRGB(24, 24, 31)
+            frame.BorderSizePixel = 0
+            frame.Parent = notificationGui
+            Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, -16, 1, 0)
+            label.Position = UDim2.fromOffset(8, 0)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamBold
+            label.TextSize = 11
+            label.TextWrapped = true
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.TextColor3 = Color3.fromRGB(255, 205, 100)
+            label.Text = tostring(message)
+            label.Parent = frame
+
+            task.delay(duration or 3, function()
+                if notificationGui.Parent then
+                    notificationGui:Destroy()
+                end
+            end)
+        end
+
+        local aaConfig = {
+            MacroIgnoreTiming = false,
+            MacroDebug = true,
+        }
+
+        Shared = {
+            Players = Players,
+            UserInputService = game:GetService("UserInputService"),
+            HttpService = game:GetService("HttpService"),
+            RunService = game:GetService("RunService"),
+            ReplicatedStorage = game:GetService("ReplicatedStorage"),
+            Lighting = game:GetService("Lighting"),
+            player = player,
+            playerGui = playerGui,
+            Config = aaConfig,
+            IsAnimeAdventures = true,
+            logLine = aaLog,
+            showTopNotification = aaNotify,
+            copySessionLogToClipboard = function()
+                local fullText = table.concat(sessionLog, "\\n")
+                if type(setclipboard) == "function" then
+                    return pcall(setclipboard, fullText)
+                elseif type(toclipboard) == "function" then
+                    return pcall(toclipboard, fullText)
+                end
+                return false
+            end,
+        }
+
+        pcall(function()
+            local env = (type(getgenv) == "function" and getgenv()) or _G
+            env.SolarHub = env.SolarHub or {}
+            env.SolarHub.Shared = Shared
+            env.SolarHubAALog = aaLog
+        end)
     else
         setLoadingStatus("Starting SolarHub...")
         print("[Loader] Loading Shared...")
@@ -1090,10 +1181,6 @@ task.spawn(function()
 
         if not Shared then
             return
-        end
-
-        if allowedGame.Name == "Anime Adventures" then
-            Shared.IsAnimeAdventures = true
         end
     end
 
