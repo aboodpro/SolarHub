@@ -634,14 +634,12 @@ function AAMacro.Init(Shared, UI)
                     return oldNamecall(self, ...)
                 end
 
-                if typeof(self) ~= "Instance" or not self:IsA("RemoteFunction") then
+                if typeof(self) ~= "Instance" then
                     return oldNamecall(self, ...)
                 end
 
-                local remoteName = self.Name
-                if remoteName ~= "spawn_unit"
-                    and remoteName ~= "upgrade_unit_ingame"
-                    and remoteName ~= "vote_start" then
+                local remoteName = watchedRemotes[self]
+                if not remoteName then
                     return oldNamecall(self, ...)
                 end
 
@@ -650,16 +648,9 @@ function AAMacro.Init(Shared, UI)
                     return oldNamecall(self, ...)
                 end
 
-                local okParent, inside = pcall(function()
-                    return self:IsDescendantOf(clientToServer)
-                end)
-                if not okParent or not inside then
-                    return oldNamecall(self, ...)
-                end
-
                 local args = table.pack(...)
                 local beforeSet = nil
-                if remoteName == "spawn_unit" then
+                if self == watchedSpawnRemote then
                     pcall(function()
                         beforeSet = currentFolderSet()
                     end)
