@@ -105,18 +105,12 @@ function AAMacro.Init(Shared, UI)
         local folder = workspace:FindFirstChild("_UNITS")
         local out = {}
         if not folder then return out end
-        for _, inst in ipairs(folder:GetDescendants()) do
-            if inst:IsA("Model") and getModelUnitType(inst) ~= nil then
-                out[#out + 1] = inst
-            end
-        end
+
+        -- Anime Adventures stores placed units as direct children of _UNITS.
+        -- Avoid traversing every descendant of every unit during macro playback.
         for _, inst in ipairs(folder:GetChildren()) do
             if inst:IsA("Model") and getModelUnitType(inst) ~= nil then
-                local found = false
-                for _, existing in ipairs(out) do
-                    if existing == inst then found = true break end
-                end
-                if not found then out[#out + 1] = inst end
+                out[#out + 1] = inst
             end
         end
         return out
@@ -478,7 +472,15 @@ function AAMacro.Init(Shared, UI)
 
     local function currentFolderSet()
         local set = {}
-        for _, model in ipairs(getUnitModels()) do set[model] = true end
+        local folder = workspace:FindFirstChild("_UNITS")
+        if not folder then return set end
+        -- This runs before spawn_unit is sent to the server, so keep it O(unit count)
+        -- over direct children rather than walking the full descendant tree.
+        for _, model in ipairs(folder:GetChildren()) do
+            if model:IsA("Model") then
+                set[model] = true
+            end
+        end
         return set
     end
 
