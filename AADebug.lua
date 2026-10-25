@@ -61,7 +61,7 @@ function AADebug.Init()
         end
     end
 
-    add("SolarHub / Anime Adventures Targeted Diagnostic v3")
+    add("SolarHub / Anime Adventures Targeted Diagnostic v4")
     add("PlaceId: " .. tostring(game.PlaceId))
     add("UniverseId/GameId: " .. tostring(game.GameId))
     add("PlaceName: " .. tostring(safe(function()
@@ -184,24 +184,26 @@ function AADebug.Init()
     local title = Instance.new("TextLabel")
     title.BackgroundTransparency = 1
     title.Position = UDim2.fromOffset(12, 6)
-    title.Size = UDim2.new(1, -250, 0, 34)
+    title.Size = UDim2.new(1, -285, 0, 34)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 16
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.TextColor3 = Color3.fromRGB(245, 245, 250)
-    title.Text = "Anime Adventures Debug v3"
+    title.Text = "Anime Adventures Debug v4"
     title.Parent = panel
 
     local minimize = Instance.new("TextButton")
     minimize.Name = "Minimize"
-    minimize.Position = UDim2.new(1, -220, 0, 8)
-    minimize.Size = UDim2.fromOffset(62, 28)
-    minimize.Text = "MIN"
+    minimize.Position = UDim2.new(1, -256, 0, 8)
+    minimize.Size = UDim2.fromOffset(78, 28)
+    minimize.Text = "MINIMIZE"
     minimize.Font = Enum.Font.GothamBold
-    minimize.TextSize = 11
+    minimize.TextSize = 10
     minimize.TextColor3 = Color3.new(1, 1, 1)
     minimize.BackgroundColor3 = Color3.fromRGB(55, 65, 78)
     minimize.BorderSizePixel = 0
+    minimize.ZIndex = 5
+    minimize.AutoButtonColor = true
     minimize.Parent = panel
     Instance.new("UICorner", minimize).CornerRadius = UDim.new(0, 6)
 
@@ -211,9 +213,9 @@ function AADebug.Init()
     restore.AnchorPoint = Vector2.new(1, 0)
     restore.Position = UDim2.new(1, -14, 0, 14)
     restore.Size = UDim2.fromOffset(118, 36)
-    restore.Text = "AA DEBUG  +"
+    restore.Text = "RESTORE DEBUG"
     restore.Font = Enum.Font.GothamBold
-    restore.TextSize = 12
+    restore.TextSize = 11
     restore.TextColor3 = Color3.new(1, 1, 1)
     restore.BackgroundColor3 = Color3.fromRGB(35, 54, 82)
     restore.BorderSizePixel = 0
@@ -223,26 +225,30 @@ function AADebug.Init()
     Instance.new("UICorner", restore).CornerRadius = UDim.new(0, 8)
 
     local copy = Instance.new("TextButton")
-    copy.Position = UDim2.new(1, -148, 0, 8)
-    copy.Size = UDim2.fromOffset(66, 28)
+    copy.Position = UDim2.new(1, -164, 0, 8)
+    copy.Size = UDim2.fromOffset(70, 28)
     copy.Text = "COPY"
     copy.Font = Enum.Font.GothamBold
     copy.TextSize = 11
     copy.TextColor3 = Color3.new(1, 1, 1)
     copy.BackgroundColor3 = Color3.fromRGB(48, 72, 110)
     copy.BorderSizePixel = 0
+    copy.ZIndex = 5
+    copy.AutoButtonColor = true
     copy.Parent = panel
     Instance.new("UICorner", copy).CornerRadius = UDim.new(0, 6)
 
     local close = Instance.new("TextButton")
-    close.Position = UDim2.new(1, -74, 0, 8)
-    close.Size = UDim2.fromOffset(62, 28)
+    close.Position = UDim2.new(1, -82, 0, 8)
+    close.Size = UDim2.fromOffset(70, 28)
     close.Text = "X"
     close.Font = Enum.Font.GothamBold
     close.TextSize = 12
     close.TextColor3 = Color3.new(1, 1, 1)
     close.BackgroundColor3 = Color3.fromRGB(90, 40, 40)
     close.BorderSizePixel = 0
+    close.ZIndex = 5
+    close.AutoButtonColor = true
     close.Parent = panel
     Instance.new("UICorner", close).CornerRadius = UDim.new(0, 6)
 
@@ -276,15 +282,28 @@ function AADebug.Init()
             if copy.Parent then copy.Text = "COPY" end
         end)
     end
+    -- Keep all controls above the report text and use one shared callback per button.
+    title.ZIndex = 5
+    box.ZIndex = 1
+    restore.Active = true
+    restore.AutoButtonColor = true
+
     copy.Activated:Connect(copyReport)
-    minimize.Activated:Connect(function()
+
+    local function minimizeDebug()
+        if not gui.Parent then return end
         panel.Visible = false
         restore.Visible = true
-    end)
-    restore.Activated:Connect(function()
+    end
+
+    local function restoreDebug()
+        if not gui.Parent then return end
         panel.Visible = true
         restore.Visible = false
-    end)
+    end
+
+    minimize.Activated:Connect(minimizeDebug)
+    restore.Activated:Connect(restoreDebug)
     close.Activated:Connect(function() gui:Destroy() end)
     return true
 end
