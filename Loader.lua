@@ -8,7 +8,7 @@ local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "1f0645efa9f653f13fc9e8956de9231ad8d3f628"
 local MURDER_MYSTERY_2_SOURCE_REF = "c65a04c6440740ff0cc6d79e8981ca0be1843dda"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-25-SOLARHUB-AA-MACRO-2"
+local LOADER_VERSION = "2026-10-25-SOLARHUB-AA-MACRO-3"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
