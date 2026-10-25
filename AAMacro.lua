@@ -483,18 +483,59 @@ function AAMacro.Init(Shared, UI)
         return true
     end
 
-    local function currentFolderSet()
-        local set = {}
+    -- Maintain the live unit roster outside the __namecall hook. Calling
+    -- FindFirstChild/GetChildren/IsA inside a RemoteFunction hook can disturb the
+    -- active namecall context before spawn_unit reaches the original implementation.
+    local trackedUnitsFolder = nil
+    local trackedUnits = {}
+    local trackedUnitsAddedConnection = nil
+    local trackedUnitsRemovedConnection = nil
+
+    local function stopTrackingUnits()
+        if trackedUnitsAddedConnection then
+            trackedUnitsAddedConnection:Disconnect()
+            trackedUnitsAddedConnection = nil
+        end
+        if trackedUnitsRemovedConnection then
+            trackedUnitsRemovedConnection:Disconnect()
+            trackedUnitsRemovedConnection = nil
+        end
+        trackedUnitsFolder = nil
+        trackedUnits = {}
+    end
+
+    local function startTrackingUnits()
+        stopTrackingUnits()
         local folder = workspace:FindFirstChild("_UNITS")
-        if not folder then return set end
-        -- This runs before spawn_unit is sent to the server, so keep it O(unit count)
-        -- over direct children rather than walking the full descendant tree.
+        if not folder then
+            log("Unit tracking unavailable: workspace._UNITS was not found at recording start.")
+            return
+        end
+
+        trackedUnitsFolder = folder
         for _, model in ipairs(folder:GetChildren()) do
             if model:IsA("Model") then
-                set[model] = true
+                trackedUnits[model] = true
             end
         end
-        return set
+
+        trackedUnitsAddedConnection = folder.ChildAdded:Connect(function(model)
+            if model:IsA("Model") then
+                trackedUnits[model] = true
+            end
+        end)
+        trackedUnitsRemovedConnection = folder.ChildRemoved:Connect(function(model)
+            trackedUnits[model] = nil
+        end)
+    end
+
+    local function snapshotTrackedUnits()
+        -- Pure Lua table copy only: no Instance method calls inside __namecall.
+        local snapshot = {}
+        for model in pairs(trackedUnits) do
+            snapshot[model] = true
+        end
+        return snapshot
     end
 
     local function findPlacementOrderByModel(model, pivot, unitTypeUuid)
@@ -645,6 +686,7 @@ function AAMacro.Init(Shared, UI)
         end
 
         recording = false
+        stopTrackingUnits()
     end
 
     local function installRecordingHook()
@@ -698,11 +740,9 @@ function AAMacro.Init(Shared, UI)
                 local args = table.pack(...)
                 local beforeSet = nil
                 if self == watchedSpawnRemote then
-                    hookInternalWork = true
-                    pcall(function()
-                        beforeSet = currentFolderSet()
-                    end)
-                    hookInternalWork = false
+                    -- Only copy Lua references here. Never call Instance methods
+                    -- before forwarding the game's original InvokeServer call.
+                    beforeSet = snapshotTrackedUnits()
                 end
 
                 -- Preserve the original game remote invocation and its return values.
@@ -925,6 +965,7 @@ function AAMacro.Init(Shared, UI)
             end
             currentRecordedActions = {}
             nextPlacementOrder = 0
+            startTrackingUnits()
             recordStartedAt = os.clock()
             recording = true
             macroHookEnv.SolarHubAAMacroRecording = true
