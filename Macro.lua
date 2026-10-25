@@ -45,6 +45,9 @@ function Macro.Init(Shared, UI)
     local recordedPlacementCFrames = {}
     local pendingRecordWorkers = 0
     local scannedUnitsDatabase = {}
+    -- Keep a cheap snapshot for the synchronous namecall hook. Scanning every
+    -- possible replica ID inside the hook delays the game's original remote call.
+    local knownUnitReplicaIds = {}
 
     -- Lifecycle guards:
     -- recordingRoundActive tracks whether the current recording belongs to a
@@ -161,6 +164,24 @@ function Macro.Init(Shared, UI)
             snapshot[id] = true
         end
         return snapshot
+    end
+
+    local function snapshotKnownUnitReplicaIds()
+        local snapshot = {}
+        for id in pairs(knownUnitReplicaIds) do
+            snapshot[id] = true
+        end
+        return snapshot
+    end
+
+    local function mergeKnownUnitReplicaIds(candidates)
+        if type(candidates) ~= "table" then
+            return
+        end
+
+        for id in pairs(candidates) do
+            knownUnitReplicaIds[tostring(id)] = true
+        end
     end
 
     local function resolveRecordedPlacementOrder(recordedUnitId)
@@ -439,9 +460,17 @@ function Macro.Init(Shared, UI)
     local function waitForRecordedPlacementPayment(beforeIds, placementCFrame, yenBefore, timeoutSeconds)
         if typeof(placementCFrame) ~= "CFrame" then return nil end
         local deadline = os.clock() + (timeoutSeconds or 8)
+        local candidates = {}
+        local nextReplicaScanAt = 0
 
         while os.clock() < deadline do
-            local candidates = getOwnedGameUnitReplicas()
+            -- ReplicaClient.FromId is queried across the known ID range. Do not
+            -- rescan all IDs every 0.1 seconds; refresh at a bounded interval.
+            if os.clock() >= nextReplicaScanAt then
+                candidates = getOwnedGameUnitReplicas()
+                mergeKnownUnitReplicaIds(candidates)
+                nextReplicaScanAt = os.clock() + 0.5
+            end
 
             for id, replica in pairs(candidates) do
                 if not beforeIds[id] and replica and replica.Data
@@ -504,7 +533,10 @@ function Macro.Init(Shared, UI)
                             end
 
                             if replicaActionBefore == "UnitPlace" then
-                                placementBeforeIds = snapshotOwnedGameUnits()
+                                -- This hook runs synchronously before the original
+                                -- FireServer call. Copy the cache instead of scanning
+                                -- thousands of replica IDs here.
+                                placementBeforeIds = snapshotKnownUnitReplicaIds()
                             end
                         end
                     end)
@@ -640,6 +672,12 @@ function Macro.Init(Shared, UI)
                                             actionEntry.yenCost = observedCost
                                         end
                                     end
+
+                                    -- The remote has already been forwarded at this point,
+                                    -- so refreshing the ID cache here cannot block placement.
+                                    pcall(function()
+                                        mergeKnownUnitReplicaIds(getOwnedGameUnitReplicas())
+                                    end)
 
                                     macroDebugLog(
                                         ("RECORD COST #%d | type=UnitPlace | cost=%s | source=%s"):format(
@@ -2297,6 +2335,15 @@ function Macro.Init(Shared, UI)
             showTopNotification("Select a macro first!", 3)
             return
         end
+        if not Config.RecordMacro then
+            -- Seed the cache once before recording starts. The hook itself must
+            -- only copy this set; it must not scan thousands of replica IDs.
+            local snapshotOk, initialSnapshot = pcall(snapshotOwnedGameUnits)
+            knownUnitReplicaIds =
+                snapshotOk and type(initialSnapshot) == "table"
+                and initialSnapshot or {}
+        end
+
         Config.RecordMacro = not Config.RecordMacro
         if Config.RecordMacro then
             installRecordingHook()
