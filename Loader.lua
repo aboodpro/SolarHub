@@ -816,11 +816,21 @@ task.spawn(function()
         local player = game:GetService("Players").LocalPlayer
         local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
 
-        -- Arcane Odyssey and Murder Mystery 2 use dedicated lightweight
-        -- contexts and do not need the Anime Expeditions dependencies.
+        -- Dedicated games avoid Anime Expeditions dependencies. Anime Adventures
+        -- additionally waits for its confirmed endpoint folder before module init.
+        if allowedGame.Name == "Anime Adventures" then
+            local endpointRoot = game:GetService("ReplicatedStorage"):FindFirstChild("endpoints")
+            local clientEndpoints = endpointRoot and endpointRoot:FindFirstChild("client_to_server")
+            return loaded
+                and player ~= nil
+                and playerGui ~= nil
+                and clientEndpoints ~= nil
+                and clientEndpoints:FindFirstChild("spawn_unit") ~= nil
+                and clientEndpoints:FindFirstChild("upgrade_unit_ingame") ~= nil
+        end
+
         if allowedGame.Name == "Arcane Odyssey"
-            or allowedGame.Name == "Murder Mystery 2"
-            or allowedGame.Name == "Anime Adventures" then
+            or allowedGame.Name == "Murder Mystery 2" then
             return loaded
                 and player ~= nil
                 and playerGui ~= nil
