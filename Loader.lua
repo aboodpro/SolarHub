@@ -8,7 +8,7 @@ local BASE_URL = "https://raw.githubusercontent.com/aboodpro/SolarHub/main/"
 local ARCANE_SOURCE_REF = "1f0645efa9f653f13fc9e8956de9231ad8d3f628"
 local MURDER_MYSTERY_2_SOURCE_REF = "c65a04c6440740ff0cc6d79e8981ca0be1843dda"
 local CACHE_BUST = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999)) .. "_" .. tostring(game.PlaceId)
-local LOADER_VERSION = "2026-10-19-SOLARHUB-RARE-TP-3"
+local LOADER_VERSION = "2026-10-25-SOLARHUB-AA-DEBUG-1"
 local SESSION_ID = tostring(os.clock()):gsub("%.", "") .. "_" .. tostring(math.random(100000000, 999999999))
 
 -------------------------------------------------
@@ -523,6 +523,13 @@ end
 
 local ALLOWED_GAMES = {
     {
+        Name = "Anime Adventures Debug",
+        GameId = 3183403065,
+        PlaceIds = {
+            [8304191830] = true,
+        },
+    },
+    {
         Name = "Anime Expeditions",
         GameId = 7613921865,
         PlaceIds = {
@@ -759,6 +766,7 @@ task.spawn(function()
     
     local lightweightGame = allowedGame.Name == "Arcane Odyssey"
         or allowedGame.Name == "Murder Mystery 2"
+        or allowedGame.Name == "Anime Adventures Debug"
     local PREP_MIN_SECONDS = lightweightGame and 0.5 or 4
     local PREP_TIMEOUT_SECONDS = lightweightGame and 8 or 25
 
@@ -810,7 +818,8 @@ task.spawn(function()
         -- Arcane Odyssey and Murder Mystery 2 use dedicated lightweight
         -- contexts and do not need the Anime Expeditions dependencies.
         if allowedGame.Name == "Arcane Odyssey"
-            or allowedGame.Name == "Murder Mystery 2" then
+            or allowedGame.Name == "Murder Mystery 2"
+            or allowedGame.Name == "Anime Adventures Debug" then
             return loaded
                 and player ~= nil
                 and playerGui ~= nil
@@ -888,7 +897,11 @@ task.spawn(function()
 
     local moduleLoadOrder
 
-    if allowedGame.Name == "Arcane Odyssey" then
+    if allowedGame.Name == "Anime Adventures Debug" then
+        moduleLoadOrder = {
+            "AADebug.lua",
+        }
+    elseif allowedGame.Name == "Arcane Odyssey" then
         moduleLoadOrder = {
             "UI.lua",
             "Arcane.lua",
@@ -969,6 +982,23 @@ task.spawn(function()
     -------------------------------------------------
     -- LOAD / INIT
     -------------------------------------------------
+
+    if allowedGame.Name == "Anime Adventures Debug" then
+        setLoadingStatus("Running Anime Adventures diagnostics...")
+        local debugOk = runModule("AADebug.Init", function()
+            local DebugModule = compiled.AADebug()
+            return DebugModule.Init()
+        end)
+        if debugOk then
+            setLoadingStatus("Anime Adventures report ready")
+            debugLog("Anime Adventures diagnostics finished. Copy the report from the debug panel.")
+        else
+            setLoadingStatus("Anime Adventures diagnostics failed - open DEBUG")
+            showDebugUI()
+        end
+        task.spawn(finishLoadingScreen)
+        return
+    end
 
     if not isCurrentSession() then
         debugLog("Loader session superseded before initialization.")
