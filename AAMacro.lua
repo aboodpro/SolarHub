@@ -60,6 +60,9 @@ function AAMacro.Init(Shared, UI)
         if ok and type(executorEnv) == "table" then macroHookEnv = executorEnv end
     end
     macroHookEnv.SolarHubAAMacroRecording = false
+    if type(macroHookEnv.SolarHubAAMacroPendingCount) ~= "number" then
+        macroHookEnv.SolarHubAAMacroPendingCount = 0
+    end
 
     local function notify(message, duration)
         if type(Shared.showTopNotification) == "function" then
@@ -604,9 +607,49 @@ function AAMacro.Init(Shared, UI)
         end
     end
 
+    local function enqueueObservedRemote(remote, args, beforeSet)
+        macroHookEnv.SolarHubAAMacroPendingCount =
+            (tonumber(macroHookEnv.SolarHubAAMacroPendingCount) or 0) + 1
+
+        local scheduled = pcall(function()
+            task.defer(function()
+                -- All UI updates, model lookups, and action linking happen after the
+                -- real game remote has returned to AA's caller.
+                pcall(onObservedRemote, remote, args, beforeSet)
+
+                macroHookEnv.SolarHubAAMacroPendingCount = math.max(
+                    0,
+                    (tonumber(macroHookEnv.SolarHubAAMacroPendingCount) or 1) - 1
+                )
+            end)
+        end)
+
+        if not scheduled then
+            macroHookEnv.SolarHubAAMacroPendingCount = math.max(
+                0,
+                (tonumber(macroHookEnv.SolarHubAAMacroPendingCount) or 1) - 1
+            )
+        end
+    end
+
+    local function stopRecordingCapture()
+        -- Disable new captures first, then let already-started InvokeServer calls
+        -- finish their deferred recording work before saving the macro.
+        macroHookEnv.SolarHubAAMacroRecording = false
+        Config.RecordMacro = false
+
+        local drainDeadline = os.clock() + 10
+        while (tonumber(macroHookEnv.SolarHubAAMacroPendingCount) or 0) > 0
+            and os.clock() < drainDeadline do
+            task.wait(0.025)
+        end
+
+        recording = false
+    end
+
     local function installRecordingHook()
         local env = macroHookEnv
-        env.SolarHubAAMacroLogger = onObservedRemote
+        env.SolarHubAAMacroLogger = enqueueObservedRemote
         if env.SolarHubAAMacroHookInstalled == true then
             liveHookStatus = "existing hook reused"
             return true
@@ -665,22 +708,15 @@ function AAMacro.Init(Shared, UI)
                 -- Preserve the original game remote invocation and its return values.
                 local result = table.pack(oldNamecall(self, ...))
 
-                -- Let the game continue immediately after its original RemoteFunction
-                -- returns. Recording/UI work must not sit between InvokeServer and the
-                -- game's caller, because the AA placement/upgrade code may still be
-                -- waiting for this call to finish.
+                -- The logger exposed through the executor env is intentionally a
+                -- lightweight queue function. This preserves compatibility with a hook
+                -- installed by an earlier AAMacro initialization while keeping the
+                -- original AA InvokeServer result unchanged.
                 local logger = env.SolarHubAAMacroLogger
                 if type(logger) == "function" then
-                    local remoteRef = self
-                    local argsRef = args
-                    local beforeSetRef = beforeSet
-
-                    task.defer(function()
-                        -- Keep recorder-side work from being observed as a player action.
-                        hookInternalWork = true
-                        pcall(logger, remoteRef, argsRef, beforeSetRef)
-                        hookInternalWork = false
-                    end)
+                    hookInternalWork = true
+                    pcall(logger, self, args, beforeSet)
+                    hookInternalWork = false
                 end
 
                 return table.unpack(result, 1, result.n)
@@ -898,9 +934,7 @@ function AAMacro.Init(Shared, UI)
             statusLabel.Text = "Recording. Use the normal in-game UI to place/upgrade units."
             log("Recording started: " .. selectedMacroName)
         else
-            recording = false
-            macroHookEnv.SolarHubAAMacroRecording = false
-            Config.RecordMacro = false
+            stopRecordingCapture()
             recordButton.Text = "RECORD"
             recordButton.BackgroundColor3 = Color3.fromRGB(140, 50, 50)
             savedMacros[selectedMacroName] = { actions = currentRecordedActions }
@@ -922,9 +956,7 @@ function AAMacro.Init(Shared, UI)
 
     stopButton.Activated:Connect(function()
         if recording then
-            recording = false
-            macroHookEnv.SolarHubAAMacroRecording = false
-            Config.RecordMacro = false
+            stopRecordingCapture()
             recordButton.Text = "RECORD"
             recordButton.BackgroundColor3 = Color3.fromRGB(140, 50, 50)
             if selectedMacroName then
